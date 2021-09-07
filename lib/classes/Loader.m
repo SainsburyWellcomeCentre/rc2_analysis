@@ -41,7 +41,7 @@ classdef Loader < handle
                 end
                 
                 data.experiment_group = exp_type;
-                data = DataController(data);
+                data = FormattedData(data);
                 
             else
                 

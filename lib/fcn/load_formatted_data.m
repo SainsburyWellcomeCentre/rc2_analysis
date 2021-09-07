@@ -4,7 +4,7 @@ formatted_data_fname = fullfile(config.formatted_data_dir, [probe_recording, '.m
 data = load_data(formatted_data_fname);
 data.probe_recording = probe_recording;
 data.experiment_group = get_experiment_group(data.sessions(1).id, config);
-data = DataController(data, config);
+data = FormattedData(data, config);
 
 
 
