@@ -14,7 +14,7 @@ figs                    = RC2Figures(config);
 figs.save_on            = false;
 figs.set_figure_subdir('mismatch_nov20', spiking_class);
 
-recording_ids           = experiment_details('mismatch_nov20');
+probe_ids           = experiment_details('mismatch_nov20');
 
 protocol_ids            = 1:4;
 protocol_labels         = MismatchExperiment.protocol_label(protocol_ids);
@@ -23,9 +23,9 @@ all_cluster_fr          = cell(length(protocol_labels), 1);
 response_magnitude      = cell(length(protocol_labels), 1);
 store_spiking_class     = cell(length(protocol_labels), 1);
 
-for rec_i = 1 : length(recording_ids)
+for rec_i = 1 : length(probe_ids)
     
-    this_data           = get_data_for_recording_id(data, recording_ids{rec_i});
+    this_data           = get_data_for_recording_id(data, probe_ids{rec_i});
     clusters            = this_data.VISp_clusters([], spiking_class);
     
     if isempty(clusters)

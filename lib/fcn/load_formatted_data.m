@@ -1,8 +1,8 @@
-function data = load_formatted_data(probe_recording, config)
+function data = load_formatted_data(probe_id, config)
 
-formatted_data_fname = fullfile(config.formatted_data_dir, [probe_recording, '.mat']);
+formatted_data_fname = fullfile(config.formatted_data_dir, [probe_id, '.mat']);
 data = load_data(formatted_data_fname);
-data.probe_recording = probe_recording;
+data.probe_recording = probe_id;
 data.experiment_group = get_experiment_group(data.sessions(1).id, config);
 data = FormattedData(data, config);
 
