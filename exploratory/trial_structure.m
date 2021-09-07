@@ -27,7 +27,7 @@ for probe_i = start_recording : length(probe_fnames)
         case 'mismatch_nov20'
             exp_obj = MismatchExperiment(data, config);
         case 'mismatch_jul21'
-            exp_obj = MismatchJul21Experiment(data, config);
+            exp_obj = MismatchJul2021Session(data, config);
     end
     
     for trial_i = 1 : length(exp_obj.trials)

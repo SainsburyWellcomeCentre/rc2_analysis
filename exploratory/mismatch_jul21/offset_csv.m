@@ -24,7 +24,7 @@ figs.set_figure_subdir(experiment_name, 'matched_trials_overlay');
 for probe_i = start_at_recording : length(probe_fnames)
     
     data                = loader.formatted_data(probe_fnames{probe_i});
-    exp_obj             = MismatchJul21Experiment(data, config);
+    exp_obj             = MismatchJul2021Session(data, config);
     
     table_row           = 0;
     offset_table        = table();
