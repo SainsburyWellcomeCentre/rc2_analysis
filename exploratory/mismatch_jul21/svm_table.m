@@ -1,17 +1,17 @@
-experiment_name     = 'mismatch_jul21';
-
-probe_fnames        = experiment_details(experiment_name, 'protocols');
-config              = config_rc2_analysis();
-loader              = Loader(config);
+experiment_group     = 'mismatch_jul21';
 
 
-for probe_i = 1 : length(probe_fnames)
+ctl                 = RC2Analysis();
+probe_ids           = ctl.get_probe_ids(experiment_group);
+
+
+for i = 1 : length(probe_ids)
     
-    data            = loader.formatted_data(probe_fnames{probe_i});
+    data            = ctl.load_formatted_data(probe_ids{i});
     exp_obj         = MismatchJul21Experiment(data, config);
     clusters        = data.selected_clusters;
     
-    svm             = StationaryVsMotionTable(config, probe_fnames{probe_i});
+    svm             = StationaryVsMotionTable(config, probe_ids{i});
     
     trials          = exp_obj.trials;
     

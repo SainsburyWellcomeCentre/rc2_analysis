@@ -1,4 +1,4 @@
-classdef VisualFlowExperiment < MVTExperiment
+classdef VisualFlowExperiment < RVTSession
     
     properties (Constant = true)
         
@@ -14,7 +14,7 @@ classdef VisualFlowExperiment < MVTExperiment
         
         function obj = VisualFlowExperiment(data_obj, config)
             
-            obj = obj@MVTExperiment(data_obj, config);
+            obj = obj@RVTSession(data_obj, config);
             
             obj.trials = data_obj.data.sessions(1).trials;
         end
@@ -23,7 +23,7 @@ classdef VisualFlowExperiment < MVTExperiment
         
         function trials = trials_of_type(obj, trial_type)
             
-            trials = trials_of_type@MVTExperiment(obj, trial_type);
+            trials = trials_of_type@RVTSession(obj, trial_type);
             
             if ~isempty(trials)
                 return

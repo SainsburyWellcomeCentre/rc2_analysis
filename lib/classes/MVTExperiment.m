@@ -1,4 +1,4 @@
-classdef MVTExperiment < handle
+classdef RVTSession < handle
     
     properties
         
@@ -17,7 +17,7 @@ classdef MVTExperiment < handle
     
     methods
         
-        function obj = MVTExperiment(data_obj, config)
+        function obj = RVTSession(data_obj, config)
             
             obj.data = data_obj.data;
             obj.config = config;

@@ -1,4 +1,4 @@
-classdef MismatchExperiment < MVTExperiment
+classdef MismatchExperiment < RVTSession
     
     
     properties (Constant = true)
@@ -15,7 +15,7 @@ classdef MismatchExperiment < MVTExperiment
         
         function obj = MismatchExperiment(data_obj, config)
             
-            obj = obj@MVTExperiment(data_obj, config);
+            obj = obj@RVTSession(data_obj, config);
             
             if strcmp(data_obj.data.probe_recording, 'CAA-1112872_rec1_rec1b_rec2_rec3')
                 obj.trials =  [data_obj.data.sessions(1).trials, data_obj.data.sessions(2).trials];
@@ -38,7 +38,7 @@ classdef MismatchExperiment < MVTExperiment
         
         function trials = trials_of_type(obj, trial_type)
             
-            trials = trials_of_type@MVTExperiment(obj, trial_type);
+            trials = trials_of_type@RVTSession(obj, trial_type);
             
             if ~isempty(trials)
                 return
@@ -103,7 +103,7 @@ classdef MismatchExperiment < MVTExperiment
         
         
         function idx = get_svm_table_index(obj, cluster_id, protocol_id)
-        %% Overwrite MVTExperiment method as it does not work for the mismatch protocol
+        %% Overwrite RVTSession method as it does not work for the mismatch protocol
         %   need better design upstream
         
             trial_type = obj.protocol_type{obj.protocol_ids == protocol_id};
