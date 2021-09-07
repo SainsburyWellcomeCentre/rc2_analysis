@@ -4,7 +4,7 @@ loader          = Loader(config);
 
 recording_ids   = [];
 recording_ids  = experiment_details('visual_flow', 'protocols');
-recording_ids   = [recording_ids, experiment_details('mismatch_nov20', 'protocols')];
+recording_ids   = [recording_ids, experiment_details('mismatch_jul21', 'protocols')];
 recording_ids  = [recording_ids, experiment_details('darkness', 'protocols')];
 
 recording_id    = [];

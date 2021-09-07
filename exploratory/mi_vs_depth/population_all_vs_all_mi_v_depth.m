@@ -45,7 +45,7 @@ for probe_i = 1 : length(probe_fnames)
     exp_obj = get_experiment(data, config);
     
     if strcmp(experiment, 'mismatch_nov20+visual_flow')
-        if strcmp(data.experiment_type, 'visual_flow')
+        if strcmp(data.experiment_group, 'visual_flow')
             protocols = [1, 2];
         else
             protocols = [2, 4];
@@ -64,7 +64,7 @@ for probe_i = 1 : length(probe_fnames)
                 x           = exp_obj.trial_motion_fr(clusters(cluster_i).id, protocols(prot_x));
                 y           = exp_obj.trial_motion_fr(clusters(cluster_i).id, protocols(prot_y));
                 
-                if strcmp(data.experiment_type, 'mismatch_nov20')
+                if strcmp(data.experiment_group, 'mismatch_nov20')
                     x = x(1:10);
                     y = y(1:10);
                 end

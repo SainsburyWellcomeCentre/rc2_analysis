@@ -101,9 +101,26 @@ classdef AlignedTrial < handle
             
             VariableDefault('idx', []);
             
-            val = obj.trial.filtered_teensy(obj.offset + (0:obj.n_points-1));
+            if ~isempty(obj.trial.filtered_teensy)
+                val = obj.trial.filtered_teensy(obj.offset + (0:obj.n_points-1));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
+        end
+        
+        
+        
+        function val = filtered_teensy_2(obj, idx)
             
-            if ~isempty(idx), val = val(idx); end
+            VariableDefault('idx', []);
+            
+            if ~isempty(obj.trial.filtered_teensy_2)
+                val = obj.trial.filtered_teensy_2(obj.offset + (0:obj.n_points-1));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
         end
         
         
@@ -112,9 +129,12 @@ classdef AlignedTrial < handle
             
             VariableDefault('idx', []);
             
-            val = obj.trial.stage(obj.offset + (0:obj.n_points-1));
-            
-            if ~isempty(idx), val = val(idx); end
+            if ~isempty(obj.trial.stage)
+                val = obj.trial.stage(obj.offset + (0:obj.n_points-1));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
         end
         
         
@@ -128,7 +148,20 @@ classdef AlignedTrial < handle
                 if ~isempty(idx), val = val(idx); end
             else
                 val = [];
-                return
+            end
+        end
+        
+        
+        
+        function val = teensy_gain(obj, idx)
+            
+            VariableDefault('idx', []);
+            
+            if ~isempty(obj.trial.teensy_gain)
+                val = obj.trial.teensy_gain(obj.offset + (0:obj.n_points-1));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
             end
         end
         
@@ -138,9 +171,12 @@ classdef AlignedTrial < handle
             
             VariableDefault('idx', []);
             
-            val = obj.trial.camera1(obj.offset + (0:obj.n_points-1));
-            
-            if ~isempty(idx), val = val(idx); end
+            if ~isempty(obj.trial.camera1)
+                val = obj.trial.camera1(obj.offset + (0:obj.n_points-1));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
         end
         
         

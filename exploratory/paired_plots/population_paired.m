@@ -71,7 +71,7 @@ for probe_i = 1 : length(probe_fnames)
         exp_obj         = MismatchExperiment(this_data, config);
     elseif strcmp(experiment, 'mismatch_nov20+visual_flow')
         exp_obj         = get_experiment(this_data, config);
-        if strcmp(this_data.experiment_type, 'visual_flow')
+        if strcmp(this_data.experiment_group, 'visual_flow')
             protocols = [1, 2];
         else
             protocols = [2, 4];

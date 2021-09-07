@@ -2,7 +2,7 @@ classdef DataController < handle
     
     properties
         
-        experiment_type
+        experiment_group
         data
     end
     
@@ -11,7 +11,7 @@ classdef DataController < handle
         function obj = DataController(data, ~)
             
             obj.data = data;
-            obj.experiment_type = data.experiment_type{1};
+            obj.experiment_group = data.experiment_group{1};
         end
         
         

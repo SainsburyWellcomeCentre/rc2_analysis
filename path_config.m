@@ -1,4 +1,4 @@
-function config = config_rc2_analysis()
+function config = path_config()
 
 config.raw_probe_dir            = 'Z:\margrie\mvelez\mateoData_probe';
 config.raw_camera_dir           = 'Z:\margrie\mvelez\mateoData_cameras';

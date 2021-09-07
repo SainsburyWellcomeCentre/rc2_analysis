@@ -8,9 +8,9 @@ classdef Loader < handle
     
     methods
         
-        function obj = Loader(config)
+        function obj = Loader(file_manager)
             
-            obj.file_manager = FileManager(config);
+            obj.file_manager = file_manager;
         end
         
         
@@ -26,7 +26,7 @@ classdef Loader < handle
                 data = load_data(fname);
                 
                 data.probe_recording = recording_id;
-                
+                3
                 s_list = obj.session_list();
                 
                 for i = length(data.sessions):-1:1
@@ -40,7 +40,7 @@ classdef Loader < handle
                     end
                 end
                 
-                data.experiment_type = exp_type;
+                data.experiment_group = exp_type;
                 data = DataController(data);
                 
             else
@@ -55,6 +55,17 @@ classdef Loader < handle
             
             fname = obj.file_manager.session_list();
             s_list = readtable(fname);
+        end
+        
+        
+        function e_list = experiment_list(obj)
+            
+            [fname, exists] = obj.file_manager.experiment_list();
+            if exists
+                e_list = readtable(fname);
+            else
+                e_list = [];
+            end
         end
     end
 end

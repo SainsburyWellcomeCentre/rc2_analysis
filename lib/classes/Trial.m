@@ -188,7 +188,11 @@ classdef Trial < handle
             
             switch obj.protocol
                 case {'EncoderOnly', 'Coupled', 'StageOnly', 'ReplayOnly'}
-                    trace = obj.session.filtered_teensy(obj.start_idx:obj.end_idx);
+                    if ~isempty(obj.session.filtered_teensy)
+                        trace = obj.session.filtered_teensy(obj.start_idx:obj.end_idx);
+                    else
+                        trace = obj.session.filtered_teensy_2(obj.start_idx:obj.end_idx);
+                    end
                 case {'EncoderOnlyMismatch', 'CoupledMismatch'}
                     trace = obj.session.filtered_teensy_2(obj.start_idx:obj.end_idx);
             end
@@ -611,6 +615,13 @@ classdef Trial < handle
             
             mask = false(length(obj.rc2_t), 1);
             mask(mm_onset_idx : (mm_offset_idx + 0.05*obj.fs)) = true;
+        end
+        
+        
+        
+        function val = is_mismatch_trial(obj)
+            
+            val = any(strcmp(obj.protocol, {'CoupledMismatch', 'EncoderOnlyMismatch'}));
         end
     end
 end
