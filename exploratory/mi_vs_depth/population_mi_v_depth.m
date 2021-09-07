@@ -1,7 +1,7 @@
 function population_mi_v_depth(experiment, spiking_class)
 
 % experiment              = 'darkness';
-% spiking_class            = 'RS';   % 'any', 'RS', 'FS'
+% spiking_class            = 'wide';   % 'any', 'wide', 'narrow'
 
 
 %%

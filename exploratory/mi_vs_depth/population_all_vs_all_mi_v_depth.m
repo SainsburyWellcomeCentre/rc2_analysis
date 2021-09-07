@@ -1,7 +1,7 @@
 function population_all_vs_all_mi_v_depth(experiment, spiking_class)
 
 % experiment              = 'visual_flow';
-% spiking_class            = 'FS';   % 'any', 'RS', 'FS'
+% spiking_class            = 'narrow';   % 'any', 'narrow', 'wide'
 
 
 %%

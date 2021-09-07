@@ -44,27 +44,27 @@ elseif strcmp(experiment, 'mismatch_nov20+visual_flow')
 end
 
 
-n_fs = [];
-n_rs = [];
+n_narrow = [];
+n_wide = [];
 n_all = [];
 
 for probe_i = 1 : length(probe_fnames)
     
     data                = load_formatted_data(probe_fnames{probe_i}, config);
-    fs_clusters            = data.VISp_clusters([], 'FS');
-    rs_clusters             = data.VISp_clusters([], 'RS');
+    narrow_clusters            = data.VISp_clusters([], 'narrow');
+    wide_clusters             = data.VISp_clusters([], 'wide');
     all_clusters        = data.VISp_clusters([], 'any');
     
-    n_fs(probe_i) = length(fs_clusters);
-    n_rs(probe_i) = length(rs_clusters);
+    n_narrow(probe_i) = length(narrow_clusters);
+    n_wide(probe_i) = length(wide_clusters);
     n_all(probe_i) = length(all_clusters);
 end
 
 %%
-figure, plot(n_fs./n_all, 'o')
-set(gca, 'xtick', 1:length(n_fs), 'xticklabel', probe_fnames, 'ticklabelinterpreter', 'none')
-for i = 1 : length(n_fs)
-    text(i, n_fs(i)/n_all(i), sprintf('%i/%i', n_fs(i), n_all(i)), 'rotation', 90);
+figure, plot(n_narrow./n_all, 'o')
+set(gca, 'xtick', 1:length(n_narrow), 'xticklabel', probe_fnames, 'ticklabelinterpreter', 'none')
+for i = 1 : length(n_narrow)
+    text(i, n_narrow(i)/n_all(i), sprintf('%i/%i', n_narrow(i), n_all(i)), 'rotation', 90);
 end
 box off
     
