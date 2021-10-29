@@ -2,7 +2,7 @@ classdef CSVManager < handle
     
     
     properties
-        config
+        ctl
         
         save_on = false
         curr_dir
@@ -12,10 +12,10 @@ classdef CSVManager < handle
     
     methods
         
-        function obj = CSVManager(config)
+        function obj = CSVManager(ctl)
             
-            obj.config = config;
-            obj.curr_dir = config.summary_data_dir;
+            obj.ctl = ctl;
+            obj.curr_dir = ctl.file.path_config.summary_data_dir;
         end
         
         
@@ -34,7 +34,7 @@ classdef CSVManager < handle
             assert(all(cellfun(@ischar, varargin)), ...
                 'Not all arguments are character strings');
             
-            save_dir = obj.config.summary_data_dir;
+            save_dir = obj.ctl.file.path_config.summary_data_dir;
             for i = 1 : length(varargin)
                 save_dir = fullfile(save_dir, varargin{i});
             end

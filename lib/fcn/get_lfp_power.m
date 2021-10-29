@@ -5,7 +5,7 @@ function [lfp_power, p, channel_list, params] = get_lfp_power(bin_fname)
 %   each channel of an .imec.lf.bin recording.
 %   
 %   Assumes that the trigger channel has been saved.
-%   
+%       
 %   Reads the .imec.lf.meta file for channel info and sample rate, so this
 %   file must exist.
 %

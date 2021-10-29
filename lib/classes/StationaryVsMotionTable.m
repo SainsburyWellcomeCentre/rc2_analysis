@@ -2,11 +2,7 @@ classdef StationaryVsMotionTable < handle
     
     properties
         
-        config
-        
-        probe_fname
-        
-        n_rows
+        n_rows = 0
         svm_table = table([]);
         
         current_trial
@@ -19,19 +15,16 @@ classdef StationaryVsMotionTable < handle
     
     methods
         
-        function obj = StationaryVsMotionTable(config, probe_fname)
-            
-            obj.config = config;
-            obj.probe_fname = probe_fname;
-            
+        function obj = StationaryVsMotionTable()
         end
+        
         
         
         function val = get.n_rows(obj)
         
             val = size(obj.svm_table, 1);
-            
         end
+        
         
         
         function add_trial(obj, trial)
@@ -41,8 +34,8 @@ classdef StationaryVsMotionTable < handle
             obj.current_motion_mask = trial.motion_mask;
             obj.current_stationary_time = trial.stationary_time;
             obj.current_motion_time = trial.motion_time;
-            
         end
+        
         
         
         function add_table_row_for_cluster(obj, cluster)
@@ -57,7 +50,7 @@ classdef StationaryVsMotionTable < handle
             table_row = obj.n_rows + 1;
             
             % fill the table
-            obj.svm_table.probe_name{table_row} = obj.probe_fname;
+            obj.svm_table.probe_id{table_row} = obj.probe_id;
             obj.svm_table.cluster_id(table_row) = cluster.id;
             obj.svm_table.cluster_region{table_row} = cluster.region_str;
             obj.svm_table.cluster_depth(table_row) = cluster.depth;
@@ -85,7 +78,7 @@ classdef StationaryVsMotionTable < handle
         
         function save_table(obj)
             
-            csv_fname = fullfile(obj.config.summary_data_dir, 'stationary_vs_motion_fr', sprintf('%s.csv', obj.probe_fname));
+            csv_fname = fullfile(obj.config.summary_data_dir, 'stationary_vs_motion_fr', sprintf('%s.csv', obj.probe_id));
             writetable(obj.svm_table, csv_fname); 
         end
         
