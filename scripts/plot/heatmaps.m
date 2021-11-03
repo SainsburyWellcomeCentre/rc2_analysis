@@ -1,6 +1,18 @@
 % plot heatmaps, triggered on some feature of the trial
 
 
+% experiment_groups       = {'darkness'};
+% trial_group_labels      = {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'};
+% heatmap_trigger         = {'motion', 'motion', 'motion'};
+% limits                  = [-1, 1];
+% common_fs               = 60;
+% save_figs               = false;
+% overwrite               = true;
+% figure_dir              = {'heatmaps', 'darkness'};
+
+
+
+%%
 % experiment_groups       = {'visual_flow'};
 % trial_group_labels      = {'RVT', 'RV', 'VT_RVT', 'VT_RV', 'V_RVT', 'V_RV'};
 % heatmap_trigger         = {'motion', 'motion', 'motion', 'motion', 'motion', 'motion'};
@@ -23,13 +35,14 @@
 % figure_dir              = {'heatmaps', 'mismatch_jul21'};
 
 
+
 %%
 experiment_groups       = {'mismatch_darkness_oct21'};
 trial_group_labels      = {'R', 'T', 'RT_gain_up'};
 heatmap_trigger         = {'motion', 'motion', 'mismatch'};
 limits                  = [-1, 1];
 common_fs               = 60;
-save_figs               = false;
+save_figs               = true;
 overwrite               = true;
 figure_dir              = {'heatmaps', 'mismatch_darkness_oct21'};
 
@@ -59,7 +72,7 @@ ctl.setup_figures(figure_dir, save_figs);
 for ii = 1 : length(probe_ids)
     
     data        = ctl.load_formatted_data(probe_ids{ii});
-    clusters    = data.VISp_clusters();
+    clusters    = data.selected_clusters();
     
     for kk = 1 : length(trial_group_labels)
         

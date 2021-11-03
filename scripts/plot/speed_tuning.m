@@ -2,7 +2,7 @@
 experiment_groups       = {'mismatch_darkness_oct21'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'trial_structure', 'mismatch_darkness_oct21'};
+figure_dir              = {'tuning', 'mismatch_darkness_oct21'};
 
 
 ctl                     = RC2Analysis();

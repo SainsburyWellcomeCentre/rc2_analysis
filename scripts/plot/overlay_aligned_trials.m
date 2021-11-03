@@ -1,5 +1,5 @@
 % plot information for each trial
-experiment_groups       = {'mismatch_jul21'};
+experiment_groups       = {'mismatch_darkness_oct21'};
 save_figs               = true;
 overwrite               = true;
 figure_dir              = {'alignment'};

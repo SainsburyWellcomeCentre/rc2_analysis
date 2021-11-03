@@ -1,13 +1,26 @@
 %%script for producing a mismatch unity plot
 
-experiment_groups       = {'mismatch_nov20'};
-trial_group_labels      = {'RVT_gain_up', 'RV_gain_up'};
-marker_style            = {'o', 'o'};
+%%
+% experiment_groups       = {'mismatch_nov20'};
+% trial_group_labels      = {'RVT_gain_up', 'RV_gain_up'};
+% marker_style            = {'o', 'o'};
+
+
+
+%%
+experiment_groups       = {'mismatch_darkness_oct21'};
+trial_group_labels      = {'RT_gain_up'};
+marker_style            = {'o'};
+save_figs               = true;
+overwrite               = true;
+figure_dir              = {'mismatch_unity_plot', 'mismatch_darkness_oct21'};
 
 
 
 %%
 ctl                     = RC2Analysis();
+ctl.setup_figures(figure_dir, save_figs);
+
 probe_ids               = ctl.get_probe_ids(experiment_groups{:});
 mm                      = MismatchAnalysis();
 
@@ -19,7 +32,7 @@ direction               = cell(1, length(trial_group_labels));
 for ii = 1 : length(probe_ids)
     
     data        = ctl.load_formatted_data(probe_ids{ii});
-    clusters    = data.VISp_clusters;
+    clusters    = data.selected_clusters;
     
     for jj = 1 : length(trial_group_labels)
         
@@ -70,3 +83,6 @@ M               = max([u(:).max]);
 for ii = 1 : length(u)
     u(ii).xlim([m, M]);
 end
+
+
+ctl.figs.save_fig('unity_plot', overwrite);

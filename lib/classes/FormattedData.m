@@ -58,6 +58,8 @@ classdef FormattedData < handle
                         obj.sessions{ii} = MismatchNov2020Session(obj.data.sessions(ii));
                     case 'mismatch_jul2021'
                         obj.sessions{ii} = MismatchJul2021Session(obj.data.sessions(ii));
+                    case 'mismatch_darkness_oct2021'
+                        obj.sessions{ii} = MismatchDarknessOct2021Session(obj.data.sessions(ii));
                     case 'sparse_noise'
                         obj.sessions{ii} = SparseNoiseSession(obj.data.sessions(ii));
                     case 'sf_tf'
@@ -152,6 +154,19 @@ classdef FormattedData < handle
             search_ids = intersect(obj.data.selected_clusters, obj.spiking_class_ids(spiking_class));
             idx = ismember([obj.clusters(:).id], search_ids);
             selected_clusters = obj.clusters(idx);
+        end
+        
+        
+        
+        function ids = selected_cluster_ids(obj, spiking_class)
+        %%eturn the ids of selected clusters
+        %   Inputs:     spiking_class - 'any' (default), 'narrow', 'wide'
+        %   Outputs:    list of cluster ids
+        
+            VariableDefault('spiking_class', 'any');
+            
+            selected_clusters = obj.selected_clusters(spiking_class);
+            ids = [selected_clusters(:).id];
         end
         
         
@@ -310,7 +325,7 @@ classdef FormattedData < handle
             valid = obj.check_trial_group(trial_group_label);
             if ~valid; fr = []; return; end
         
-            idx = strcmp(obj.svm_table.trial_group_label, trial_group_label) & ...
+            idx = ismember(obj.svm_table.trial_group_label, trial_group_label) & ...
                   obj.svm_table.cluster_id == cluster_id;
             
             fr = obj.svm_table.stationary_fr(idx);
@@ -327,7 +342,7 @@ classdef FormattedData < handle
             valid = obj.check_trial_group(trial_group_label);
             if ~valid; fr = []; return; end
             
-            idx = strcmp(obj.svm_table.trial_group_label, trial_group_label) & ...
+            idx = ismember(obj.svm_table.trial_group_label, trial_group_label) & ...
                   obj.svm_table.cluster_id == cluster_id;
             
             fr = obj.svm_table.motion_fr(idx);
@@ -388,7 +403,7 @@ classdef FormattedData < handle
         
         
         
-        function times = get_motion_onset_times(obj, trial_group_label)
+        function [times, bouts] = get_motion_onset_times(obj, trial_group_label)
         %%returns the onset times of motion bouts for a trial group
             bouts = obj.get_motion_bouts_for_trial_group(trial_group_label);
             times = cellfun(@(x)(x.start_time), bouts);
@@ -421,7 +436,7 @@ classdef FormattedData < handle
         function [traces, t, times] = get_traces_around_motion_onset(obj, trial_group_label, limits, common_fs)
         %%for all motion trials in a trial group, get traces around the
         %%motion onsets, padding specified by 'limits' and sampled at 'common_fs' frequency
-            times = obj.get_motion_onset_times(trial_group_label);
+            [times, bouts] = obj.get_motion_onset_times(trial_group_label);
             trials = cellfun(@(x)(x.trial), bouts, 'uniformoutput', false);
             [traces, t] = obj.get_traces_around_times(trials, times, limits, common_fs);
         end
@@ -519,6 +534,11 @@ classdef FormattedData < handle
                 
                 tbl = [tbl; new_row];
             end
+        end
+        
+        
+        
+        function tbl = create_tuning_table(obj)
         end
         
         

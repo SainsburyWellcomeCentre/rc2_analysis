@@ -43,7 +43,9 @@ classdef RC2Analysis < handle
             
             idx = false(size(experiment_list, 1), 1);
             for i = 1 : n_groups
-                idx = idx | strcmp(experiment_list.experiment_group, varargin{i});
+                this_exp_idx = strcmp(experiment_list.experiment_group, varargin{i});
+                keep_idx = experiment_list.discard == 0;
+                idx = idx | (this_exp_idx & keep_idx);
             end
             
             val = unique(experiment_list.probe_id(idx));
@@ -188,6 +190,16 @@ classdef RC2Analysis < handle
             tbl = data.create_replay_offsets_table();
             obj.save.offsets_table(probe_id, tbl);
         end
+        
+        
+        
+        function create_tuning_tables(obj, probe_id)
+        % creates and saves speed tuning curves for all trials
+            data = obj.load_formatted_data(probe_id);
+            tbl = data.create_tuning_tables();
+            obj.save.tuning_table(probe_id, tbl);
+        end
+        
         
         
         

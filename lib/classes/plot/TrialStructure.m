@@ -56,7 +56,7 @@ classdef TrialStructure < handle
         
         function plot_camera(obj, h_ax)
             
-            obj.plot_general_trace(h_ax, obj.trial.camera1, 'Camera (a.u.)');
+%             obj.plot_general_trace(h_ax, obj.trial.camera1, 'Camera (a.u.)');
             
 %             lims = prctile(obj.trial.camera1, [0, 30]);
 %             m = median(obj.trial.camera1(obj.trial.camera1 > lims(1) & obj.trial.camera1 < lims(2)));

@@ -22,7 +22,7 @@ classdef RVTSession < RC2Session
             obj = obj@RC2Session(session);
             
             for ii = 1 : session.n_trials
-                
+                ii
                 % create trial object (may have to subclass this at one
                 % point)
                 obj.trials{ii} = Trial(session.trials(ii), obj);

@@ -1,4 +1,4 @@
-experiment_groups    = {'visual_flow', 'darkness', 'mismatch_nov20', 'mismatch_jul21'};
+experiment_groups    = {'mismatch_darkness_oct21'};
 
 ctl                  = RC2Analysis();
 probe_ids            = ctl.get_probe_ids(experiment_groups{:});
