@@ -54,8 +54,8 @@ classdef VelocityBins < handle
             
             for trial_i = 1 : length(obj.trials)
                 
-                vel = obj.trials(trial_i).velocity();
-                idx = obj.trials(trial_i).motion_mask();
+                vel = obj.trials{trial_i}.velocity();
+                idx = obj.trials{trial_i}.motion_mask();
                 all_velocities = [all_velocities; vel(idx)];    
             end
             

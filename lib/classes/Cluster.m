@@ -15,7 +15,9 @@ classdef Cluster < handle
     properties (Dependent = true)
         
         id
+        spike_times
         region_str
+        depth
         spiking_class
         distance_from_probe_tip;
     end
@@ -39,9 +41,21 @@ classdef Cluster < handle
         
         
         
+        function val = get.spike_times(obj)
+            val = obj.cluster.spike_times;
+        end
+        
+        
+        
         function val = get.region_str(obj)
         %%which region is the cluster in
             val = obj.cluster.region_str;
+        end
+        
+        
+        
+        function val = get.depth(obj)
+            val = obj.cluster.depth;
         end
         
         
@@ -68,9 +82,5 @@ classdef Cluster < handle
         %%return whether cluster is in VISp
             val = ~isempty(regexp(obj.region_str, 'VISp\d', 'once'));
         end
-        
-        
-        
-        
     end
 end

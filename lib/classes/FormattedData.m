@@ -538,7 +538,29 @@ classdef FormattedData < handle
         
         
         
-        function tbl = create_tuning_table(obj)
+        function tbl = create_tuning_table(obj, trial_types)
+            
+            tt = TuningTable(obj.probe_id);
+            
+            % get all trials of type specified in the cell array
+            % 'trial_types'
+            trials = obj.get_trials_with_trial_group_label(trial_types);
+            
+            % if the trials are replays, align them to the original
+            for ii = 1 : length(trials)
+                aligned_trials{ii} = trials{ii}.to_aligned;
+            end
+            
+            % add these trials to the TuningTable object
+            tt.add_trials(aligned_trials);
+            
+            % all selected clusters add them to the tuning table
+            for cluster = obj.selected_clusters
+                tt.add_row_for_cluster(cluster);
+            end
+            
+            % return the table
+            tbl = tt.tbl;
         end
         
         
