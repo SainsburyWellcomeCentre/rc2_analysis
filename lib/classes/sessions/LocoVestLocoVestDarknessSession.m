@@ -4,7 +4,7 @@ classdef LocoVestLocoVestDarknessSession < RVTSession
     properties (Constant = true)
         
         trial_group_ids      = 1 : 4
-        trial_group_labels    = {'RT', 'R', 'T_RT', 'T_R'};
+        trial_group_labels    = {'RT', 'R', 'T_RT', 'T_R'}
     end
     
     

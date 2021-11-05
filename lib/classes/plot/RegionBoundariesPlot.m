@@ -24,10 +24,8 @@ classdef RegionBoundariesPlot < handle
         %%information
             
             obj.probe_track = probe_track;
-            
             [obj.boundaries, ~, obj.region_str] = probe_track.region_boundaries();
-            idx = find(strcmp(obj.region_str, 'VISp5'));
-            obj.middle_l5 = mean(obj.boundaries([idx, idx+1]));
+            obj.middle_l5 = obj.probe_track.mid_l5_visp();
         end
         
         

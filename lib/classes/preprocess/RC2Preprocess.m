@@ -87,46 +87,33 @@ classdef RC2Preprocess < RC2Format
         
         
         
-        function hf_power(obj, probe_id, shank_id, stage, params)
-        %%computes the high frequency power profile at a particular stage of
-        %%processing
-        %   stage = 0   (no track information yet available)
-        %   stage = 1   (track information available)
-        %   params - structure, containing field names with same names as
-        %               property names of HighFrequencyPowerProfile
-            
-            VariableDefault('stage', 'with_anatomy');
-            VariableDefault('params', []);
+        function hf_power = hf_power(obj, probe_id, shank_id)
+        %%return a HighFrequencyPowerProfile object for probe_id and
+        %%shank_id
             
             recording               = obj.load.spikeglx_ap_recording(probe_id);
             
-            % compute high frequency power profile
-            hf_power               = HighFrequencyPowerProfile(recording, shank_id);
-            hf_power.apply_parameters(params);
-            hf_power.compute();
+            hf_power               = HighFrequencyPowerProfile(recording, probe_id, shank_id);
             
-            ephys_l5                = hf_power.search_for_l5();
+            probe_track            = obj.load_track(probe_id, shank_id);
+            hf_power.probe_track   = probe_track;
             
-            % get distance of all clusters from probe tip
-            clusters_from_tip_um = obj.mua_from_tip_um(probe_id, shank_id);
+            clusters_from_tip_um   = obj.mua_from_tip_um(probe_id, shank_id);
+            hf_power.clusters_from_tip_um = clusters_from_tip_um;
+        end
+        
+        
+        
+        function save_hf_power(obj, hf_power)
+        %%save information from the hf_power object
+        
+            probe_id = hf_power.probe_id;
+            shank_id = hf_power.shank_id;
             
-            if strcmp(stage, 'with_anatomy')
-                probe_track         = obj.load_track(probe_id, shank_id);
-                anatomy_l5          = probe_track.mid_l5_visp();
-                delta_l5            = ephys_l5 - anatomy_l5;
-            else
-                obj.save.create_tracks_dir(probe_id);
-                probe_track         = [];
-                delta_l5            = 0;
-            end
+            h_fig = hf_power.plot_summary();
             
-            hf_power_fig = HighFrequencyPowerProfilePlot();
-            hf_power_fig.plot(hf_power, probe_track, clusters_from_tip_um);
-            
-            FigureTitle(gcf, sprintf('%s HF power, shank %i', probe_id, shank_id));
-            
-            obj.save.hf_power_figure(probe_id, shank_id, hf_power_fig.h_fig);
-            obj.save.track_offset(probe_id, shank_id, delta_l5);
+            obj.save.track_offset(probe_id, shank_id, hf_power.delta_l5);
+            obj.save.hf_power_figure(probe_id, shank_id, h_fig);
             obj.save.hf_power_parameters(probe_id, shank_id, hf_power.get_parameters());
         end
         

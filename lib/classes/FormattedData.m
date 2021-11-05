@@ -79,6 +79,13 @@ classdef FormattedData < handle
         
         
         
+        function tbl = load_tuning_table(obj)
+            
+            tbl = obj.ctl.load_tuning_table(obj.probe_id);
+        end
+        
+        
+        
         function apply_offsets(obj)
         %%applies offset sample for a replay trial
             sessions = obj.motion_sessions();
@@ -351,6 +358,35 @@ classdef FormattedData < handle
         
         
         
+        function [fr, sd, n, x, shuff, stat_fr, stat_sd, stat_n] = tuning_curve_info(obj, cluster_id, trial_group_label)
+            
+            tbl = obj.load_tuning_table();
+            
+            idx = tbl.cluster_id == cluster_id;
+            
+            tuning = tbl.tuning{idx};
+            timing = tbl.timing{idx};
+            
+            bin_edges = tbl.bin_edges{idx};
+            stat_fr = tbl.stationary_fr{idx};
+            
+            fr = nanmean(tuning, 2);
+            sd = nanstd(tuning, [], 2);
+            n = sum(~isnan(tuning), 2);
+            x = (bin_edges(1:end-1) + bin_edges(2:end))/2;
+            
+            shuff = ShuffleTuning(tuning, x);
+            
+%             p_anova = s.p;%anova1(tuning', [], 'off');
+%             beta = s.beta(1);
+            
+            stat_fr = nanmean(stat_fr);
+            stat_sd = nanstd(stat_fr);
+            stat_n = sum(~isnan(stat_fr));
+        end
+        
+        
+        
         function valid = check_trial_group(obj, trial_group_label)
         %%is the trial group in the data
             sessions = obj.motion_sessions();
@@ -542,21 +578,24 @@ classdef FormattedData < handle
             
             tt = TuningTable(obj.probe_id);
             
-            % get all trials of type specified in the cell array
-            % 'trial_types'
-            trials = obj.get_trials_with_trial_group_label(trial_types);
-            
-            % if the trials are replays, align them to the original
-            for ii = 1 : length(trials)
-                aligned_trials{ii} = trials{ii}.to_aligned;
-            end
-            
-            % add these trials to the TuningTable object
-            tt.add_trials(aligned_trials);
-            
-            % all selected clusters add them to the tuning table
-            for cluster = obj.selected_clusters
-                tt.add_row_for_cluster(cluster);
+            for ii = 1 : length(trial_types)
+                
+                % get all trials of type specified in the cell array
+                % 'trial_types'
+                trials = obj.get_trials_with_trial_group_label(trial_types{ii});
+                
+                % if the trials are replays, align them to the original
+                for jj = 1 : length(trials)
+                    aligned_trials{jj} = trials{jj}.to_aligned;
+                end
+                
+                % add these trials to the TuningTable object
+                tt.add_trials(aligned_trials);
+                
+                % all selected clusters add them to the tuning table
+                for cluster = obj.selected_clusters
+                    tt.add_row_for_cluster(cluster);
+                end
             end
             
             % return the table

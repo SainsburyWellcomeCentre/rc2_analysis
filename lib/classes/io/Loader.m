@@ -75,10 +75,20 @@ classdef Loader < handle
         
         
         
+        function tuning_table = tuning_table(obj, probe_id)
+            
+            fname = obj.file_manager.tuning_table(probe_id);
+            load(fname, 'tuning_table');
+        end
+        
+        
+        
         function track = track_csv(obj, probe_id, shank_id)
             
             fname = obj.file_manager.track_csv(probe_id, shank_id);
+            warning('off', 'MATLAB:table:ModifiedAndSavedVarnames');
             track = obj.readtable(fname);
+            warning('on', 'MATLAB:table:ModifiedAndSavedVarnames');
         end
         
         

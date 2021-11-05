@@ -32,6 +32,14 @@ classdef Saver < handle
         
         
         
+        function tuning_table(obj, probe_id, tbl_struct)
+            
+            fname = obj.file_manager.tuning_table(probe_id);
+            obj.savemat(fname, tbl_struct);
+        end
+        
+        
+        
         function formatted_data(obj, probe_id, formatted_data)
             
             fname = obj.file_manager.formatted_data(probe_id);
@@ -49,9 +57,9 @@ classdef Saver < handle
         
         
         
-        function lfp_power_figure(obj, probe_id, shank_id, h_fig)
+        function hf_power_figure(obj, probe_id, shank_id, h_fig)
             
-            fname = obj.file_manager.lfp_power_figure(probe_id, shank_id);
+            fname = obj.file_manager.hf_power_figure(probe_id, shank_id);
             
             if obj.check_save(fname)
                 figure(h_fig);
@@ -74,9 +82,9 @@ classdef Saver < handle
         
         
         
-        function lfp_power_parameters(obj, probe_id, shank_id, params)
+        function hf_power_parameters(obj, probe_id, shank_id, params)
             
-            fname = obj.file_manager.lfp_power_parameters(probe_id, shank_id);
+            fname = obj.file_manager.hf_power_parameters(probe_id, shank_id);
             obj.savemat(fname, params);
         end
         

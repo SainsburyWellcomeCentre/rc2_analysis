@@ -10,7 +10,7 @@ classdef HighFrequencyPowerProfile < handle
         lower_hz = 500
         upper_hz = 5000
         
-        smoothing_distance_um = 100
+        smoothing_distance_um = 50
         interp_distance_um = 1
         
         channel_ids_to_remove
@@ -21,12 +21,20 @@ classdef HighFrequencyPowerProfile < handle
         batches_to_use = 1:10;
         
         power_raw
+        
+        probe_track
+        clusters_from_tip_um
+        
+        ephys_l5
+        anatomy_l5
+        delta_l5
+        
+        probe_id
     end
     
     properties (SetAccess = private)
         
         shank_id
-        
         
         power_interp
         power_smooth
@@ -45,7 +53,7 @@ classdef HighFrequencyPowerProfile < handle
     
     methods
         
-        function obj = HighFrequencyPowerProfile(recording, shank_id)
+        function obj = HighFrequencyPowerProfile(recording, probe_id, shank_id)
         %%class for computing the high frequency ("MUA spectral") power
         %   profile along a probe shank (Senzai et al., 2018)
         %
@@ -57,7 +65,10 @@ classdef HighFrequencyPowerProfile < handle
             VariableDefault('shank_id', 0);
             
             obj.rec = recording;
+            
             obj.upper_hz = min(obj.upper_hz, obj.rec.fs/2);
+            
+            obj.probe_id = probe_id;
             obj.shank_id = shank_id;
             
             obj.batches_to_use = 1:min(length(obj.sample_start_t), 10);
@@ -83,9 +94,31 @@ classdef HighFrequencyPowerProfile < handle
             % probe serial number
             if isfield(obj.rec.config, 'imProbeSN')
                 if strcmp(obj.rec.config.imProbeSN, '641250910')
-                    val = [0, 1, 2, 4, 26, 71, 97, 104, 123, 151, 155, 156, 167];
+                    val = [0, 0;
+                           1, 0;
+                           2, 0;
+                           4, 0;
+                           26, 0;
+                           71, 0;
+                           97, 0;
+                           104, 0;
+                           123, 0;
+                           151, 0;
+                           155, 0;
+                           156, 0;
+                           167 0];
                 elseif strcmp(obj.rec.config.imProbeSN, '641250913')
-                    val = [0, 1, 2, 3, 4];
+                    val = [0, 0;
+                           1, 0;
+                           2, 0;
+                           3, 0;
+                           4, 0];
+%                 elseif strcmp(obj.rec.config.imProbeSN
+                end
+            elseif isfield(obj.rec.config, 'imDatPrb_sn')
+                if strcmp(obj.rec.config.imDatPrb_sn, '19011119353')
+                    val = [69, 1;
+                           98, 1];  
                 end
             end
         end
@@ -96,9 +129,33 @@ classdef HighFrequencyPowerProfile < handle
         %%from the bad electrode IDs, identifies the channel IDs which will be
         %   bad
             channel_ids = obj.rec.all_channel_ids();
-            electrode_ids = obj.rec.electrode_id_from_channel_id(channel_ids);
-            idx = ismember(electrode_ids, obj.bad_electrode_ids);
+            [electrode_ids, shank_ids] = obj.rec.electrode_id_from_channel_id(channel_ids);
+            idx = ismember(electrode_ids, obj.bad_electrode_ids(:, 1)) & ismember(shank_ids, obj.bad_electrode_ids(:, 2));
             val = channel_ids(idx);
+        end
+        
+        
+        
+        function val = get.ephys_l5(obj)
+            
+            val = obj.search_for_l5();
+        end
+        
+        
+        
+        function val = get.anatomy_l5(obj)
+            
+            val = nan;
+            if ~isempty(obj.probe_track)
+                val = obj.probe_track.mid_l5_visp();
+            end
+        end
+        
+        
+        
+        function val = get.delta_l5(obj)
+            
+            val = obj.ephys_l5 - obj.anatomy_l5;
         end
         
         
@@ -131,7 +188,7 @@ classdef HighFrequencyPowerProfile < handle
         
         
         
-        function compute(obj)
+        function run(obj)
         %%computes all steps in the HF power pipeline:
         %       1. raw power on all channels
         %       2. interpolation over channels at obj.interp_distance_um
@@ -230,35 +287,34 @@ classdef HighFrequencyPowerProfile < handle
             
             channel_ids = obj.channel_ids_to_process;
             
+            
+            % remove bad and reference channels
             [power_raw, channel_ids] = obj.remove_unuseful_channels(obj.power_raw, channel_ids);
+            
+            % separate channels into electrode banks
             [power_raw_columns, column_channel_ids] = obj.separate_into_electrode_columns(power_raw, channel_ids);
             
-            % preallocate
-            obj.power_interp = nan(length(obj.interp_points_from_tip), size(obj.power_raw, 2));
+            n_interpolated_points   = length(obj.interp_points_from_tip);
+            n_batches               = size(obj.power_raw, 2);
+            n_electrode_columns     = length(power_raw_columns);
             
-            for ii = 1 : size(obj.power_raw, 2)
-                power_interp = nan(length(obj.interp_points_from_tip), size(power_raw_columns, 2));
-                for jj = 1 : size(power_raw_columns, 2)
-                    [this_power, these_channel_ids] = ...
-                        obj.remove_unuseful_channels(power_raw_columns{jj}(:, ii), column_channel_ids{jj});
-                    these_channels_from_tip_um = obj.rec.channel_from_tip_um(these_channel_ids);
-                    power_interp(:, jj) = interp1(these_channels_from_tip_um, this_power, obj.interp_points_from_tip);
+            % preallocate
+            obj.power_interp = nan(n_interpolated_points, n_electrode_columns, n_batches);
+            
+            for ii = 1 : n_batches
+                
+%                 power_interp = nan(n_interpolated_points, n_electrode_columns);
+                
+                % interpolate all banks of electrodes
+                for jj = 1 : n_electrode_columns
+                    
+                    these_channels_from_tip_um = obj.rec.channel_from_tip_um(column_channel_ids{jj});
+                    obj.power_interp(:, jj, ii) = interp1(these_channels_from_tip_um, power_raw_columns{jj}(:, ii), obj.interp_points_from_tip);
                 end
-                obj.power_interp(:, ii) = mean(power_interp, 2);
+                
+%                 % average across electrode banks
+%                 obj.power_interp(:, ii) = mean(power_interp, 2);
             end
-
-%             for ii = 1 : size(power_raw_columns, 2)
-%                 
-%                 [power_raw, these_channel_ids] = obj.remove_unuseful_channels(power_raw_columns{ii}, column_channel_ids{ii});
-%                 
-%                 power_raw           = bsxfun(@rdivide, power_raw, max(power_raw, [], 1));
-%                 this_power          = mean(power_raw(:, obj.batches_to_use), 2);
-%                 
-%                 these_channels_from_tip_um = obj.rec.channel_from_tip_um(these_channel_ids);
-%                 
-%                 % interpolate
-%                 obj.power_interp(:, ii) = interp1(these_channels_from_tip_um, this_power, obj.interp_points_from_tip);
-%             end
         end
         
         
@@ -285,10 +341,14 @@ classdef HighFrequencyPowerProfile < handle
         function smooth_across_channels(obj)
         %%smooth across the interpolated power profile from obj.interpolate_across_channels
         %   with a distance of obj.smoothing_distance_um
-        
+            
+            obj.power_smooth = nan(size(obj.power_interp));
             n_smoothing_points = ceil(obj.smoothing_distance_um / obj.interp_distance_um);
-            avg_interp_power = mean(obj.power_interp, 2);
-            obj.power_smooth = smooth(avg_interp_power, n_smoothing_points);
+            for ii = 1 : size(obj.power_interp, 2)
+                for jj = 1 : size(obj.power_interp, 3)
+                    obj.power_smooth(:, ii, jj) = smooth(obj.power_interp(:, ii, jj), n_smoothing_points);
+                end
+            end
         end
         
         
@@ -333,9 +393,18 @@ classdef HighFrequencyPowerProfile < handle
             from_tip = obj.interp_points_from_tip;
             search_idx = find(from_tip > obj.search_above & from_tip < obj.search_below);
             
-            [~, max_idx] = max(obj.power_smooth(search_idx));
+            avg_power = mean(mean(obj.power_smooth(:, :, obj.batches_to_use), 2), 3);
+            
+            [~, max_idx] = max(avg_power(search_idx));
             
             l5_from_tip = from_tip(search_idx(1) + max_idx - 1);
+        end
+        
+        
+        
+        function offset = auto_offset(obj)
+            
+            offset = obj.ephys_l5 - obj.probe_track.mid_l5_visp();
         end
         
         
@@ -394,8 +463,7 @@ classdef HighFrequencyPowerProfile < handle
         function [power, channel_ids] = remove_unuseful_channels(obj, power, channel_ids)
         %%use list of channel_ids to remove reference and bad channels
             
-                channel_idx = ~ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:)]);
-                
+                channel_idx = ~ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:); obj.channel_ids_to_remove(:)]);
                 channel_ids   = channel_ids(channel_idx);
                 power         = power(channel_idx, :);
         end
@@ -405,7 +473,7 @@ classdef HighFrequencyPowerProfile < handle
         function power = set_unuseful_channels_to_nan(obj, power, channel_ids)
         %%use list of channel_ids to set power to nan on reference and bad channels
             
-                channel_idx             = ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:)]);
+                channel_idx             = ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:); obj.channel_ids_to_remove(:)]);
                 power(channel_idx, :)   = nan;
         end
         
@@ -449,6 +517,52 @@ classdef HighFrequencyPowerProfile < handle
             for ii = 1 : length(props)
                 obj.(props{ii}) = params.(props{ii});
             end
+        end
+        
+        
+        
+        function hf_plot = interactive_plot(obj)
+            
+            hf_plot = HighFrequencyPowerProfilePlot(obj);
+            hf_plot.plot_by_column_interactive();
+        end
+        
+        
+        
+        function plot_raw_batches(obj)
+            
+            hf_plot = HighFrequencyPowerProfilePlot(obj);
+            hf_plot.raw_batches();
+        end
+        
+        
+        
+        function overlay_raw_batches(obj)
+            
+            hf_plot = HighFrequencyPowerProfilePlot(obj);
+            hf_plot.overlay_raw_batches();
+        end
+        
+        
+        
+        function plot_interpolated_batches(obj)
+            
+            hf_plot = HighFrequencyPowerProfilePlot(obj);
+            hf_plot.interpolated_batches();
+        end
+        
+        
+        
+        function h_fig = plot_summary(obj)
+            
+            hf_plot = HighFrequencyPowerProfilePlot(obj);
+            hf_plot.plot_summary();
+            h_fig = gcf;
+        end
+        
+        function save(obj)
+            
+            
         end
     end
 end

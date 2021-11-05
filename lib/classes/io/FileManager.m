@@ -413,6 +413,14 @@ classdef FileManager < handle
         
         
         
+        function [fname, exists] = tuning_table(obj, probe_id)
+            
+            fname = fullfile(obj.path_config.summary_data_dir, 'tuning_table', sprintf('%s.mat', probe_id));
+            exists = isfile(fname);
+        end
+        
+        
+        
         function [fname, exists] = hf_power_parameters(obj, probe_id, shank_id)
             
             fname = fullfile(obj.imec0_ks2(probe_id), 'tracks', sprintf('hf_power_%i.mat', shank_id));
