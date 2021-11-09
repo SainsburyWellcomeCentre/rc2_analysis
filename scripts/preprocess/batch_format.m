@@ -1,4 +1,4 @@
-experiment_groups    = {'visual_flow', 'darkness', 'mismatch_nov20', 'mismatch_jul21'};
+experiment_groups    = {'visual_flow', 'darkness', 'mismatch_nov20', 'mismatch_jul21', 'mismatch_darkness_oct21'};
 
 format               = RC2Format();
 probe_ids            = format.get_probe_ids(experiment_groups{:});

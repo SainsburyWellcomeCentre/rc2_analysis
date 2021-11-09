@@ -2,7 +2,7 @@ HighFrequencyPowerProfile class
 
 
 The HighFrequencyPowerProfile class calculates the bandpower (by default the power 500Hz-5kHz) on a set of channels along a probe shank, in order to identify peaks in the high frequency power along the length of the shank.
-This is primarily used to identify where along the shank the middle of L5 occurs (c.f. Senzai et al. (2018) Neuron).
+This is primarily used to identify where along the shank the middle of L5 occurs (c.f. Senzai et al. (2019) Neuron).
 
 The recording is separated into 'batches' (defined by properties 'first_batch_s', 'batch_interval_s' and 'batch_duration_s'). 
 

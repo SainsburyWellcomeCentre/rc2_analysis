@@ -21,11 +21,6 @@ classdef AlignedTrial < handle
         replayed_trial_id
     end
     
-    properties
-        
-        min_bout_duration = 2
-    end
-    
     
     
     methods

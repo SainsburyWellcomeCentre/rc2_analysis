@@ -1,6 +1,7 @@
 %%script for producing a unity plot for stationary vs. motion for each probe recording and trial group
 
 
+%% experiments for visual flow
 % experiment_groups       = {'visual_flow'};
 % trial_group_labels      = {'RVT', 'RV', 'VT_RVT', 'VT_RV', 'V_RVT', 'V_RV'};
 % marker_style            = {'o', 'o', 'o', 'o', 'o', 'o'};
@@ -10,7 +11,7 @@
 % mi_figure_dir           = {'mi_vs_depth', 'visual_flow', 'stationary_vs_motion', 'population'};
 
 
-%%
+%% experiments performed in darkness
 % experiment_groups       = {'darkness'};
 % trial_group_labels      = {'RT', 'R', 'T_bank', 'T_RT', 'T_R'};
 % marker_style            = {'o', 'o', 'o', 'o', 'o'};
@@ -20,7 +21,7 @@
 
 
 
-%%
+%% mismatch experiments
 % experiment_groups       = {'mismatch_jul21'};
 % trial_group_labels      = {'RVT_gain_up', 'RV_gain_up', 'R', 'T'};
 % marker_style            = {'o', 'o', 'o', 'o'};

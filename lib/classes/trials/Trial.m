@@ -21,9 +21,7 @@ classdef Trial < handle
         original_trial_id
         replay_offset = 0  % samples
         
-        min_bout_duration = 2;  % s
         use_camera_for_stationary = false;
-        
     end
     
     properties (Dependent = true)
