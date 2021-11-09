@@ -139,8 +139,10 @@ classdef RVTSession < RC2Session
             
             [~, max_corr_idx] = max(r);
             
+            % offset, of large gaps, zero indexed
+            offset_correction = max(start_idx(max_corr_idx) - 500, 1) - 1;
+            
             % next loop over more carefully
-            offset_correction = start_idx(max_corr_idx) - 500;
             start_idx = start_idx(max_corr_idx) + (-500:499);
             start_idx(start_idx<1) = [];
             start_idx(start_idx>max(n_ori_samples, n_rep_samples)) = [];
