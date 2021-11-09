@@ -51,6 +51,17 @@ classdef Loader < handle
         
         
         
+        function data = load_from_formatted_data(obj, probe_id, var)
+        %%load a specific variable from the formatted data
+            if ~iscell(var)
+                var = {var};
+            end
+            fname = obj.file_manager.formatted_data(probe_id);
+            data = load(fname, var{:});
+        end
+        
+        
+        
         function e_list = experiment_list(obj)
             
             fname = obj.file_manager.experiment_list();
