@@ -254,15 +254,22 @@ classdef FormattedData < handle
         
         
         
-        function bouts = get_motion_bouts_for_trial_group(obj, trial_group_label)
+        function bouts = get_motion_bouts_for_trial_group(obj, trial_group_label, options)
         %%returns an array of 'motion bouts' for a particular
         %%trial_group_label
-            
+        %
+        %   'options' can be supplied to determine which bouts are selected
+        %       it is a structure with fields
+        %               min_bout_duration -  the minimum duration in s for
+        %                                   a bout to be included
+        %               include_200ms - whether or not to include the first
+        %                               200ms after the solenoid goes low
+        
             sessions = obj.motion_sessions(); %#ok<*PROPLC>
             
             bouts = {};
             for ii = 1 : length(sessions)
-                these_bouts = sessions{ii}.get_motion_bouts_for_trial_group(trial_group_label);
+                these_bouts = sessions{ii}.get_motion_bouts_for_trial_group(trial_group_label, options);
                 bouts = [bouts, these_bouts]; %#ok<*AGROW>
             end
         end
@@ -439,9 +446,17 @@ classdef FormattedData < handle
         
         
         
-        function [times, bouts] = get_motion_onset_times(obj, trial_group_label)
+        function [times, bouts] = get_motion_onset_times(obj, trial_group_label, options)
         %%returns the onset times of motion bouts for a trial group
-            bouts = obj.get_motion_bouts_for_trial_group(trial_group_label);
+        %
+        %   'options' can be supplied to determine which bouts are selected
+        %       it is a structure with fields
+        %               min_bout_duration -  the minimum duration in s for
+        %                                   a bout to be included
+        %               include_200ms - whether or not to include the first
+        %                               200ms after the solenoid goes low
+        
+            bouts = obj.get_motion_bouts_for_trial_group(trial_group_label, options);
             times = cellfun(@(x)(x.start_time), bouts);
         end
         
@@ -479,18 +494,25 @@ classdef FormattedData < handle
         
         
         
-        function fr = get_fr_responses(obj, cluster_id, trial_group_label, type, limits, fs)
+        function [fr, t] = get_fr_responses(obj, cluster_id, trial_group_label, type, limits, fs, options)
         %%returns firing rate convolutions around events indicated by
         %%'type' (motion or mismatch), for trials in trial_group_label,
         %%between limits (1x2 vector) sampled at fs.
+        %
+        %   'options' can be supplied to determine which bouts are selected
+        %       it is a structure with fields
+        %               min_bout_duration -  the minimum duration in s for
+        %                                   a bout to be included
+        %               include_200ms - whether or not to include the first
+        %                               200ms after the solenoid goes low
         
             if strcmp(type, 'motion')
-                times = obj.get_motion_onset_times(trial_group_label);
+                times = obj.get_motion_onset_times(trial_group_label, options);
             elseif strcmp(type, 'mismatch')
                 times = obj.get_mismatch_onset_times(trial_group_label);
             end
             
-            fr = obj.get_fr_around_times(cluster_id, times, limits, fs);
+            [fr, t] = obj.get_fr_around_times(cluster_id, times, limits, fs);
         end
         
         
@@ -630,7 +652,7 @@ classdef FormattedData < handle
         
         
         
-        function fr = get_fr_around_times(obj, cluster_id, times, limits, fs)
+        function [fr, t] = get_fr_around_times(obj, cluster_id, times, limits, fs)
         %%returns firing rate convolutions around the times 'times' (Nx1
         %%vector) for the cluster 'cluster_id', spanning limits at a sample
         %%frequency of common_fs

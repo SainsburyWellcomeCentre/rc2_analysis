@@ -8,9 +8,7 @@ classdef RVTSession < RC2Session
     
     properties
         
-        include_200ms = true
         use_aligned_data = true
-        min_bout_duration = 2  % seconds
     end
     
     
@@ -22,7 +20,7 @@ classdef RVTSession < RC2Session
             obj = obj@RC2Session(session);
             
             for ii = 1 : session.n_trials
-                ii
+                
                 % create trial object (may have to subclass this at one
                 % point)
                 obj.trials{ii} = Trial(session.trials(ii), obj);
@@ -169,8 +167,14 @@ classdef RVTSession < RC2Session
         
         
         
-        function all_bouts = get_motion_bouts_for_trial_group(obj, trial_group_id)
-            
+        function all_bouts = get_motion_bouts_for_trial_group(obj, trial_group_id, options)
+        %   'options' can be supplied to determine which bouts are selected
+        %       it is a structure with fields
+        %               min_bout_duration -  the minimum duration in s for
+        %                                   a bout to be included
+        %               include_200ms - whether or not to include the first
+        %                               200ms after the solenoid goes low
+        
             trials = obj.get_trials_with_trial_group_label(trial_group_id); %#ok<*PROPLC>
             
             all_bouts = {};
@@ -182,11 +186,11 @@ classdef RVTSession < RC2Session
                     trial = trials{ii};
                 end
                 
-                motion_bouts = trial.motion_bouts(obj.include_200ms);
+                motion_bouts = trial.motion_bouts(options.include_200ms);
                 all_bouts = [all_bouts, motion_bouts];
             end
             
-            valid = cellfun(@(x)(x.duration > obj.min_bout_duration), all_bouts);
+            valid = cellfun(@(x)(x.duration > options.min_bout_duration), all_bouts);
             all_bouts = all_bouts(valid);
         end
         

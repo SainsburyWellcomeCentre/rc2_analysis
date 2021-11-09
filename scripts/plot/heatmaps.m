@@ -45,6 +45,8 @@ common_fs               = 60;
 save_figs               = true;
 overwrite               = true;
 figure_dir              = {'heatmaps', 'mismatch_darkness_oct21'};
+include_first_200ms     = true;
+
 
 
 %%
