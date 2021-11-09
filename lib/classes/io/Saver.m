@@ -2,6 +2,7 @@ classdef Saver < handle
     
     properties (SetAccess = private)
         
+        git
         file_manager
     end
     
@@ -10,8 +11,9 @@ classdef Saver < handle
     methods
         
         function obj = Saver(file_manager)
-        %%class for saving files    
+        %%class for saving files
             obj.file_manager = file_manager;
+            obj.git = Git(file_manager.path_config.git_dir);
         end
         
         
@@ -184,6 +186,8 @@ classdef Saver < handle
             
             if obj.check_save(fname)
                 save(fname, '-struct', 'struct', '-v7.3');
+                git = obj.git.info; %#ok<*PROPLC>
+                save(fname, '-append', 'git');
             end
         end
     end
