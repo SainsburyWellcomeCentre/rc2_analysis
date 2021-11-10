@@ -202,9 +202,9 @@ classdef Loader < handle
         
         
         
-        function tbl = waveform_metrics_fix_csv(obj, probe_id)
+        function tbl = waveform_metrics_fixed_csv(obj, probe_id)
             
-            fname = obj.file_manager.waveform_metrics_fix_csv(probe_id);
+            fname = obj.file_manager.waveform_metrics_fixed_csv(probe_id);
             tbl = obj.readtable(fname);
         end
         

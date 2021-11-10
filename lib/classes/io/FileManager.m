@@ -302,15 +302,6 @@ classdef FileManager < handle
         
         
         
-        function [fname, exists] = waveform_metrics_fix(obj, probe_id)
-            
-            dname = obj.imec0_ks2(probe_id);
-            fname = fullfile(dname, 'csv', 'waveform_metrics_fix.csv');
-            exists = isfile(fname);
-        end
-        
-        
-        
         function [dname, exists] = processed_output_dir_fast(obj, probe_id)
             
             animal_id = obj.animal_id_from_probe_id(probe_id);
@@ -501,10 +492,21 @@ classdef FileManager < handle
         
         
         
-        function [fname, exists] = waveform_metrics_fix_csv(obj, probe_id)
+        function [fname, exists] = waveform_metrics_fixed_csv(obj, probe_id)
             
             fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'waveform_metrics_fix.csv');
             exists = isfile(fname);
+            
+            % if it doesn't exist attempt to find a later version
+            if ~exists
+                contents = dir(obj.imec0_ks2_csv_dir(probe_id));
+                I = regexp({contents(:).name}, 'waveform_metrics_fix');
+                idx = find(cellfun(@(x)(~isempty(x)), I));
+                if ~isempty(idx)
+                    fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), contents(idx(1)).name);
+                    exists = isfile(fname);
+                end
+            end
         end
         
         

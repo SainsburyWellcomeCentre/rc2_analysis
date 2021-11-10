@@ -110,6 +110,7 @@ classdef RC2Format < RC2Analysis
             chan_map          = obj.load.ks2_npy(probe_id, 'channel_map');
             chan_pos          = obj.load.ks2_npy(probe_id, 'channel_positions');
             qm_table          = obj.load.metrics_csv(probe_id);
+            waveform_fixed_table = obj.load.waveform_metrics_fixed_csv(probe_id);
             cluster_groups    = obj.load.cluster_groups(probe_id);
             ks_label          = obj.load.ks2_label(probe_id);
             
@@ -126,10 +127,7 @@ classdef RC2Format < RC2Analysis
             % which quality metrics to unpack
             qm = {'firing_rate', 'presence_ratio', 'isi_viol', 'amplitude_cutoff', ...
                 'isolation_distance', 'l_ratio', 'd_prime', 'nn_hit_rate', ...
-                'nn_miss_rate', 'silhouette_score', 'max_drift', 'cumulative_drift', ...
-                'peak_channel', 'snr', 'duration', 'halfwidth', 'PT_ratio', ...
-                'repolarization_slope', 'recovery_slope', 'amplitude', 'spread', ...
-                'velocity_above', 'velocity_below'};
+                'nn_miss_rate', 'silhouette_score', 'max_drift', 'cumulative_drift'};
             
             % all clusters with spikes
             cluster_ids = sort(unique(spike_clusters));
@@ -226,6 +224,31 @@ classdef RC2Format < RC2Analysis
                 median_amp = median(clusters(i).amplitudes);
                 min_amp = min(clusters(i).amplitudes);
                 clusters(i).amplitude_ratio = median_amp/min_amp;
+            end
+            
+            waveform_metrics = {'peak_channel', 'snr', 'duration', 'halfwidth', 'PT_ratio', ...
+                'repolarization_slope', 'recovery_slope', 'amplitude', 'spread', ...
+                'velocity_above', 'velocity_below'};
+            
+            % if the waveform fixed table doesn't exist
+            if isempty(waveform_fixed_table)
+                % create empty entries for each of the waveform properties
+                for ii = 1 : length(clusters)
+                    for jj = 1 : length(waveform_metrics)
+                        clusters(ii).(waveform_metrics{jj}) = [];
+                    end
+                    clusters(ii).waveform_fixed = false;
+                end
+            else
+                % otherwise fill in the waveform information for each
+                % cluster
+                for ii = 1 : length(clusters)
+                    tbl_idx = waveform_fixed_table.cluster_id == clusters(ii).id;
+                    for jj = 1 : length(waveform_metrics)
+                        clusters(ii).(waveform_metrics{jj}) = waveform_fixed_table.(waveform_metrics{jj})(tbl_idx);
+                    end
+                    clusters(ii).waveform_fixed = true;
+                end
             end
         end
         
