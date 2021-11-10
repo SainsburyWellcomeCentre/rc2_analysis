@@ -20,6 +20,8 @@ classdef Cluster < handle
         depth
         spiking_class
         distance_from_probe_tip;
+        duration
+        overall_firing_rate
     end
     
     
@@ -65,6 +67,18 @@ classdef Cluster < handle
             val = obj.cluster.distance_from_probe_tip;
         end
            
+        
+        
+        function val = get.duration(obj)
+            val = obj.cluster.duration;
+        end
+        
+        
+        
+        function val = get.overall_firing_rate(obj)
+            val = obj.cluster.firing_rate;
+        end
+        
         
         
         function val = get.spiking_class(obj)
