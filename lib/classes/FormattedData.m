@@ -323,7 +323,7 @@ classdef FormattedData < handle
         
         
         
-        function [sig, p, direction] = is_motion_vs_motion_significant(obj, cluster_id, trial_group_label_x, trial_group_label_y)
+        function [sig, p, direction] = is_motion_vs_motion_significant(obj, cluster_id, trial_group_label_x, trial_group_label_y, max_n_trials)
         %%calculates whether cluster_id has significantly larger motion
         %%modulation for one trial group than another
         %   returns sig - is there a significant difference between motion
@@ -333,11 +333,34 @@ classdef FormattedData < handle
         %           no change (0)  (note that increase = larger FR value in
         %           group y than group x)
         
+            VariableDefault('max_n_trials', []);
+        
             valid = obj.check_trial_group(trial_group_label_x) & obj.check_trial_group(trial_group_label_y);
             if ~valid; sig = []; p = []; direction = []; return; end
             
             [x_fr, x_trial_id] = obj.motion_fr_for_trial_group(cluster_id, trial_group_label_x);
             [y_fr, y_trial_id] = obj.motion_fr_for_trial_group(cluster_id, trial_group_label_y);
+            
+            n_trials = min([length(x_fr), length(y_fr)]);
+            
+            x_fr = x_fr(1:n_trials);
+            y_fr = y_fr(1:n_trials);
+            
+            assert(all(abs(y_trial_id - x_trial_id) < length(obj.sessions{1}.trial_group_ids)));
+            
+            idx = isnan(x_fr) | isnan(y_fr);
+            
+            x_fr(idx) = [];
+            y_fr(idx) = [];
+            
+            %, 10]);
+            
+            if ~isempty(max_n_trials)
+                n_trials = min(n_trials, max_n_trials);
+            end
+            
+            x_fr = x_fr(1:n_trials);
+            y_fr = y_fr(1:n_trials);
             
             % we are doing a sign rank so must pair them
             
