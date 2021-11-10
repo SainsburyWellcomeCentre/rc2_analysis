@@ -143,6 +143,23 @@ classdef FormattedData < handle
         
         
         
+        function trials = get_trials_with_trial_ids(obj, trial_ids)
+        %%return cell array of trials with trial IDs specified by
+        % 'trial_ids'
+        % If a single number is given returns the trial itself rather than
+        % a cell array of length 1.
+        
+            trials = obj.motion_trials();
+            idx = cellfun(@(x)(ismember(x.trial_id, trial_ids)), trials);
+            trials = trials(idx);
+            
+            if length(trials) == 1
+                trials = trials{1};
+            end
+        end
+        
+        
+        
         function cluster = get_cluster_with_id(obj, cluster_id)
         %%returns cluster object for cluster with id = 'cluster_id'
             idx = [obj.clusters(:).id] == cluster_id;
