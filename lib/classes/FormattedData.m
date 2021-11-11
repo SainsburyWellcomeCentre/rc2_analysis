@@ -367,7 +367,7 @@ classdef FormattedData < handle
             x_fr = x_fr(1:n_trials);
             y_fr = y_fr(1:n_trials);
             
-            assert(all(abs(y_trial_id - x_trial_id) < length(obj.sessions{1}.trial_group_ids)));
+            assert(all(abs(y_trial_id(1:n_trials) - x_trial_id(1:n_trials)) < length(obj.sessions{1}.trial_group_ids)));
             
             idx = isnan(x_fr) | isnan(y_fr);
             
