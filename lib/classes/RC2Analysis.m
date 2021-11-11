@@ -195,8 +195,14 @@ classdef RC2Analysis < handle
         
         function create_tuning_curves(obj, probe_id, trial_types)
         % creates and saves speed tuning curves for all trials
+            
             data = obj.load_formatted_data(probe_id);
-            tbl_struct.tuning_curve = data.create_tuning_curves(trial_types);
+            
+            tuning_curves = data.create_tuning_curves(trial_types);
+            
+            tbl_struct.trial_groups = trial_types;
+            tbl_struct.tuning_curves = tuning_curves;
+            
             obj.save.tuning_curves(probe_id, tbl_struct);
         end
         
