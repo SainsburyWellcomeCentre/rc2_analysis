@@ -171,7 +171,23 @@ for ii = 1 : length(probe_ids)
 end
 
 
-figure
-subplot(1, 3, 1)
+%% save the data for the future
+decrease_traces = cellfun(@(x, y)(x(:, y)), traces, running_decreases, 'uniformoutput', false);
+no_change_traces = cellfun(@(x, y)(x(:, ~y)), traces, running_decreases, 'uniformoutput', false);
+matched_decrease_traces = matched_traces;
 
+decrease_traces_fr = cellfun(@(x)(x.spike_convolution_avg), decrease_raster_data, 'UniformOutput', false);
+no_change_traces_fr = cellfun(@(x)(x.spike_convolution_avg), no_change_raster_data, 'UniformOutput', false);
+matched_decrease_traces_fr = cellfun(@(x)(x.spike_convolution_avg), matched_raster_data, 'UniformOutput', false);
 
+% library git info
+lib_git = ctl.save.git.info;
+
+save('running_around_mismatch_matched_trials', 'lib_git', ...
+                                               'common_t', ...
+                                               'decrease_traces', ...
+                                               'no_change_traces', ...
+                                               'matched_decrease_traces', ...
+                                               'decrease_traces_fr', ...
+                                               'no_change_traces_fr', ...
+                                               'matched_decrease_traces_fr');
