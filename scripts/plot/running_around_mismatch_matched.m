@@ -8,7 +8,7 @@
 
 
 %%
-experiment_groups       = {'mismatch_nov20'};
+experiment_groups       = {'mismatch_nov20', 'mismatch_jul21'};
 trial_group_label       = 'RVT_gain_up';
 n_sds                   = 2;
 window_1                = [-0.15, 0.05];
