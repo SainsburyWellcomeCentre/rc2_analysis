@@ -53,6 +53,16 @@ classdef RC2Analysis < handle
         
         
         
+        function val = get_experiment_group_from_probe_id(obj, probe_id)
+            
+            experiment_list = obj.load.experiment_list();
+            
+            idx = find(strcmp(experiment_list.probe_id, probe_id));
+            val = experiment_list.experiment_group{idx(1)};
+        end
+        
+        
+        
         function shank_ids = get_shank_ids(obj, probe_id)
         %%get the IDs of the shanks available for a recording
             meta = obj.load.spikeglx_ap_metadata(probe_id);
