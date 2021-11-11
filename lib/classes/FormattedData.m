@@ -680,7 +680,7 @@ classdef FormattedData < handle
                 % all selected clusters add them to the tuning table
                 clusters = obj.selected_clusters();
                 for jj = 1 : length(clusters)
-                    tbl{ii}.tuning_curves(jj) = tt.tuning_curve(clusters(jj));
+                    tbl{ii}(jj) = tt.tuning_curve(clusters(jj));
                 end
             end
         end

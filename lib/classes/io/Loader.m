@@ -89,7 +89,7 @@ classdef Loader < handle
         function tuning_curves = tuning_curves(obj, probe_id)
             
             fname = obj.file_manager.tuning_curves(probe_id);
-            load(fname, 'tuning_curves');
+            tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         
         
