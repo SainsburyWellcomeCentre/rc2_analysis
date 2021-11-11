@@ -64,6 +64,7 @@ classdef Git < handle
         
         function info = info(obj)
             
+            info.available = obj.available;
             info.date = datestr(now);
             info.sha1 = obj.current_commit();
             info.git_dir = obj.git_dir;
