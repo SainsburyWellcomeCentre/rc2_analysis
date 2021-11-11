@@ -302,7 +302,7 @@ classdef FormattedData < handle
         
         
         
-        function [sig, p, direction] = is_stationary_vs_motion_significant(obj, cluster_id, trial_group_label)
+        function [sig, p, direction, stat_med, mot_med, n] = is_stationary_vs_motion_significant(obj, cluster_id, trial_group_label)
         %%calculates whether cluster_id is signficantly modulation by
         %%motion for the trial group type specified by trial_group_label
         %   returns sig - is there a significant modulation for motion
@@ -311,19 +311,32 @@ classdef FormattedData < handle
         %           no change (0)
         
             valid = obj.check_trial_group(trial_group_label);
-            if ~valid; sig = []; p = []; direction = []; return; end
+            if ~valid
+                warning('no such trial group label'); 
+                sig = []; p = []; direction = []; stat_med = []; mot_med = []; n = [];
+                return
+            end
             
             stationary_fr   = obj.stationary_fr_for_trial_group(cluster_id, trial_group_label);
             motion_fr       = obj.motion_fr_for_trial_group(cluster_id, trial_group_label);
             
+            idx = isnan(stationary_fr) | isnan(motion_fr);
+            
+            stationary_fr(idx) = [];
+            motion_fr(idx) = [];
+            
             [~, ~, p, direction] = compare_groups_with_signrank(stationary_fr, motion_fr);
 
             sig = p < 0.05;
+            
+            stat_med = median(stationary_fr);
+            mot_med = median(motion_fr);
+            n = length(stationary_fr);
         end
         
         
         
-        function [sig, p, direction] = is_motion_vs_motion_significant(obj, cluster_id, trial_group_label_x, trial_group_label_y, max_n_trials)
+        function [sig, p, direction, x_med, y_med, n] = is_motion_vs_motion_significant(obj, cluster_id, trial_group_label_x, trial_group_label_y, max_n_trials)
         %%calculates whether cluster_id has significantly larger motion
         %%modulation for one trial group than another
         %   returns sig - is there a significant difference between motion
@@ -336,7 +349,11 @@ classdef FormattedData < handle
             VariableDefault('max_n_trials', []);
         
             valid = obj.check_trial_group(trial_group_label_x) & obj.check_trial_group(trial_group_label_y);
-            if ~valid; sig = []; p = []; direction = []; return; end
+            if ~valid
+                warning('no such trial group label'); 
+                sig = []; p = []; direction = []; x_med = []; y_med = []; n = [];
+                return
+            end
             
             [x_fr, x_trial_id] = obj.motion_fr_for_trial_group(cluster_id, trial_group_label_x);
             [y_fr, y_trial_id] = obj.motion_fr_for_trial_group(cluster_id, trial_group_label_y);
@@ -353,7 +370,8 @@ classdef FormattedData < handle
             x_fr(idx) = [];
             y_fr(idx) = [];
             
-            %, 10]);
+            assert(length(x_fr) == length(y_fr));
+            n_trials = length(x_fr);
             
             if ~isempty(max_n_trials)
                 n_trials = min(n_trials, max_n_trials);
@@ -362,11 +380,13 @@ classdef FormattedData < handle
             x_fr = x_fr(1:n_trials);
             y_fr = y_fr(1:n_trials);
             
-            % we are doing a sign rank so must pair them
-            
             [~, ~, p, direction] = compare_groups_with_signrank(x_fr, y_fr);
 
             sig = p < 0.05;
+            
+            x_med = median(x_fr);
+            y_med = median(y_fr);
+            n = length(x_med);
         end
         
         
