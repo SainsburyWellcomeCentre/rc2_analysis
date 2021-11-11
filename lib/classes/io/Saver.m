@@ -34,9 +34,9 @@ classdef Saver < handle
         
         
         
-        function tuning_table(obj, probe_id, tbl_struct)
+        function tuning_curves(obj, probe_id, tbl_struct)
             
-            fname = obj.file_manager.tuning_table(probe_id);
+            fname = obj.file_manager.tuning_curves(probe_id);
             obj.savemat(fname, tbl_struct);
         end
         

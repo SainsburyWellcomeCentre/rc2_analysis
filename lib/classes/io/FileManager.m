@@ -404,9 +404,9 @@ classdef FileManager < handle
         
         
         
-        function [fname, exists] = tuning_table(obj, probe_id)
+        function [fname, exists] = tuning_curves(obj, probe_id)
             
-            fname = fullfile(obj.path_config.summary_data_dir, 'tuning_table', sprintf('%s.mat', probe_id));
+            fname = fullfile(obj.path_config.summary_data_dir, 'tuning_curves', sprintf('%s.mat', probe_id));
             exists = isfile(fname);
         end
         

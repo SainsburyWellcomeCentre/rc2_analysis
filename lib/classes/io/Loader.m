@@ -86,10 +86,10 @@ classdef Loader < handle
         
         
         
-        function tuning_table = tuning_table(obj, probe_id)
+        function tuning_curves = tuning_curves(obj, probe_id)
             
-            fname = obj.file_manager.tuning_table(probe_id);
-            load(fname, 'tuning_table');
+            fname = obj.file_manager.tuning_curves(probe_id);
+            load(fname, 'tuning_curves');
         end
         
         

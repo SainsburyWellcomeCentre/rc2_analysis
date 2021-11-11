@@ -79,9 +79,10 @@ classdef FormattedData < handle
         
         
         
-        function tbl = load_tuning_table(obj)
+        function tuning = load_tuning_curves(obj, cluster_id, trial_group)
             
-            tbl = obj.ctl.load_tuning_table(obj.probe_id);
+            tbl = obj.ctl.load_tuning_curves(obj.probe_id);
+            
         end
         
         
@@ -425,32 +426,32 @@ classdef FormattedData < handle
         
         
         
-        function [fr, sd, n, x, shuff, stat_fr, stat_sd, stat_n] = tuning_curve_info(obj, cluster_id, trial_group_label)
-            
-            tbl = obj.load_tuning_table();
-            
-            idx = tbl.cluster_id == cluster_id;
-            
-            tuning = tbl.tuning{idx};
-            timing = tbl.timing{idx};
-            
-            bin_edges = tbl.bin_edges{idx};
-            stat_fr = tbl.stationary_fr{idx};
-            
-            fr = nanmean(tuning, 2);
-            sd = nanstd(tuning, [], 2);
-            n = sum(~isnan(tuning), 2);
-            x = (bin_edges(1:end-1) + bin_edges(2:end))/2;
-            
-            shuff = ShuffleTuning(tuning, x);
-            
-%             p_anova = s.p;%anova1(tuning', [], 'off');
-%             beta = s.beta(1);
-            
-            stat_fr = nanmean(stat_fr);
-            stat_sd = nanstd(stat_fr);
-            stat_n = sum(~isnan(stat_fr));
-        end
+%         function [fr, sd, n, x, shuff, stat_fr, stat_sd, stat_n] = tuning_curve_info(obj, cluster_id, trial_group_label)
+%             
+%             tbl = obj.load_tuning_curves();
+%             
+%             idx = tbl.cluster_id == cluster_id;
+%             
+%             tuning = tbl.tuning{idx};
+%             timing = tbl.timing{idx};
+%             
+%             bin_edges = tbl.bin_edges{idx};
+%             stat_fr = tbl.stationary_fr{idx};
+%             
+%             fr = nanmean(tuning, 2);
+%             sd = nanstd(tuning, [], 2);
+%             n = sum(~isnan(tuning), 2);
+%             x = (bin_edges(1:end-1) + bin_edges(2:end))/2;
+%             
+%             shuff = ShuffleTuning(tuning, x);
+%             
+% %             p_anova = s.p;%anova1(tuning', [], 'off');
+% %             beta = s.beta(1);
+%             
+%             stat_fr = nanmean(stat_fr);
+%             stat_sd = nanstd(stat_fr);
+%             stat_n = sum(~isnan(stat_fr));
+%         end
         
         
         
@@ -656,11 +657,13 @@ classdef FormattedData < handle
         
         
         
-        function tbl = create_tuning_table(obj, trial_types)
+        function tbl = create_tuning_curves(obj, trial_types)
             
-            tt = TuningTable(obj.probe_id);
+            tbl = cell(1, length(trial_types));
             
             for ii = 1 : length(trial_types)
+                
+                tt = TuningTable(obj.probe_id);
                 
                 % get all trials of type specified in the cell array
                 % 'trial_types'
@@ -672,16 +675,14 @@ classdef FormattedData < handle
                 end
                 
                 % add these trials to the TuningTable object
-                tt.add_trials(aligned_trials);
+                tt.add_trials(aligned_trials, trial_types{ii});
                 
                 % all selected clusters add them to the tuning table
-                for cluster = obj.selected_clusters
-                    tt.add_row_for_cluster(cluster);
+                clusters = obj.selected_clusters();
+                for jj = 1 : length(clusters)
+                    tbl{ii}.tuning_curves(jj) = tt.tuning_curve(clusters(jj));
                 end
             end
-            
-            % return the table
-            tbl = tt.tbl;
         end
         
         

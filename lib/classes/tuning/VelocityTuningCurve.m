@@ -34,8 +34,7 @@ classdef VelocityTuningCurve < handle
             
             for ii = 1 : length(obj.trials)
                 
-                fr = FiringRate(cluster.spike_times);
-                fr_conv = fr.get_convolution(obj.trials{ii}.probe_t);
+                fr_conv = cluster.fr.get_convolution(obj.trials{ii}.probe_t);
                 
                 for bin_i = 1 : obj.bins.n_bins
                     
@@ -63,18 +62,16 @@ classdef VelocityTuningCurve < handle
             
             for ii = 1 : length(obj.trials)
                 
-                fr = FiringRate(cluster.spike_times);
-                
                 for jj = 1 : obj.bins.n_bins
                     
                     if ~isempty(obj.windows{ii}{jj})
                         [tuning(jj, ii), timing(jj, ii)] = ...
-                            fr.get_fr_in_multiple_windows(obj.windows{ii}{jj});
+                            cluster.fr.get_fr_in_multiple_windows(obj.windows{ii}{jj});
                     end
                 end
                 
                 [stat_rate(1, ii), stat_time(1, ii)] = ...
-                    fr.get_fr_in_multiple_windows(obj.stationary_windows{ii});
+                    cluster.fr.get_fr_in_multiple_windows(obj.stationary_windows{ii});
             end
         end
         
