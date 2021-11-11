@@ -1,7 +1,8 @@
 function config = path_config()
 % path configuration to access data and code
 
-config.git_dir                  = 'C:\Users\lee\Documents\mvelez\rc2_analysis\.git';
+% the path containing the .git for rc2_analysis
+config.git_work_tree_dir        = 'C:\Users\lee\Documents\mvelez\rc2_analysis';
 
 config.raw_probe_dir            = 'Z:\margrie\mvelez\mateoData_probe';
 config.raw_camera_dir           = 'Z:\margrie\mvelez\mateoData_cameras';

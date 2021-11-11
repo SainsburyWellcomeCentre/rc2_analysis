@@ -2,7 +2,8 @@ classdef Git < handle
     
     properties (SetAccess = private)
         
-        dir
+        work_tree_dir
+        git_dir
         available
         current_commit
         is_clean
@@ -12,9 +13,10 @@ classdef Git < handle
     
     methods
         
-        function obj = Git(main_dir)
+        function obj = Git(work_tree_dir)
             
-            obj.dir = main_dir;
+            obj.work_tree_dir = work_tree_dir;
+            obj.git_dir = fullfile(work_tree_dir, '.git');
         end
         
         
@@ -26,12 +28,12 @@ classdef Git < handle
             if exit_status
                 warning('git is not available on system');
             end
-            if ~isfolder(obj.dir)
+            if ~isfolder(obj.git_dir)
                 warning('specified git directory doesn''t exist');
             end
             
             % git exists and directory exists
-            val = ~exit_status && isfolder(obj.dir);
+            val = ~exit_status && isfolder(obj.git_dir);
         end
         
         
@@ -39,7 +41,7 @@ classdef Git < handle
         function sha1 = get.current_commit(obj)
             
             if obj.available
-                [~, sha1] = system(sprintf('git -C "%s" rev-parse HEAD', obj.dir));
+                [~, sha1] = system(sprintf('git -C "%s" rev-parse HEAD', obj.work_tree_dir));
                 sha1 = sha1(1:end-1);
             else
                 sha1 = [];
@@ -51,7 +53,7 @@ classdef Git < handle
         function is_clean = get.is_clean(obj)
             
             if obj.available
-                [~, output] = system(sprintf('git -C "%s" status --porcelain', obj.dir));
+                [~, output] = system(sprintf('git -C "%s" status --porcelain', obj.work_tree_dir));
                 is_clean = isempty(output);
             else 
                 is_clean = 0;
@@ -64,7 +66,7 @@ classdef Git < handle
             
             info.date = datestr(now);
             info.sha1 = obj.current_commit();
-            info.git_dir = obj.dir;
+            info.git_dir = obj.git_dir;
             info.git_clean = obj.is_clean();
         end
     end

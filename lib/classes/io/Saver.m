@@ -13,7 +13,7 @@ classdef Saver < handle
         function obj = Saver(file_manager)
         %%class for saving files
             obj.file_manager = file_manager;
-            obj.git = Git(file_manager.path_config.git_dir);
+            obj.git = Git(file_manager.path_config.git_work_tree_dir);
         end
         
         
