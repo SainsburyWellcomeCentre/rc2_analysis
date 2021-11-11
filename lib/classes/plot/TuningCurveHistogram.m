@@ -2,59 +2,34 @@ classdef TuningCurveHistogram < RC2Axis
     
     properties
         
-        h_line
-        h_dots
-        h_errorbars
-        h_fit
-        h_txt
         h_bar
-        
-        h_line_shuff
-        h_dots_shuff
-        h_errorbars_shuff
-        h_fit_shuff
-        
-        fr
-        sd
-        n
-        x
-        p_anova
-        beta
-        shuff
-        p_signrank
-        stat_fr
-        stat_sd
-        stat_n
-        
-        error_type = 'sem'
         
         xmin
         xmax
         ymin
         ymax
-        
-        n_shuffs_to_plot = 4
-        main_col
     end
     
     
     methods
         
-        function obj = TuningCurveHistogram(shuff, h_ax)
+        function obj = TuningCurveHistogram(h_ax)
             
             VariableDefault('h_ax', []);
             
             obj = obj@RC2Axis(h_ax);
+        end
+        
+        
+        function plot(obj, tuning)
             
-            [n, c] = histcounts(shuff.r_shuff, 50);
-            obj.h_bar = barh((c(1:end-1)+c(2:end))/2, n, ...
-                'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
+            [n, c] = histcounts(tuning.shuffled.r_shuff, 50);
+            obj.h_bar = barh((c(1:end-1)+c(2:end))/2, n, 'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
             set(obj.h_ax, 'plotboxaspectratio', [1, 3, 1])
             ylim([-0.5, 0.5]);
-            scatter(0, shuff.r, [], 'r', 'fill');
+            scatter(0, tuning.shuffled.r, [], 'r', 'fill');
             xlabel('count');
             ylabel('r');
-
         end
         
         

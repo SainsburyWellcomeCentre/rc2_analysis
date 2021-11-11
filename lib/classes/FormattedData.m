@@ -79,10 +79,13 @@ classdef FormattedData < handle
         
         
         
-        function tuning = load_tuning_curves(obj, cluster_id, trial_group)
+        function tuning_curve = load_tuning_curves(obj, cluster_id, trial_group)
             
             tbl = obj.ctl.load_tuning_curves(obj.probe_id);
-            
+            group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
+            tuning_curves = tbl.tuning_curves{group_idx};
+            cluster_idx = [tuning_curves(:).cluster_id] == cluster_id;
+            tuning_curve = tuning_curves(cluster_idx);
         end
         
         
