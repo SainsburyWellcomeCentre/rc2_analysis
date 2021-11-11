@@ -16,6 +16,9 @@ classdef TuningCurvePlot < RC2Axis
         shuff
         
         error_type = 'sem'
+        print_stats = true
+        dot_size = 10
+        line_width = 1
         
         xmin
         xmax
@@ -23,6 +26,7 @@ classdef TuningCurvePlot < RC2Axis
         ymax
         
         n_shuffs_to_plot = 4
+        main_col = [0, 0, 0]
     end
     
     
@@ -36,7 +40,7 @@ classdef TuningCurvePlot < RC2Axis
         end
         
         
-        function plot(obj, tuning, p_svm, direction)
+        function plot(obj, tuning)
         %%fr, sd, n, x, shuff, stat_fr, stat_sd, stat_n, p_signrank, h_ax
             
             obj.shuff = tuning.shuffled;
@@ -47,27 +51,14 @@ classdef TuningCurvePlot < RC2Axis
         
             for i = 1 : obj.n_shuffs_to_plot
                 f = [min(x), max(x)]*tuning.shuffled.beta_shuff(i, 1) + tuning.shuffled.beta_shuff(i, 2);
-                obj.h_fit_shuff(i) = line([min(x), max(x)], f, 'color', [0.8, 0.8, 0.8]);
+                obj.h_fit_shuff(i) = line(obj.h_ax, [min(x), max(x)], f, 'color', [0.8, 0.8, 0.8], 'linewidth', obj.line_width);
             end
             
             stat_fr = nanmean(tuning.stationary_fr);
             stat_sd = nanstd(tuning.stationary_fr);
             stat_n  = sum(~isnan(tuning.stationary_fr));
             
-            multicol = lines(4);
-            
-            if p_svm < 0.05 && direction == 1
-                % tonic increase
-                main_col = multicol(2, :);
-            elseif p_svm < 0.05 && direction == -1
-                % tonic decrease
-                main_col = multicol(1, :);
-            else
-                main_col = 'k';
-            end
-            
-            
-            obj.h_dots = scatter(x, fr, [], main_col, 'fill');
+            obj.h_dots = scatter(obj.h_ax, x, fr, obj.dot_size, obj.main_col, 'fill');
             for i = 1 : length(fr)
                 if strcmp(obj.error_type, 'std')
                     y = fr(i) + sd(i) * [-1, 1];
@@ -75,45 +66,48 @@ classdef TuningCurvePlot < RC2Axis
                     y = fr(i) + (sd(i)/sqrt(n(i))) * [-1, 1];
                 end
                 
-                obj.h_errorbars(i) = line(x([i, i]), y, 'color', main_col);
+                obj.h_errorbars(i) = line(obj.h_ax, x([i, i]), y, 'color', obj.main_col, 'linewidth', obj.line_width);
             end
             
             f = [min(x), max(x)]*tuning.shuffled.beta(1) + tuning.shuffled.beta(2);
-            obj.h_fit = line([min(x), max(x)], f, 'color', main_col);
+            obj.h_fit = line(obj.h_ax, [min(x), max(x)], f, 'color', obj.main_col, 'linewidth', obj.line_width);
             
             
-            scatter(0, stat_fr, [], [0.5, 0.5, 0.5], 'fill')
-            if strcmp(obj.error_type, 'std')
-                line([0, 0], stat_fr + stat_sd * [-1, 1], 'color', [0.5, 0.5, 0.5])
-            else
-                line([0, 0], stat_fr + (stat_sd/sqrt(stat_n)) * [-1, 1], 'color', [0.5, 0.5, 0.5])
-            end
+            scatter(obj.h_ax, 0, stat_fr, obj.dot_size, [0, 0, 0], 'fill')
+%             if strcmp(obj.error_type, 'std')
+%                 line(obj.h_ax, [0, 0], stat_fr + stat_sd * [-1, 1], 'color', [0.5, 0.5, 0.5])
+%             else
+%                 line(obj.h_ax, [0, 0], stat_fr + (stat_sd/sqrt(stat_n)) * [-1, 1], 'color', [0.5, 0.5, 0.5])
+%             end
             
-            str = sprintf('slope = %.2f\n', tuning.shuffled.beta(1));
-            str = [str, sprintf('r = %.2f\n', tuning.shuffled.r)];
-            str = [str, sprintf('R^2 = %.2f\n', tuning.shuffled.rsq)];
-            
-            if tuning.shuffled.p < 0.05
-                str = [str, sprintf('p_{shuffled}=%.2e\n', tuning.shuffled.p)];
-                str = [str, sprintf('p_{fitted}=%.2e', tuning.shuffled.p_lm)];
-                col = 'r';
-            else
-                str = [str, sprintf('p_{shuffled}=%.2f\n', tuning.shuffled.p)];
-                str = [str, sprintf('p_{fitted}=%.2f', tuning.shuffled.p_lm)];
-                col = 'b';
-            end
-            
-            if tuning.shuffled.beta(1) >= 0 && tuning.shuffled.p < 0.05
-                str = [str, ', +ve'];
-            elseif tuning.shuffled.beta(1) < 0 && tuning.shuffled.p < 0.05
-                str = [str, ', -ve'];
-            end
+            if obj.print_stats
                 
-            
-            obj.h_txt = text(obj.h_ax, obj.xmax, obj.ymin, ...
-                str, 'color', col, ...
-                'verticalalignment', 'bottom', 'horizontalalignment', 'right', ...
-                'fontsize', 6);
+                str = sprintf('slope = %.2f\n', tuning.shuffled.beta(1));
+                str = [str, sprintf('r = %.2f\n', tuning.shuffled.r)];
+                str = [str, sprintf('R^2 = %.2f\n', tuning.shuffled.rsq)];
+                
+                if tuning.shuffled.p < 0.05
+                    str = [str, sprintf('p_{shuffled}=%.2e\n', tuning.shuffled.p)];
+                    str = [str, sprintf('p_{fitted}=%.2e', tuning.shuffled.p_lm)];
+                    col = 'r';
+                else
+                    str = [str, sprintf('p_{shuffled}=%.2f\n', tuning.shuffled.p)];
+                    str = [str, sprintf('p_{fitted}=%.2f', tuning.shuffled.p_lm)];
+                    col = 'b';
+                end
+                
+                if tuning.shuffled.beta(1) >= 0 && tuning.shuffled.p < 0.05
+                    str = [str, ', +ve'];
+                elseif tuning.shuffled.beta(1) < 0 && tuning.shuffled.p < 0.05
+                    str = [str, ', -ve'];
+                end
+                
+                
+                obj.h_txt = text(obj.h_ax, obj.xmax, obj.ymin, ...
+                    str, 'color', col, ...
+                    'verticalalignment', 'bottom', 'horizontalalignment', 'right', ...
+                    'fontsize', 6);
+            end
             
             set(obj.h_ax, 'xlim', [-5, obj.xmax]);
         end
@@ -162,8 +156,10 @@ classdef TuningCurvePlot < RC2Axis
             
             VariableDefault('val', []);
             val = obj.get_set_limits(val, 'ylim');
-            pos = get(obj.h_txt, 'position');
-            set(obj.h_txt, 'position', [pos(1), val(1), 0]);
+            if obj.print_stats
+                pos = get(obj.h_txt, 'position');
+                set(obj.h_txt, 'position', [pos(1), val(1), 0]);
+            end
         end
         
         
@@ -172,8 +168,11 @@ classdef TuningCurvePlot < RC2Axis
             
             VariableDefault('val', []);
             val = obj.get_set_limits(val, 'xlim');
-            pos = get(obj.h_txt, 'position');
-            set(obj.h_txt, 'position', [val(2), pos(2), 0]);
+            
+            if obj.print_stats
+                pos = get(obj.h_txt, 'position');
+                set(obj.h_txt, 'position', [val(2), pos(2), 0]);
+            end
             
             for i = 1 : obj.n_shuffs_to_plot
                 

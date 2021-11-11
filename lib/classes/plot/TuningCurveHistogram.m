@@ -8,6 +8,10 @@ classdef TuningCurveHistogram < RC2Axis
         xmax
         ymin
         ymax
+        
+        dot_col = [1, 0, 0]
+        dot_size = 10
+        plot_labels = true;
     end
     
     
@@ -24,12 +28,14 @@ classdef TuningCurveHistogram < RC2Axis
         function plot(obj, tuning)
             
             [n, c] = histcounts(tuning.shuffled.r_shuff, 50);
-            obj.h_bar = barh((c(1:end-1)+c(2:end))/2, n, 'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
+            obj.h_bar = barh(obj.h_ax, (c(1:end-1)+c(2:end))/2, n, 'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
             set(obj.h_ax, 'plotboxaspectratio', [1, 3, 1])
             ylim([-0.5, 0.5]);
-            scatter(0, tuning.shuffled.r, [], 'r', 'fill');
-            xlabel('count');
-            ylabel('r');
+            scatter(obj.h_ax, 0, tuning.shuffled.r, obj.dot_size, obj.dot_col, 'fill');
+            if obj.plot_labels
+                xlabel('count');
+                ylabel('r');
+            end
         end
         
         

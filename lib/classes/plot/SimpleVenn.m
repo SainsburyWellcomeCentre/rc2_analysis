@@ -113,7 +113,7 @@ classdef SimpleVenn < RC2Axis
 %             xlim(xl)
 %             ylim([-Y/2, Y/2])
             
-            set(gca, 'dataaspectratio', [1, 1, 1], 'clipping', 'off')
+            set(obj.h_ax, 'dataaspectratio', [1, 1, 1], 'clipping', 'off')
 %             line(xl, -Y([1, 1])/2, 'color', 'k');
 %             line(xl, Y([1, 1])/2, 'color', 'k');
 %             line(xl([1, 1]), [-Y/2, Y/2], 'color', 'k');

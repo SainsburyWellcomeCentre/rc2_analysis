@@ -13,7 +13,7 @@
 experiment_groups       = {'darkness'};
 trial_group_labels      = {'RT', 'R', {'T_bank', 'T_RT', 'T_R'}};
 save_figs               = true;
-overwrite               = false;
+overwrite               = true;
 figure_dir              = {'tuning_curves', 'darkness'};
 
 
@@ -69,8 +69,23 @@ for ii = 1 : length(probe_ids)
             h_ax        = axes('units', 'centimeters', 'position', pos);
             
             tuning_curve_plot{kk} = TuningCurvePlot(h_ax);
-            tuning_curve_plot{kk}.plot(tuning{ii}{jj}{kk}, p_svm(ii, jj, kk), direction(ii, jj, kk));
-            title(gca, trial_group_labels{kk});
+            
+            multicol = lines(2);
+            
+            if p_svm(ii, jj, kk) < 0.05 && direction(ii, jj, kk) == 1
+                % tonic increase
+                main_col = [0.85, 0.32, 0.1];
+            elseif p_svm(ii, jj, kk) < 0.05 && direction(ii, jj, kk) == -1
+                % tonic decrease
+                main_col = [0, 0.45, 0.75];
+            else
+                main_col = 'k';
+            end
+            
+            tuning_curve_plot{kk}.main_col = main_col;
+            tuning_curve_plot{kk}.plot(tuning{ii}{jj}{kk});
+            title(gca, trial_group_labels{kk}, 'interpreter', 'none');
+            
             if kk == length(trial_group_labels)
                 tuning_curve_plot{kk}.xlabel('Speed (cm/s)');
                 tuning_curve_plot{kk}.ylabel('Firing rate (Hz)');
