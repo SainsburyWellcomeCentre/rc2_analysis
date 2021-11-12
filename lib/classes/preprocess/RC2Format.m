@@ -46,6 +46,7 @@ classdef RC2Format < RC2Analysis
             track_offset                = obj.load.track_offset(probe_id, shank_id);
             
             anatomy.probe_id            = probe_id;
+            anatomy.shank_id            = shank_id;
             anatomy.offset              = track_offset;
             anatomy.region_boundaries   = [];
             anatomy.region_id           = [];

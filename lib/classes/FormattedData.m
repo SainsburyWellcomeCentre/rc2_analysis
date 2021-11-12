@@ -39,7 +39,9 @@ classdef FormattedData < handle
                 obj.clusters(ii) = Cluster(obj.data.clusters(ii));
             end
             
-            obj.anatomy = Anatomy(obj.data.anatomy);
+            for ii = 1 : length(obj.data.anatomy)
+                obj.anatomy{ii} = Anatomy(obj.data.anatomy);
+            end
             
             for ii = 1 : length(obj.data.sessions)
                 
@@ -270,6 +272,7 @@ classdef FormattedData < handle
             
             cluster = obj.get_cluster_with_id(cluster_id);
             if ~cluster.is_VISp; relative_depth = -1; layer = ''; return; end
+            shank_id = cluster.cluster.shank_id;
             [relative_depth, layer] = obj.anatomy.VISp_layer_relative_depth(cluster.distance_from_probe_tip);
         end
         
