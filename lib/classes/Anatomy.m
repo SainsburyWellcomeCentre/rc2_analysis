@@ -8,6 +8,7 @@ classdef Anatomy < handle
     properties (Dependent = true)
         
         probe_id
+        shank_id
     end
     
     properties (Constant = true)
@@ -28,6 +29,12 @@ classdef Anatomy < handle
         
         function val = get.probe_id(obj)
             val = obj.anatomy.probe_id;
+        end
+        
+        
+        
+        function val = get.shank_id(obj)
+            val = obj.anatomy.shank_id;
         end
         
         
@@ -112,7 +119,7 @@ classdef Anatomy < handle
         
             boundaries = obj.VISp_boundaries();
             
-            idx = find(from_tip < boundaries.upper & from_tip > boundaries.lower);
+            idx = find(from_tip < boundaries.upper & from_tip >= boundaries.lower);
             
             % if no region found
             if isempty(idx)

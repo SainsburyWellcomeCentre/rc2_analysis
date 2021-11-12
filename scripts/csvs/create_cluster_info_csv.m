@@ -17,8 +17,9 @@ for ii = 1 : length(probe_ids)
         
         r = r + 1;
         
-        tbl.probe_id{r}                     = probe_ids{ii};
         tbl.cluster_id(r)                   = clusters(jj).id;
+        tbl.probe_id{r}                     = probe_ids{ii};
+        tbl.shank_id(r)                     = clusters(jj).cluster.shank_id;
         tbl.region_str{r}                   = clusters(jj).region_str;
         tbl.depth_um(r)                     = clusters(jj).depth;
         tbl.distance_from_probe_tip(r)      = clusters(jj).distance_from_probe_tip;
@@ -28,4 +29,5 @@ for ii = 1 : length(probe_ids)
     end
 end
 
-writetable('cluster_info.csv', tbl);
+tbl(:, 1) = [];
+writetable(tbl, 'cluster_info.csv');
