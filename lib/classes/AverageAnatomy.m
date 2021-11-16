@@ -16,7 +16,7 @@ classdef AverageAnatomy < handle
         
         function obj =  AverageAnatomy(anatomy_array)
         %%class for combining a set of anatomies to get averaged boundaries
-            obj.anatomy_array = anatomy_array;
+            obj.anatomy_array = [anatomy_array{:}];
         end
         
         
