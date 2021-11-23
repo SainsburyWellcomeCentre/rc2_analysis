@@ -2,8 +2,11 @@ classdef MismatchAnalysis < handle
     
     properties
         
+        method = 'anova'
         n_windows = 4;
         window_t = 0.1;
+        
+        simple_bsl_window_t = 0.4
     end
     
     
@@ -16,16 +19,26 @@ classdef MismatchAnalysis < handle
         
         function val = get_avg_baseline_fr(obj, cluster, trials)
         %%get average firing rate during the baseline period
-            mtx = obj.get_baseline_fr_mtx(cluster, trials);
-            val = mean(mtx(:));
+            if strcmp(obj.method, 'anova')
+                mtx = obj.get_baseline_fr_mtx(cluster, trials);
+                val = mean(mtx(:));
+            elseif strcmp(obj.method, 'ranksum')
+                fr = obj.get_fr_simple_baseline(cluster, trials);
+                val = median(fr);
+            end
         end
         
         
         
         function val = get_avg_response_fr(obj, cluster, trials)
         %%get average firing rate during the response period
-            mtx = obj.get_response_fr_mtx(cluster, trials);
-            val = mean(mtx(:));
+            if strcmp(obj.method, 'anova')
+                mtx = obj.get_response_fr_mtx(cluster, trials);
+                val = mean(mtx(:));
+            elseif strcmp(obj.method, 'ranksum')
+                fr = obj.get_fr_simple_response(cluster, trials);
+                val = median(fr);
+            end
         end
         
         
@@ -76,33 +89,104 @@ classdef MismatchAnalysis < handle
         
         
         
-        function [sig, p_response, direction] = is_response_significant(obj, cluster, trials)
-        %%determines whether the cluster significantly responds to the
-        %%mismatch based on the responses to the trials in 'trials'
+        function fr = get_fr_simple_baseline(obj, cluster, trials)
+            
+            fr = nan(length(trials), 1);
+            
+            for ii = 1 : length(trials)
+                
+                mm_onset = trials{ii}.mismatch_onset_t();
+                
+                T = linspace(-obj.simple_bsl_window_t, 0, round(obj.simple_bsl_window_t*10e3)+1);
+                T = mm_onset + T;
+                
+                fr(ii, 1) = mean(cluster.fr.get_convolution(T));
+            end
+        end
         
-            baseline_mtx    = obj.get_baseline_fr_mtx(cluster, trials);
-            response_mtx    = obj.get_response_fr_mtx(cluster, trials);
-            control_mtx     = obj.get_control_response_fr_mtx(cluster, trials);
+        
+        
+        function fr = get_fr_simple_response(obj, cluster, trials)
             
-            p_response      = obj.anova(baseline_mtx', response_mtx');
-            p_control       = obj.anova(baseline_mtx', control_mtx');
+            fr = nan(length(trials), 1);
             
-            if p_control < 0.05
-                p_response = nan;
-                sig = false;
-            else
-                sig = p_response < 0.05;
+            for ii = 1 : length(trials)
+                
+                mm_onset = trials{ii}.mismatch_onset_t();
+                
+                T = linspace(0, obj.simple_bsl_window_t, round(obj.simple_bsl_window_t*10e3)+1);
+                T = mm_onset + T;
+                
+                fr(ii, 1) = mean(cluster.fr.get_convolution(T));
             end
+        end
+        
+        
+        
+        function [sig, p_response, direction] = is_response_significant(obj, cluster, trials)
+            %%determines whether the cluster significantly responds to the
+            %%mismatch based on the responses to the trials in 'trials'
             
-            if sig
-                if mean(baseline_mtx(:)) < mean(response_mtx(:))
-                    direction = 1;
+            if strcmp(obj.method, 'anova')
+                baseline_mtx    = obj.get_baseline_fr_mtx(cluster, trials);
+                response_mtx    = obj.get_response_fr_mtx(cluster, trials);
+                control_mtx     = obj.get_control_response_fr_mtx(cluster, trials);
+                
+                p_response      = obj.anova(baseline_mtx', response_mtx');
+                p_control       = obj.anova(baseline_mtx', control_mtx');
+                
+                if p_control < 0.05
+                    p_response = nan;
+                    sig = false;
                 else
-                    direction = -1;
+                    sig = p_response < 0.05;
                 end
-            else
-                direction = 0;
+                
+                if sig
+                    if mean(baseline_mtx(:)) < mean(response_mtx(:))
+                        direction = 1;
+                    else
+                        direction = -1;
+                    end
+                else
+                    direction = 0;
+                end
+                
+            elseif strcmp(obj.method, 'ranksum')
+                
+                baseline_fr = obj.get_fr_simple_baseline(cluster, trials);
+                response_fr = obj.get_fr_simple_response(cluster, trials);
+                
+                p_response = signrank(baseline_fr, response_fr);
+                
+                sig = p_response < 0.05;
+                
+                if sig
+                    if median(baseline_fr) < median(response_fr)
+                        direction = 1;
+                    elseif median(baseline_fr) > median(response_fr)
+                        direction = -1;
+                    elseif median(baseline_fr) == median(response_fr)
+                        error('medians are the same')
+                    end
+                else
+                    direction = 0;
+                end
             end
+        end
+        
+        
+        function sig = is_baseline_normal(obj, cluster, trials)
+            
+            baseline_fr = obj.get_fr_simple_baseline(cluster, trials);
+            sig = ~lillietest(baseline_fr);
+        end
+        
+        
+        function sig = is_response_normal(obj, cluster, trials)
+            
+            response_fr = obj.get_fr_simple_response(cluster, trials);
+            sig = ~lillietest(response_fr);
         end
     end
     
