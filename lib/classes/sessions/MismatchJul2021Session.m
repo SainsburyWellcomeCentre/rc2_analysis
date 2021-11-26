@@ -116,22 +116,6 @@ classdef MismatchJul2021Session < RVTSession
         
         
         
-        function p_val = is_significant_mismatch_response_by_protocol(obj, cluster, prot_i)
-            
-            [baseline, response, response_ctl] = obj.windowed_mm_responses(cluster, prot_i);
-            
-            p       = mm_do_ANOVA(baseline', response');
-            p_ctl   = mm_do_ANOVA(baseline', response_ctl');
-            
-            if p_ctl(1) < 0.05
-                p_val = nan;
-            else
-                p_val = p(1);
-            end
-        end
-        
-        
-        
         function [running, t] = running_around_mismatch_by_protocol(obj, prot_i, limits)
             
             trials = obj.trials_of_type(prot_i);
