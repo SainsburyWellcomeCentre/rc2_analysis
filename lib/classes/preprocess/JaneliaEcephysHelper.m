@@ -14,6 +14,10 @@ classdef JaneliaEcephysHelper < handle
         
         ctl
         probe_id
+        
+        run_script
+        template_script
+        python_exe
     end
     
     
@@ -35,6 +39,36 @@ classdef JaneliaEcephysHelper < handle
             obj.move_csvs();
             obj.move_chanmap();
             obj.fix_waveforms();
+        end
+        
+        
+        
+        function fname = get.run_script(obj)
+            if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
+                fname = fullfile(obj.ctl.file.path_config.ecephys_scripts_dir, 'spikeGLX_pipeline_margrie.py');
+            elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
+                fname = fullfile(obj.ctl.file.path_config.ecephys_np2_scripts_dir, 'spikeGLX_pipeline_margrie.py');
+            end
+        end
+        
+        
+        
+        function fname = get.template_script(obj)
+            if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
+                fname = obj.ctl.file.path_config.ecephys_template;
+            elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
+                fname = obj.ctl.file.path_config.ecephys_np2_template;
+            end
+        end
+        
+        
+        
+        function fname = get.python_exe(obj)
+            if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
+                fname = obj.ctl.file.path_config.ecephys_python_exe;
+            elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
+                fname = obj.ctl.file.path_config.ecephys_np2_python_exe;
+            end
         end
         
         
@@ -63,9 +97,6 @@ classdef JaneliaEcephysHelper < handle
         
         function overwrite_ecephys_py_script(obj)
             
-            template_script = obj.ctl.file.path_config.ecephys_template;
-            dest_script = fullfile(obj.ctl.file.path_config.ecephys_scripts_dir, 'spikeGLX_pipeline_margrie.py');
-            
             animal_id = obj.ctl.animal_id_from_probe_id(obj.probe_id);
             
             % gather variables which we need to replace in the script
@@ -81,7 +112,7 @@ classdef JaneliaEcephysHelper < handle
             json_directory = strrep(json_directory, '\', '\\');
             
             % open the default pipeline script
-            fid = fopen(template_script, 'r');
+            fid = fopen(obj.template_script, 'r');
             str = fread(fid, inf, '*char')';
             fclose(fid);
             
@@ -93,7 +124,7 @@ classdef JaneliaEcephysHelper < handle
             str = regexprep(str, '\<json_directory =[^\n]*\n',  sprintf('json_directory = %s\n', json_directory));
             
             % write a new pipeline script
-            fid = fopen(dest_script, 'w');
+            fid = fopen(obj.run_script, 'w');
             fprintf(fid, '%s', str);
             fclose(fid);
         end
@@ -104,12 +135,10 @@ classdef JaneliaEcephysHelper < handle
             
             fprintf('Running ecephys_spike_sorting...');
             
-            % run the python pipeline
-            script = fullfile(obj.ctl.file.path_config.ecephys_scripts_dir, 'spikeGLX_pipeline_margrie.py');
             if obj.leave_window_open_on_error
-                cmd = sprintf('start /wait cmd /k %s %s', obj.ctl.file.path_config.ecephys_python_exe, script);
+                cmd = sprintf('start /wait cmd /k %s %s', obj.python_exe, obj.run_script);
             else
-                cmd = sprintf('start /wait cmd /c %s %s', obj.ctl.file.path_config.ecephys_python_exe, script);
+                cmd = sprintf('start /wait cmd /c %s %s', obj.python_exe, obj.run_script);
             end
             system(cmd);
             % cleanup
@@ -203,7 +232,9 @@ classdef JaneliaEcephysHelper < handle
             str = regexprep(str, '\<"ap_band_file":[^\n]*\n', sprintf('"ap_band_file": "%s",\n', ap_band_fname));
             str = regexprep(str, '\<"mean_waveforms_file":[^\n]*\n', sprintf('"mean_waveforms_file": "%s",\n', new_mean_waveforms_fname));
             str = regexprep(str, '\<"waveform_metrics_file":[^\n]*\n', sprintf('"waveform_metrics_file": "%s"\n', new_waveform_metrics_fname));
-%             str = regexprep(str, '\<"use_C_Waves":[^\n]*\n', '"use_C_Waves": false\n');
+            if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
+                str = regexprep(str, '\<"use_C_Waves":[^\n]*\n', '"use_C_Waves": false\n');
+            end
             
             % write to the new input json
             fid = fopen(new_input_json_fname, 'w');
@@ -213,10 +244,10 @@ classdef JaneliaEcephysHelper < handle
             % go
             if obj.leave_window_open_on_error
                 cmd = sprintf('start /wait cmd /k %s -m ecephys_spike_sorting.modules.mean_waveforms --input_json "%s" --output_json "%s"', ...
-                            obj.ctl.file.path_config.ecephys_python_exe, new_input_json_fname, new_output_json_fname);
+                            obj.python_exe, new_input_json_fname, new_output_json_fname);
             else
                 cmd = sprintf('start /wait cmd /c %s -m ecephys_spike_sorting.modules.mean_waveforms --input_json "%s" --output_json "%s"', ...
-                            obj.ctl.file.path_config.ecephys_python_exe, new_input_json_fname, new_output_json_fname);
+                            obj.python_exe, new_input_json_fname, new_output_json_fname);
             end
             system(cmd);
         end
