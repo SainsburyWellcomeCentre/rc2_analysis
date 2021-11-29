@@ -112,6 +112,7 @@ classdef RC2Preprocess < RC2Format
             
             h_fig = hf_power.plot_summary();
             
+            obj.save.create_tracks_dir(probe_id);
             obj.save.track_offset(probe_id, shank_id, hf_power.delta_l5);
             obj.save.hf_power_figure(probe_id, shank_id, h_fig);
             obj.save.hf_power_parameters(probe_id, shank_id, hf_power.get_parameters());

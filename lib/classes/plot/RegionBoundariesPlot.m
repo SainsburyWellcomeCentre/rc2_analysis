@@ -23,6 +23,8 @@ classdef RegionBoundariesPlot < handle
         %%collection of methods for plotting region information from probe_track
         %%information
             
+            if isempty(probe_track); return; end
+            
             obj.probe_track = probe_track;
             [obj.boundaries, ~, obj.region_str] = probe_track.region_boundaries();
             obj.middle_l5 = obj.probe_track.mid_l5_visp();

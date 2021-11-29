@@ -34,6 +34,7 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         function set_probe_track(obj, probe_track)
+            if isempty(probe_track); return; end
             obj.h_region_boundaries = RegionBoundariesPlot(probe_track);
         end
         
@@ -63,8 +64,10 @@ classdef HighFrequencyPowerProfilePlot < handle
                 
                 plot(gca, from_tip_um, power, 'color', 'k', 'linewidth', 0.75);
                 
-                obj.h_region_boundaries.plot_boundary_lines(gca);
-                obj.h_region_boundaries.plot_middle_of_VISp5(gca)
+                if ~isempty(obj.h_region_boundaries)
+                    obj.h_region_boundaries.plot_boundary_lines(gca);
+                    obj.h_region_boundaries.plot_middle_of_VISp5(gca)
+                end
                 
                 box off
                 
@@ -91,8 +94,10 @@ classdef HighFrequencyPowerProfilePlot < handle
                 
                 plot(gca, from_tip_um, obj.hf_power.power_interp(:, :, ii), 'linewidth', 0.75);
                 
-                obj.h_region_boundaries.plot_boundary_lines(gca);
-                obj.h_region_boundaries.plot_middle_of_VISp5(gca)
+                if ~isempty(obj.h_region_boundaries)
+                    obj.h_region_boundaries.plot_boundary_lines(gca);
+                    obj.h_region_boundaries.plot_middle_of_VISp5(gca)
+                end
                 
                 box off
                 
@@ -119,9 +124,11 @@ classdef HighFrequencyPowerProfilePlot < handle
             
             plot(gca, from_tip_um, power_raw, 'linewidth', 0.75);
             
-            obj.h_region_boundaries.plot_boundary_lines(gca);
-            obj.h_region_boundaries.plot_middle_of_VISp5(gca)
-            obj.h_region_boundaries.print_region_labels(gca);
+            if ~isempty(obj.h_region_boundaries)
+                obj.h_region_boundaries.plot_boundary_lines(gca);
+                obj.h_region_boundaries.plot_middle_of_VISp5(gca)
+                obj.h_region_boundaries.print_region_labels(gca);
+            end
             
             box off
             
@@ -483,7 +490,9 @@ classdef HighFrequencyPowerProfilePlot < handle
                 obj.current_offset = obj.current_offset + 10;
             end
             
-            obj.h_region_boundaries.apply_offset(obj.current_offset);
+            if ~isempty(obj.h_region_boundaries)
+                obj.h_region_boundaries.apply_offset(obj.current_offset);
+            end
             set(obj.h_offset_text, 'string', sprintf('Current offset = %i', obj.current_offset));
         end
     end

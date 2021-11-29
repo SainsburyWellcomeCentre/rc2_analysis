@@ -155,7 +155,10 @@ classdef HighFrequencyPowerProfile < handle
         
         function val = get.delta_l5(obj)
             
-            val = obj.ephys_l5 - obj.anatomy_l5;
+            val = 0;
+            if ~isnan(obj.anatomy_l5)
+                val = obj.ephys_l5 - obj.anatomy_l5;
+            end
         end
         
         
