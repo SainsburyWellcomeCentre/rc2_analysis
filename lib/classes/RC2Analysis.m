@@ -183,26 +183,6 @@ classdef RC2Analysis < handle
         
         
         
-        function create_svm_table(obj, probe_id)
-        %%creates and saves the SVM table
-            data = obj.load_formatted_data(probe_id);
-            tbl = data.create_svm_table();
-            obj.save.svm_table(probe_id, tbl);
-        end
-        
-        
-        
-        function create_replay_offsets_table(obj, probe_id)
-        % creates and saves the table of offsets for replayed trials
-        %   should this come earlier in preprocessing and saved with trial
-        %   structure?
-            data = obj.load_formatted_data(probe_id);
-            tbl = data.create_replay_offsets_table();
-            obj.save.offsets_table(probe_id, tbl);
-        end
-        
-        
-        
         function create_tuning_curves(obj, probe_id, trial_types)
         % creates and saves speed tuning curves for all trials
             

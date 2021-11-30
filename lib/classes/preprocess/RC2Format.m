@@ -32,7 +32,11 @@ classdef RC2Format < RC2Analysis
             % correct for acquisition mistakes
             formatted_data.sessions                             = data_cleansing(formatted_data.sessions);
             
-            obj.save.formatted_data(probe_id, formatted_data)
+            obj.save.formatted_data(probe_id, formatted_data);
+            
+            % perform caching of offsets and stationary/motion firing rates
+            obj.create_replay_offsets_table(probe_id);
+            obj.create_svm_table(probe_id);
         end
         
         
@@ -374,6 +378,26 @@ classdef RC2Format < RC2Analysis
                 n_triggers(ii).rc       = n_triggers_expected;
                 n_triggers(ii).probe    = n_triggers_per_session(ii);
             end
+        end
+        
+        
+        
+        function create_svm_table(obj, probe_id)
+        %%creates and saves the SVM table
+            data = obj.load_formatted_data(probe_id);
+            tbl = data.create_svm_table();
+            obj.save.svm_table(probe_id, tbl);
+        end
+        
+        
+        
+        function create_replay_offsets_table(obj, probe_id)
+        % creates and saves the table of offsets for replayed trials
+        %   should this come earlier in preprocessing and saved with trial
+        %   structure?
+            data = obj.load_formatted_data(probe_id);
+            tbl = data.create_replay_offsets_table();
+            obj.save.offsets_table(probe_id, tbl);
         end
     end
     

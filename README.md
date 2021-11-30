@@ -31,6 +31,12 @@ You must point to the following directories in the `path_config.m` file.
 git_work_tree_dir
 : The directory which contains the .git folder tracking rc2_analysis. This is important when saving data/figures so that we also save the commit SHA1 used when generating the data/figures.
 
+experiment_list_csv
+: Full path to `.csv` containing a table of experiment details (full description below).
+
+formatted_data_dir
+: Directory containing the eventual formatted `.mat` files. After preprocessing of the data, we combine it into a formatted data file. Paths to the formatted data files are of form `<formatted_data_dir>\<probe_id>.mat`
+
 raw_probe_dir
 : Directory containing the raw probe data. This directory contains subdirectories named with the animal IDs. Paths to the raw data depend on which probe was used for recording. (in the following the <probe_id> has the form `<animal_id>_<session_suffix1>_<session_suffix2>_...`)
 
@@ -54,15 +60,6 @@ processed_probe_slow_dir
 
 processed_camera_fast_dir/processed_camera_slow_dir
 : Similar to above but for the processing of the camera data.
-
-formatted_data_dir
-: Directory containing the eventual formatted.mat files. After preprocessing of the data, we combine it into a formatted data file. Paths to the formatted data files are of form `<formatted_data_dir>\<probe_id>.mat`
-
-summary_data_dir
-: Directory containing summary data .csv files. See below for the types of summary data file. They are:
-- stationary and motion
-- offsets of replayed trials
-- speed tuning properties
 
 figure_dir
 : Directory in which figures will be stored.
@@ -108,7 +105,7 @@ Run `setup_paths.m`, which adds required directories to the MATLAB path:
 
 ## Experiment list file
 
-A few important details needs to be manually entered in a `.csv`, which is stored in `<summary_data_dir>\experiment_list.csv`
+A few important details needs to be manually entered in a `.csv`, the full path to which is listed in `path_config.m` in `<experiment_list_csv>`.
 
 Each RC2 session has a row in the `.csv`. The details that need to be inserted are:
 
@@ -126,7 +123,7 @@ Each RC2 session has a row in the `.csv`. The details that need to be inserted a
 ## Preprocessing data
 
 ###0. Experiment list file
-Enter the experiment details into `<summary_data_dir>\experiment_list.csv`. Where `summary_data_dir` is set in `path_config.m`. e.g. for me it is, `D:\mvelez\summary_data\experiment_list.csv`
+Enter the experiment details into `<experiment_list_csv>` (set in  `path_config.m`, e.g. for me it is, `D:\mvelez\experiment_list.csv`).
 
 
 ###1. Create controller object
@@ -296,7 +293,14 @@ The format includes:
 - splitting of the experimental conditions contained in each protocol into 'trials'
 - synchronization to the probe recording with trials
 - allocation of clusters to brain regions according to the anatomy `track_<shank_id>.csv` file and any offset from step 5.
-   
+
+In addition, `.csv` files are created in separate location with further summary data. These are:
+
+`<formatted_data_dir>\csvs\trial_matched_offsets\<probe_id>.csv`
+Contains a table with the offset (in samples) for each replay trial, in order to align it with its original trial.
+
+`<formatted_data_dir>\csvs\stationary_vs_motion_fr\<probe_id>.csv`
+Contains a table with the firing rate of each cluster in each trial during the motion and stationary periods.
 
 
 
@@ -309,29 +313,6 @@ To work with the data run:
    
 This creates a `FormattedData` object in the workspace with access to all data in the recording.
 
-
-
-## Create summary data
-
-After the data has been processed we create some important auxiliary files including:
-
-1. offsets of aligned replay trials 
-
-    Aligning the replay trials (VF+T, VF, T) to their original trials is computationally demanding. So we perform the computation once and store a list of offsets (in samples) for these trials.
-
-
-2. stationary and motion csvs
-
-    Core to the analysis is the firing rate of clusters during the stationary and motion periods. Therefore to save computational time we extract the firing rates for each selected cluster and for each trial during the stationary and motion periods of that trial.
-
-To do this for a <probe_id>:
-
-```
->> ctl = RC2Format();
->> ctl.create_replay_offsets_table(<probe_id>);
->> ctl.create_svm_table(<probe_id>);
-```
-***Note: it is important to do it in this order. That is, create the offsets first before the stationary/motion csv, or else the stationary and motion periods will be determined from the replay trial rather than the original trial***
 
 
 

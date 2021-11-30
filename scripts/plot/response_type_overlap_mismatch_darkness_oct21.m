@@ -31,7 +31,7 @@ end
 
 
 %% save csv
-csvs                    = CSVManager(ctl);
+csvs                    = CSVManager();
 csvs.save_on            = true;
 csvs.set_csv_fulldir('C:\Users\lee\Desktop');
 csvs.create_table(  'probe_id',          probe_ids_store(:), ...

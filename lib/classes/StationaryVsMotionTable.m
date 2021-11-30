@@ -74,15 +74,5 @@ classdef StationaryVsMotionTable < handle
             end
             
         end
-        
-        
-        function save_table(obj)
-            
-            csv_fname = fullfile(obj.config.summary_data_dir, 'stationary_vs_motion_fr', sprintf('%s.csv', obj.probe_id));
-            writetable(obj.svm_table, csv_fname); 
-        end
-        
-        
-        
     end
 end

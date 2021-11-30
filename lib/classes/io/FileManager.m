@@ -28,7 +28,7 @@ classdef FileManager < handle
         
         function [fname, exists] = experiment_list(obj)
             
-            fname = fullfile(obj.path_config.summary_data_dir, 'experiment_list.csv');
+            fname = obj.path_config.experiment_list_csv;
             exists = isfile(fname);
         end
         
@@ -390,7 +390,7 @@ classdef FileManager < handle
         
         function [fname, exists] = svm_table(obj, probe_id)
             
-            fname = fullfile(obj.path_config.summary_data_dir, 'stationary_vs_motion_fr', sprintf('%s.csv', probe_id));
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'stationary_vs_motion_fr', sprintf('%s.csv', probe_id));
             exists = isfile(fname);
         end
         
@@ -398,7 +398,7 @@ classdef FileManager < handle
         
         function [fname, exists] = offsets_table(obj, probe_id)
             
-            fname = fullfile(obj.path_config.summary_data_dir, 'trial_matched_offsets', sprintf('%s.csv', probe_id));
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'trial_matched_offsets', sprintf('%s.csv', probe_id));
             exists = isfile(fname);
         end
         
@@ -406,7 +406,7 @@ classdef FileManager < handle
         
         function [fname, exists] = tuning_curves(obj, probe_id)
             
-            fname = fullfile(obj.path_config.summary_data_dir, 'tuning_curves', sprintf('%s.mat', probe_id));
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'tuning_curves', sprintf('%s.mat', probe_id));
             exists = isfile(fname);
         end
         
