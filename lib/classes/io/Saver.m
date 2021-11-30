@@ -175,6 +175,9 @@ classdef Saver < handle
             
             if obj.check_save(fname)
                 writetable(tbl, fname);
+                [pathname, filename] = fileparts(fname);
+                cfg_fname = fullfile(pathname, [filename, '.cfg']);
+                obj.git.save(cfg_fname);
             end
         end
         
