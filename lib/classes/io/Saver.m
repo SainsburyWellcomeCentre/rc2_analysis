@@ -193,6 +193,14 @@ classdef Saver < handle
                 save(fname, '-append', 'git');
             end
         end
+        
+        
+        
+        function append_to_git_cfg(obj, fname, force_save, prefix)
+        %%appends to an existing file with git information with prefix
+        %%'prefix'
+            obj.git.save(fname, force_save, prefix, true);
+        end
     end
     
     
