@@ -80,13 +80,14 @@ classdef Git < handle
             VariableDefault('append', false);
             
             % check whether to save
-            if ~force_save
+            if ~force_save && ~append
                 if isfile(fname)
                     print_fname = strrep(fname, '\', '\\');
                     msg = sprintf('%s already exists, overwrite (Y)?', print_fname);
                     user = input(msg, 's');
                     if ~strcmp(user, 'Y')
                         fprintf('Not saving...\n');
+                        return
                     end
                 end
             end
