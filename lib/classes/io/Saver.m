@@ -206,11 +206,8 @@ classdef Saver < handle
         %%'prefix'
             obj.git.save(fname, force_save, prefix, true);
         end
-    end
-    
-    
-    
-    methods (Static = true)
+        
+        
         
         function go_ahead = check_save(fname)
             
