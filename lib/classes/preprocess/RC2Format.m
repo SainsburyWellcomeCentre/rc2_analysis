@@ -1,6 +1,8 @@
 classdef RC2Format < RC2Analysis
     
     properties
+        
+        overwrite = false
     end
     
     
@@ -9,6 +11,14 @@ classdef RC2Format < RC2Analysis
         function obj = RC2Format()
             
             obj = obj@RC2Analysis();
+        end
+        
+        
+        
+        function set.overwrite(obj, val)
+            if islogical(val) && length(val) == 1
+                obj.save.overwrite = val;
+            end
         end
         
         

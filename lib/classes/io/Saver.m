@@ -1,5 +1,10 @@
 classdef Saver < handle
     
+    properties
+        
+        overwrite
+    end
+    
     properties (SetAccess = private)
         
         git
@@ -164,7 +169,7 @@ classdef Saver < handle
             
             figure(h_fig);  % make current figure
             fname = obj.file_manager.driftmap(probe_id);
-            if obj.check_save(fname)
+            if obj.check_save(fname) 
                 print(fname, '-bestfit', '-dpdf');
             end
         end
@@ -210,8 +215,13 @@ classdef Saver < handle
         function go_ahead = check_save(fname)
             
             go_ahead = true;
+            
+            if obj.overwrite
+                return
+            end
+            
             if isfile(fname)
-                user = input('File exists, overwrite (Y)?', 's');
+                user = input(sprintf('%s exists, overwrite (Y)?', fname), 's');
                 go_ahead = strcmp(user, 'Y');
             end
         end
