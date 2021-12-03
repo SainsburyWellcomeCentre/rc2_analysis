@@ -2,6 +2,8 @@ classdef RC2Format < RC2Analysis
     
     properties
         
+        compute_offsets = true
+        compute_svm_table = true
         overwrite = false
     end
     
@@ -45,8 +47,13 @@ classdef RC2Format < RC2Analysis
             obj.save.formatted_data(probe_id, formatted_data);
             
             % perform caching of offsets and stationary/motion firing rates
-            obj.create_replay_offsets_table(probe_id);
-            obj.create_svm_table(probe_id);
+            if obj.compute_offsets
+                obj.create_replay_offsets_table(probe_id);
+            end
+            
+            if obj.compute_svm_table
+                obj.create_svm_table(probe_id);
+            end
         end
         
         
