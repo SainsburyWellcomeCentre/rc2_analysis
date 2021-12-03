@@ -209,7 +209,7 @@ classdef Saver < handle
         
         
         
-        function go_ahead = check_save(fname)
+        function go_ahead = check_save(obj, fname)
             
             go_ahead = true;
             
