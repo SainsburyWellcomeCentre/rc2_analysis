@@ -271,7 +271,7 @@ classdef JaneliaEcephysHelper < handle
         
         
         
-        function fix_waveforms(obj
+        function fix_waveforms(obj)
         %%fix_waveforms Creates new waveform metrics file with properties
         %%from the raw data rather than processed data.
         %
