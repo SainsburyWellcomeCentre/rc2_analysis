@@ -1,6 +1,75 @@
-% plot heatmaps, triggered on some feature of the trial
+% Plot heatmaps and population FR average, triggered on some feature of a trial
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate plots combining all clusters
+%                               for all probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group
+%
+%       trial_group_labels:     Will generate a heatmap by averaging firing
+%                               rates across all trials specified.
+%                               Should be a cell array, with each entry
+%                               either a string specifying a trial group,
+%                               or a cell array of strings specifying
+%                               multiple trial groups.
+%                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
+%                               will create three heatmaps, the first
+%                               averaging across 'R' (running) trials, the
+%                               second averaging across any trial of
+%                               'T_bank', 'T_RT' or 'T_R' type, and the
+%                               third averaging across 'RT'
+%                               (running+translation) trials.
+%
+%       heatmap_trigger:        For each of the entries in
+%                               'trial_group_labels', a cell array specifying which
+%                               aspect of the trials to trigger on. Should
+%                               be either 'motion' (onset of motion) or
+%                               'mismatch' (onset of a mismatch event).
+%
+%       limits:                 time in seconds around the event to display
+%                               for the heatmap. e.g. [-1, 1] will display
+%                               the heatmap from 1 second before to 1
+%                               second after the event.
+%
+%       common_fs:              sampling frequency to compute the
+%                               firing rate convolutions for each cluster
+%                               (e.g. 60Hz) 
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\
+%
+%   If any of the elemenets in `heatmap_trigger` are 'motion', the
+%   following options should also be specified:
+%
+%       min_bout_duration:      the minimum duration in s for a motion bout to be included
+%
+%       include_200ms:          whether or not to include the first 200ms
+%                               after the solenoid goes low to look for
+%                               motion onset  
+%
+%
+% If `save_figs` is true, one pdf will be created for the heatmpas and one
+% for the population FR average.
 
 
+%%
 % experiment_groups       = {'darkness'};
 % trial_group_labels      = {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'};
 % heatmap_trigger         = {'motion', 'motion', 'motion'};
@@ -9,7 +78,8 @@
 % save_figs               = false;
 % overwrite               = true;
 % figure_dir              = {'heatmaps', 'darkness'};
-
+% min_bout_duration       = 2;
+% include_200ms           = true;
 
 
 %%
@@ -21,7 +91,8 @@
 % save_figs               = true;
 % overwrite               = true;
 % figure_dir              = {'heatmaps', 'visual_flow'};
-
+% min_bout_duration       = 2;
+% include_200ms           = true;
 
 
 %%
@@ -33,32 +104,34 @@
 % save_figs               = true;
 % overwrite               = true;
 % figure_dir              = {'heatmaps', 'mismatch_jul21'};
-
-
-
-%%
-experiment_groups       = {'mismatch_darkness_oct21'};
-trial_group_labels      = {'R', 'T', 'RT_gain_up'};
-heatmap_trigger         = {'motion', 'motion', 'mismatch'};
-limits                  = [-1, 1];
-common_fs               = 60;
-save_figs               = true;
-overwrite               = true;
-figure_dir              = {'heatmaps', 'mismatch_darkness_oct21'};
-include_first_200ms     = true;
-
+% min_bout_duration       = 2;
+% include_200ms           = true;
 
 
 %%
-% experiment_groups       = {'visual_flow', 'mismatch_nov20'};
-% trial_group_labels      = {{'RVT', 'RVT_gain_up'}, {'RV', 'RV_gain_up'}};
-% heatmap_trigger         = {'motion', 'motion'};
+% experiment_groups       = {'mismatch_darkness_oct21'};
+% trial_group_labels      = {'R', 'T', 'RT_gain_up'};
+% heatmap_trigger         = {'motion', 'motion', 'mismatch'};
 % limits                  = [-1, 1];
 % common_fs               = 60;
 % save_figs               = true;
 % overwrite               = true;
-% figure_dir              = {'heatmaps', 'visual_flow+mismatch_nov20'};
+% figure_dir              = {'heatmaps', 'mismatch_darkness_oct21'};
+% min_bout_duration       = 2;
+% include_200ms           = true;
 
+
+%%
+experiment_groups       = {'visual_flow', 'mismatch_nov20', 'mismatch_jul21'};
+trial_group_labels      = {{'RVT', 'RVT_gain_up'}, {'RV', 'RV_gain_up'}};
+heatmap_trigger         = {'motion', 'motion'};
+limits                  = [-1, 1];
+common_fs               = 60;
+save_figs               = true;
+overwrite               = true;
+figure_dir              = {'heatmaps', 'visual_flow+mismatch_nov20+mismatch_jul21'};
+min_bout_duration       = 2;
+include_200ms           = true;
 
 
 %%
@@ -74,12 +147,14 @@ ctl.setup_figures(figure_dir, save_figs);
 for ii = 1 : length(probe_ids)
     
     data        = ctl.load_formatted_data(probe_ids{ii});
-    clusters    = data.selected_clusters();
+    clusters    = data.VISp_clusters();
     
     for kk = 1 : length(trial_group_labels)
         
         if strcmp(heatmap_trigger{kk}, 'motion')
-            [~, t, times] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs);
+            options.min_bout_duration = min_bout_duration;
+            options.include_200ms = include_200ms;
+            [~, t, times] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs, options);
         elseif strcmp(heatmap_trigger{kk}, 'mismatch')
             [~, t, times] = data.get_traces_around_mismatch_onset(trial_group_labels{kk}, limits, common_fs);
         elseif strcmp(heatmap_trigger{kk}, 'solenoid')
