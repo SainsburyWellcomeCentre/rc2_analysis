@@ -51,7 +51,6 @@ classdef Trial < handle
 %       teensy_gain         - teensy_gain channel
 %       camera0             - motion energy for camera0
 %       camera1             - motion energy for camera1
-%       camera_motion_mask  - motion mask on the camera (remove?)
 %
 %   Trial Methods:
 %       find_original_trial - for replay trials, finds the original trial in the set of all trials
@@ -112,8 +111,6 @@ classdef Trial < handle
         fs
         rc2_t
         probe_t
-        camera_t
-        camera_idx
         
         treadmill_speed
         treadmill_acceleration
@@ -138,9 +135,15 @@ classdef Trial < handle
         teensy_gain
         camera0
         camera1
-        camera_motion_mask
     end
     
+    properties (Dependent = true, Hidden = true)
+        
+        camera0_
+        camera1_
+        camera_t
+        camera_idx
+    end
     
     
     methods
@@ -251,36 +254,51 @@ classdef Trial < handle
         
         
         
+        function val = get.camera0_(obj)
+        %%motion energy for camera0, camera timebase
+            val = [];
+            if ~isempty(obj.session.camera0_)
+                val = obj.session.camera0_(obj.camera_idx);
+            end
+        end
+        
+        
+        
+        function val = get.camera1_(obj)
+        %%motion energy for camera1, camera timebase
+            val = [];
+            if ~isempty(obj.session.camera1_)
+               val = obj.session.camera1_(obj.camera_idx);
+            end
+        end
+        
+        
         function val = get.camera0(obj)
-        %%motion energy for camera0
+        %%motion energy for camera0, interpolated to session
             val = [];
             if ~isempty(obj.session.camera0)
-                val = obj.session.camera0(obj.camera_idx);
+                val = obj.session.camera0(obj.start_idx:obj.end_idx);
             end
         end
         
         
         
         function val = get.camera1(obj)
-        %%motion energy for camera1
+        %%motion energy for camera1, interpolated to session
             val = [];
             if ~isempty(obj.session.camera1)
-               val = obj.session.camera1(obj.camera_idx);
+               val = obj.session.camera1(obj.start_idx:obj.end_idx);
             end
         end
         
         
         
-        function val = get.camera_motion_mask(obj)
-        %%mask of where camera motion is occurring
-            val = obj.session.camera_motion_mask(obj.start_idx:obj.end_idx);
-        end
-        
-        
-        
         function val = get.teensy_gain(obj)
-        %%teensy_gain channel during this trial    
-            val = obj.session.teensy_gain(obj.start_idx:obj.end_idx);
+        %%teensy_gain channel during this trial  
+            val = [];
+            if ~isempty(obj.session.teensy_gain)
+                val = obj.session.teensy_gain(obj.start_idx:obj.end_idx);
+            end
         end
         
         
@@ -737,12 +755,6 @@ classdef Trial < handle
             mask = obj.analysis_window() & ...
                    ~ obj.treadmill_motion_mask() & ...
                    ~ obj.stage_motion_mask;
-               % ~ obj.camera_motion_mask & ...
-            
-            if obj.use_camera_for_stationary
-                mask = mask & ~ obj.camera_motion_mask;
-            end
-               
                
             if strcmp(obj.protocol, 'ReplayOnly')
                 mask = mask & ~ obj.multiplexer_motion_mask();

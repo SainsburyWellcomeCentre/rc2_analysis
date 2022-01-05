@@ -1,4 +1,4 @@
-classdef TrialStructure
+classdef TrialStructure < handle
 % TrialStructure Class for plotting the structure of RVT trials.
 %
 %  TrialStructure Properties:
@@ -60,7 +60,9 @@ classdef TrialStructure
             
             obj.h_fig = figure();
             set(obj.h_fig, 'position', [16, 80, 1440, 890], ...
+                           'paperunits', 'inches', ...
                            'papersize', [15, 10], ...
+                           'paperposition', [0, 0, 15, 10], ...
                            'renderer', 'painters');
         end
         
@@ -92,7 +94,7 @@ classdef TrialStructure
         function plot_camera(obj, h_ax)
         %%plot_camera Plots the motion energy from the camera
         
-%             obj.plot_general_trace(h_ax, obj.trial.camera1, 'Camera (a.u.)');
+            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.camera1/max(obj.trial.camera1), 'Camera (a.u.)');
             
 %             lims = prctile(obj.trial.camera1, [0, 30]);
 %             m = median(obj.trial.camera1(obj.trial.camera1 > lims(1) & obj.trial.camera1 < lims(2)));

@@ -29,8 +29,6 @@ classdef RC2Trial < handle
         camera0
         camera1
         
-        camera_motion_mask
-        
         rc2_t
         probe_t
         camera_t
@@ -122,15 +120,6 @@ classdef RC2Trial < handle
             val = [];
             if ~isempty(obj.session.camera1_interp)
                 val = obj.session.camera1_interp(obj.start_idx:obj.end_idx);
-            end
-        end
-        
-        
-        
-        function val = get.camera_motion_mask(obj)
-            val = [];
-            if ~isempty(obj.session.camera_motion_mask)
-                val = obj.session.camera_motion_mask(obj.start_idx:obj.end_idx);
             end
         end
         

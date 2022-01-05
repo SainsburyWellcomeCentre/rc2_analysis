@@ -23,7 +23,6 @@ classdef RC2Session < handle
 %       teensy_gain         - teensy_gain channel
 %       camera0             - motion energy for camera0
 %       camera1             - motion energy for camera1
-%       camera_motion_mask  - motion mask on the camera (remove?)
 %
 %       rc2_t               - timebase of the trial in the NIDAQ session recording (0s on first sample point, 1/fs on second etc.)
 %       probe_t             - timebase of the trial synced to the probe recording
@@ -32,11 +31,10 @@ classdef RC2Session < handle
 %   RC2Session Methods:
 %       camera0_interp      - interpolate the motion energy data on camera0 so it has the same timebase as the other channel.
 %       camera1_interp      - interpolate the motion energy data on camera1 so it has the same timebase as the other channel.
-%       compute_camera_motion_mask - store a mask of motion in the camera data
 %
 %   See also: RVTSession
 
-    properties
+    properties (SetAccess = private)
         
         probe_id
         session_id
@@ -59,10 +57,14 @@ classdef RC2Session < handle
         camera0
         camera1
         
-        camera_motion_mask
-        
         rc2_t
         probe_t
+    end
+    
+    properties (SetAccess = private, Hidden = true)
+        
+        camera0_
+        camera1_
         camera_t
     end
     
@@ -112,6 +114,8 @@ classdef RC2Session < handle
             end
             
             if ~isempty(obj.camera0)
+                obj.camera0_ = obj.camera0;
+                obj.camera1_ = obj.camera1;
                 obj.camera0 = obj.camera0_interp();
                 obj.camera1 = obj.camera1_interp();
             end
@@ -149,15 +153,6 @@ classdef RC2Session < handle
             if ~isempty(obj.camera1)
                 val = interp1(obj.camera_t, obj.camera1, obj.probe_t);
             end
-        end
-        
-        
-        
-        function compute_camera_motion_mask(obj)
-        %%compute_camera_motion_mask Store a mask of motion in the camera
-        %%data
-        
-            obj.camera_motion_mask = compute_camera_motion_mask(obj.camera1_interp, false);
         end
     end
 end
