@@ -140,8 +140,8 @@ classdef RC2Figures < handle
         %  After the figures have been joined, the temporary files will be
         %  deleted.
         %
-        %   TODO: also reset the fnames_to_join and n_figs_to_join (call
-        %   `clear_figs` here?
+        %   `fnames_to_join` and `n_figs_to_join` will also be reset to an
+        %   empty array and 0 respectively.
         
             VariableDefault('overwrite', false);
             
@@ -150,6 +150,7 @@ classdef RC2Figures < handle
                 join_pdfs(obj.fnames_to_join, fname, true, overwrite);
             end
             
+            obj.clear_figs();
         end
         
         

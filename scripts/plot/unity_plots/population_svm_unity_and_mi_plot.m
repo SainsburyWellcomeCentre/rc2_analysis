@@ -1,4 +1,56 @@
-%%script for producing a unity plot for stationary vs. motion for each probe recording and trial group
+% Plot stationary vs. motion unity plot for an experiment group and trial
+% group as well as a modulation index vs. depth plot
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate unity plots/MI vs. depth plots including all
+%                               clusters in the probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group.
+%
+%       trial_group_labels:     Will generate a unity plot/MI vs. depth for each of the
+%                               trial groups specified. 
+%                               Should be a cell array, with each entry
+%                               either a string specifying a trial group,
+%                               or a cell array of strings specifying
+%                               multiple trial groups.
+%                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
+%                               will create three unity/MIvdepth plots, the first
+%                               combining across 'R' (running) trials, the
+%                               second combining across any trial of
+%                               'T_bank', 'T_RT' or 'T_R' type, and the
+%                               third combining across 'RT'
+%                               (running+translation) trials.
+%
+%       marker_type:            the type of marker to use on the plot (any
+%                               of those accepted by matlab) e.g. 'o' or
+%                               'v'. Should be a cell array of the same
+%                               length as `trial_group_labels`.
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\      
+%
+%       mi_figure_dir:          same as figure_dir but where to store the
+%                               MI vs. depth plots
+%
+% If `save_figs` is true, one pdf is saved for each probe recording, and a
+% separate one for clusters from all probe recordings pooled.
 
 
 %% experiments for visual flow
@@ -56,19 +108,31 @@ modulation_index        = cell(1, length(probe_ids));
 relative_depth          = cell(1, length(probe_ids));
 layer                   = cell(1, length(probe_ids));
 anatomies               = cell(1, length(probe_ids));
+anatomy_idx             = cell(1, length(probe_ids));
 cortical_position       = cell(1, length(probe_ids));
-
 
 for ii = 1 : length(probe_ids)
     
     data                = ctl.load_formatted_data(probe_ids{ii});
-    clusters            = data.selected_clusters;
-    cluster_ids         = data.selected_cluster_ids;
+    clusters            = data.VISp_clusters;
+    cluster_ids         = data.VISp_cluster_ids;
     anatomies{ii}       = data.anatomy;
+    
+    shank_ids           = cellfun(@(x)(x.shank_id), anatomies{ii});
     
     % get layer and relative position in layer for each cluster
     for jj = 1 : length(cluster_ids)
-        cortical_position{ii}(jj) = anatomies{ii}.from_tip_to_from_pia(clusters(jj).distance_from_probe_tip);
+        
+        % which of the anatomies is this cluster part of
+        idx = find(shank_ids == clusters(jj).shank_id);
+        
+        % get the cortical position in this anatomy
+        cortical_position{ii}(jj) = anatomies{ii}{idx}.from_tip_to_from_pia(clusters(jj).distance_from_probe_tip);
+        
+        % store the anatomy index
+        anatomy_idx{ii}(jj) = idx;
+        
+        % layer and relative depth of cluster in layer
         [relative_depth{ii}(jj), layer{ii}{jj}] = data.get_relative_layer_depth_of_cluster(cluster_ids(jj));
     end
     
@@ -84,16 +148,14 @@ for ii = 1 : length(probe_ids)
         % for each trial
         for kk = 1 : length(cluster_ids)
             
-            x = data.stationary_fr_for_trial_group(cluster_ids(kk), trial_group_labels{jj});
-            y = data.motion_fr_for_trial_group(cluster_ids(kk), trial_group_labels{jj});
+            [~, p, d, x, y] = data.is_stationary_vs_motion_significant(cluster_ids(kk), trial_group_labels{jj});
             
-            x_all{ii}{jj}(kk) = median(x);
-            y_all{ii}{jj}(kk) = median(y);
+            modulation_index{ii}{jj}(kk) = (y - x)/(y + x);
             
-            modulation_index{ii}{jj}(kk) = (median(y) - median(x))/(median(y) + median(x));
-            
-            [~, p_val{ii}{jj}(kk), direction{ii}{jj}(kk)] = ...
-                data.is_stationary_vs_motion_significant(cluster_ids(kk), trial_group_labels{jj});
+            x_all{ii}{jj}(kk) = x;
+            y_all{ii}{jj}(kk) = y;
+            p_val{ii}{jj}(kk) = p;
+            direction{ii}{jj}(kk) = d;
         end
     end
 end
@@ -148,7 +210,7 @@ for ii = 1 : length(probe_ids)
      % give the page a title
     FigureTitle(h_fig, probe_ids{ii});
         
-    ctl.figs.save_fig(probe_ids{ii});
+    ctl.figs.save_fig(probe_ids{ii}, overwrite);
 end
 
 
@@ -197,7 +259,7 @@ end
 % give the page a title
 FigureTitle(h_fig, 'pooled');
 
-ctl.figs.save_fig('pooled');
+ctl.figs.save_fig('pooled', overwrite);
 
 
 
@@ -207,40 +269,53 @@ ctl.figs.save_fig('pooled');
 ctl.setup_figures(mi_figure_dir, save_figs);
 
 for ii = 1 : length(probe_ids)
+    
+    % get the number of shanks in this recording
+    shank_ids               = cellfun(@(x)(x.shank_id), anatomies{ii});
+    
+    for shank_ii = 1 : length(shank_ids)
         
-    h_fig                   = ctl.figs.a4figure();
-    plot_array              = PlotArray(3, 2);
-    mi                      = MIDepthPlot.empty();
-
-    for jj = 1 : length(trial_group_labels)
-
-        pos         = plot_array.get_position(jj);
-        h_ax        = axes('units', 'centimeters', 'position', pos);
-
-        mi(end+1)   = MIDepthPlot(modulation_index{ii}{jj}, ...
-                                 p_val{ii}{jj}, ...
-                                 direction{ii}{jj}, ...
-                                 cortical_position{ii}, ...
-                                 anatomies{ii}.VISp_boundaries_from_pia_flat, ...
-                                 anatomies{ii}.VISp_layers, ...
-                                 h_ax);
-
-        mi(end).plot();
-
-        if jj == length(trial_group_labels)
-            mi(end).print_layers();
-            mi(end).xlabel('MI');
+        h_fig                   = ctl.figs.a4figure();
+        plot_array              = PlotArray(3, 2);
+        mi                      = MIDepthPlot.empty();
+        
+        % which of the clusters are on this shank
+        clust_idx = anatomy_idx{ii} == shank_ii;
+        
+        for jj = 1 : length(trial_group_labels)
+            
+            pos         = plot_array.get_position(jj);
+            h_ax        = axes('units', 'centimeters', 'position', pos);
+            
+            mi(end+1)   = MIDepthPlot(modulation_index{ii}{jj}(clust_idx), ...
+                                      p_val{ii}{jj}(clust_idx), ...
+                                      direction{ii}{jj}(clust_idx), ...
+                                      cortical_position{ii}(clust_idx), ...
+                                      anatomies{ii}{shank_ii}.VISp_boundaries_from_pia_flat, ...
+                                      anatomies{ii}{shank_ii}.VISp_layers, ...
+                                      h_ax);
+            
+            mi(end).plot();
+            
+            if jj == length(trial_group_labels)
+                mi(end).print_layers();
+                mi(end).xlabel('MI');
+            end
+            
+            mi(end).title(trial_group_labels{jj});
+            
+            mi(end).title(trial_group_labels{jj});
         end
-
-        mi(end).title(trial_group_labels{jj});
-                             
-        mi(end).title(trial_group_labels{jj});
+        
+        % give the page a title
+        title_str = sprintf('%s, shank %i', probe_ids{ii}, shank_ids(shank_ii));
+        FigureTitle(h_fig, title_str);
+        
+        ctl.figs.save_fig_to_join()
     end
     
-     % give the page a title
-    FigureTitle(h_fig, probe_ids{ii});
-        
-    ctl.figs.save_fig(probe_ids{ii});
+    ctl.figs.join_figs(sprintf('%s.pdf', probe_ids{ii}), overwrite);
+    ctl.figs.clear_figs();
 end
 
 
@@ -286,4 +361,4 @@ end
 % give the page a title
 FigureTitle(h_fig, 'pooled');
 
-ctl.figs.save_fig('pooled');
+ctl.figs.save_fig('pooled', overwrite);

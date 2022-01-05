@@ -12,6 +12,7 @@ classdef Cluster < handle
 %       duration        - peak-to-trough duration of the average waveform in ms
 %       overall_firing_rate - average firing rate of cluster across the probe recording
 %       fr              - instance of class FiringRates handling spike rates of cluster across recording
+%       shank_id        - shank ID on which cluster appears
 %
 %   Cluster Methods:
 %       is_VISp         - boolean, is cluster in VISp
@@ -40,6 +41,7 @@ classdef Cluster < handle
         distance_from_probe_tip
         duration
         overall_firing_rate
+        shank_id
     end
     
     
@@ -114,6 +116,13 @@ classdef Cluster < handle
             else
                 val = 'wide';
             end
+        end
+        
+        
+        
+        function val = get.shank_id(obj)
+        %%shank ID on which cluster appears
+            val = obj.cluster.shank_id;
         end
         
         
