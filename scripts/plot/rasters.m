@@ -31,6 +31,8 @@
 %                               aspect of the trials to trigger on. Should
 %                               be either 'motion' (onset of motion) or
 %                               'mismatch' (onset of a mismatch event).
+%                               Should be a cell array of the same  
+%                               length as `trial_group_labels`.
 %
 %       limits:                 time in seconds around the event to display
 %                               for the raster. e.g. [-1, 1] will display
