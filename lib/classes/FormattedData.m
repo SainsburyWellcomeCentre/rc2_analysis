@@ -966,12 +966,12 @@ classdef FormattedData < handle
         
         
         
-        function [traces, t, times] = get_traces_around_motion_onset(obj, trial_group_label, limits, common_fs)
+        function [traces, t, times] = get_traces_around_motion_onset(obj, trial_group_label, limits, common_fs, options)
         %%get_traces_around_motion_onset Return an array of velocity
         %%traces around motion onset for a set of trials
         %
         %   [TRACES, T, TIMES] =
-        %   get_traces_around_motion_onset(TRIAL_GROUP_LABEL, LIMITS, FS)
+        %   get_traces_around_motion_onset(TRIAL_GROUP_LABEL, LIMITS, FS, OPTIONS)
         %   for all trials specified by TRIAL_GROUP_LABEL get
         %   velocity traces around motion period onset. The amount of data
         %   either side of the motion onset is specified by LIMITS, a 1x2
@@ -980,6 +980,14 @@ classdef FormattedData < handle
         %   would get the trace 1 second before to 1 second after motion
         %   onset. FS specifies the sampling rate (in Hz) at which to
         %   sample the traces.
+        %
+        %   OPTIONS is used to determine which bouts are selected
+        %       it is a structure with fields
+        %               min_bout_duration -  the minimum duration in s for
+        %                                   a motion bout to be included
+        %               include_200ms - whether or not to include the first
+        %                               200ms after the solenoid goes low 
+        %                               to look for motion onset
         %
         %   Outputs:
         %    TRACES     - #samples x #motion bouts matrix with the velocity trace
@@ -991,12 +999,9 @@ classdef FormattedData < handle
         %                 at which the motion onset occurs (same outputs
         %                 as `get_mismatch_onset_times`)
         %
-        %   TODO:    This doesn't look like it can work - there are too few
-        %   arguments to `get_motion_onset_times`
-        %
         %   See also:   get_motion_onset_times, get_traces_around_times
         
-            [times, bouts] = obj.get_motion_onset_times(trial_group_label);
+            [times, bouts] = obj.get_motion_onset_times(trial_group_label, options);
             trials = cellfun(@(x)(x.trial), bouts, 'uniformoutput', false);
             [traces, t] = obj.get_traces_around_times(trials, times, limits, common_fs);
         end
