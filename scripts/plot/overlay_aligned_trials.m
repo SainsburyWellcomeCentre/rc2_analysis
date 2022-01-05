@@ -1,11 +1,45 @@
-% plot information for each trial
+% Plot velocity traces for replay and original trials, where the replay has
+% been aligned to the original.
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate plots for all replay trials for all probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\
+%
+%       n_traces_per_fig:       number of traces to plot on one A4 page
+%
+% If `save_figs` is true, then one .pdf will be saved for each probe
+% recording, and contain traces for all replay trials.
+
+
 experiment_groups       = {'mismatch_darkness_oct21'};
 save_figs               = true;
 overwrite               = true;
 figure_dir              = {'alignment'};
-
 n_traces_per_fig        = 5;
 
+
+%%
 ctl                     = RC2Analysis();
 probe_ids               = ctl.get_probe_ids(experiment_groups{:});
 ctl.setup_figures(figure_dir, save_figs);
