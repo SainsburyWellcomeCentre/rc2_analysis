@@ -1,30 +1,98 @@
-%% settings for mismatch experiments
-% list the experimental groups to plot, the label of the trial groups and
-% the kind of raster you want plotted ('motion', 'mismatch', 'solenoid')
-%   limits = time limits in s around the trigger point
-%   common_fs = frequency of sampling for rasters
-%   figure_dir = cell array containing location relative to main figure
-%                   directory
-experiment_groups       = {'mismatch_jul21'};
-trial_group_labels      = {'R', 'T', 'RVT_gain_up', 'RV_gain_up'};
-raster_trigger          = {'motion', 'motion', 'mismatch', 'mismatch'};  % {'solenoid', 'solenoid', 'solenoid', 'solenoid'};  % 
+% Plot raster and velocity data triggered on some feature of a trial
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate raster plots for all clusters
+%                               and all probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group
+%
+%       trial_group_labels:     Will generate a raster for all trials specified.
+%                               Should be a cell array, with each entry
+%                               either a string specifying a trial group,
+%                               or a cell array of strings specifying
+%                               multiple trial groups.
+%                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
+%                               will create three heatmaps, the first
+%                               for all 'R' (running) trials, the
+%                               second for all trials of any of 
+%                               'T_bank', 'T_RT' or 'T_R' type, and the
+%                               third for all 'RT'
+%                               (running+translation) trials.
+%
+%       raster_trigger:         For each of the entries in
+%                               'trial_group_labels', a string specifying which
+%                               aspect of the trials to trigger on. Should
+%                               be either 'motion' (onset of motion) or
+%                               'mismatch' (onset of a mismatch event).
+%
+%       limits:                 time in seconds around the event to display
+%                               for the raster. e.g. [-1, 1] will display
+%                               the rasters from 1 second before to 1
+%                               second after the event.
+%
+%       common_fs:              sampling frequency to compute the
+%                               firing rate convolutions for each cluster
+%                               (e.g. 60Hz) 
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\
+%
+%   If any of the elemenets in `raster_trigger` are 'motion', the
+%   following options should also be specified:
+%
+%       min_bout_duration:      the minimum duration in s for a motion bout to be included
+%
+%       include_200ms:          whether or not to include the first 200ms
+%                               after the solenoid goes low to look for
+%                               motion onset  
+%
+%
+% If `save_figs` is true, one pdf will be created for each probe recording,
+% and contain a A4 page for each cluster, containing the raster data for
+% several conditions.
+
+
+%%
+experiment_groups       = {'darkness'};
+trial_group_labels      = {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'};
+raster_trigger          = {'motion', 'motion', 'motion'};
 limits                  = [-1, 1];
 common_fs               = 60;
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'rasters', 'mismatch_jul21', 'motion'};
+figure_dir              = {'rasters', 'darkness'};
+min_bout_duration       = 2;
+include_200ms           = true;
 
 
-
-%% settings for visual flow experiments
-% plot.experiment_groups       = {'visual_flow'};
-% plot.trial_group_labels      = {'RVT', 'RV', 'RVT_gain_up', 'RT_gain_up'};
-% plot.raster_trigger          = {'motion', 'motion', 'mismatch', 'mismatch'};
-% plot.limits                  = [-1, 1];
-% plot.common_fs               = 60;
-% plot.save_figs               = true;
-% plot.figure_dir              = {'rasters', 'visual_flow'};
-
+%%
+% experiment_groups       = {'mismatch_jul21'};
+% trial_group_labels      = {'R', 'T', 'RVT_gain_up', 'RV_gain_up'};
+% raster_trigger          = {'motion', 'motion', 'mismatch', 'mismatch'};
+% limits                  = [-1, 1];
+% common_fs               = 60;
+% save_figs               = true;
+% overwrite               = true;
+% figure_dir              = {'rasters', 'mismatch_jul21', 'motion'};
+% min_bout_duration       = 2;
+% include_200ms           = true;
 
 
 %%
@@ -46,7 +114,9 @@ for ii = 1 : length(probe_ids)
     for kk = 1 : length(trial_group_labels)
         
         if strcmp(raster_trigger{kk}, 'motion')
-            [traces{kk}, t, times] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs);
+            options.min_bout_duration = min_bout_duration;
+            options.include_200ms = include_200ms;
+            [traces{kk}, t, times] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs, options);
         elseif strcmp(raster_trigger{kk}, 'mismatch')
             [traces{kk}, t, times] = data.get_traces_around_mismatch_onset(trial_group_labels{kk}, limits, common_fs);
         elseif strcmp(raster_trigger{kk}, 'solenoid')
