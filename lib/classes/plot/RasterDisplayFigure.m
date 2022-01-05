@@ -1,6 +1,20 @@
-classdef RasterDisplayFigure < handle
-    
+classdef RasterDisplayFigure
+% RasterDisplayFigure Class for handling the plotting of raster data, along
+% with other axes such as running velocity and continuous spike rates
+%
+%   RasterDisplayFigure Properties:
+%       raster_marker_type - style of the dots on the raster
+%       
+%   RasterDisplayFigure Methods:
+%       fill_data       - fills the axes with the raster data
+%       sync_sections   - synchronize the limits of the axes
+%       x_lim           - update all x-axes
+%       y_lim           - update all y-axes
+%
+%   See also: Raster, RasterDisplaySection, TracePlot, PSTH, RasterData
+
     properties
+        
         h_fig
         h_section = RasterDisplaySection.empty()
         h_title
@@ -14,10 +28,19 @@ classdef RasterDisplayFigure < handle
         max_spike_rate = -inf;
     end
     
+    
+    
     methods
         
         function obj = RasterDisplayFigure(n_prot)
-            
+        %%RasterDisplayFigure
+        %
+        %   RasterDisplayFigure(NUMBER_OF_SECTIONS) creates a figure with
+        %   NUMBER_OF_SECTIONS sections. Each section will be controlled by
+        %   the class RasterDisplaySection, and is composed of 3 axes for
+        %   raster data, velocity data and firing rate data. Currently
+        %   NUMBER_OF_SECTIONS can only be one of 2, 3, 4, or 6.
+        
             % setup a nice figure
             obj.h_fig = figure();
             
@@ -111,8 +134,24 @@ classdef RasterDisplayFigure < handle
         end
         
         
+        
         function fill_data(obj, x_i, y_i, spike_times, velocity_traces, spike_rates, common_t, title_str)
-            
+        %%fill_data Puts all data on the axes.
+        %
+        %   fill_data(X, Y, SPIKE_TIMES, VELOCITY_TRACES, SPIKE_RATES, COMMON_T, TITLE_STRING)
+        %   
+        %   Args:
+        %       X - column of the section
+        %       Y - row of the section
+        %       SPIKE_TIMES - cell array with each entry containing the
+        %                     spike times for each row of the raster
+        %       VELOCITY_TRACES - # samples x # raster rows matrix with
+        %                         velocity traces to show
+        %       SPIKE_RATES - # samples x # raster rows matrix with firing
+        %                     rates traces to show
+        %       COMMON_T - # samples x 1 vector with the time base of the
+        %                  traces in VELOCITY_TRACES and SPIKE_RATES
+        
             h_raster = Raster(spike_times, obj.h_section(x_i, y_i).h_ax(1), obj.raster_marker_type); %#ok<*PROPLC>
             h_motion = TracePlot(velocity_traces, common_t, obj.h_section(x_i, y_i).h_ax(2));
 %             h_rates = TracePlot(spike_rates, common_t, obj.h_section(x_i, y_i).h_ax(3));
@@ -146,8 +185,11 @@ classdef RasterDisplayFigure < handle
         end
         
         
+        
         function sync_sections(obj)
-            
+        %%sync_sections Loops through axes and makes sure axes of the same
+        %%type have same y limits 
+        
             m = inf*[1, 1, 1];
             M = -inf*[1, 1, 1];
             for x_i = 1 : size(obj.h_section, 1)
@@ -175,7 +217,14 @@ classdef RasterDisplayFigure < handle
         end
         
         
+        
         function x_lim(obj, val)
+        %%x_lim Loop through axes of the same type and give them the same
+        %%x-axis limits
+        %
+        %   x_lim(VALUE) where value is a 1 x 2 vector containing the
+        %   limits
+        
             for x_i = 1 : size(obj.h_section, 1)
                 for y_i = 1 : size(obj.h_section, 2)
                     if isempty(obj.h_section(x_i, y_i)); continue; end
@@ -188,8 +237,16 @@ classdef RasterDisplayFigure < handle
         end
         
         
+        
         function y_lim(obj, val, idx)
-            
+        %%y_lim Loop through axes of the same type and give them the same
+        %%y-axis limits
+        %
+        %   y_lim(VALUE, INDEX) where VALUE is a 1 x 2 vector containing the
+        %   limits. INDEX is the index of axis within the section that is
+        %   to be updated (e.g. if there are 3 axes in each section INDEx
+        %   can be 1 2 or 3).
+        
             if val(2) <= val(1)
                 return
             end
@@ -201,8 +258,6 @@ classdef RasterDisplayFigure < handle
                     set(obj.h_section(x_i, y_i).h_ax(idx), 'ylim', val);
                 end
             end
-            
         end
-        
     end
 end

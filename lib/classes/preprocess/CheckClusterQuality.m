@@ -1,7 +1,43 @@
 classdef CheckClusterQuality < handle
+% CheckClusterQuality Class for plotting and checking the quality of a
+% cluster.
+%
+%   CheckClusterQuality Properties:
+%       isi_limit       - limits of the ISI histogram plot (default = 30ms)
+%       isi_bin         - size of the bins in the ISI histogram plot (default = 0.25ms)
+%       isi_thresh      - (default = 1.5ms)
+%       isi_min         - (default = 0.166ms)
+%       probe_fs        - sample rate of the probe recording (default = 3000Hz)
+%       apply_jcolonell_isi_correction - whether to apply the correction
+%                                       appearing in a recent version of
+%                                       ecephys_spike_sorting (default = false)
+%
+%     Private:
+%       ctl             - instance of RC2Preprocess
+%       probe_id        - string with probe ID
+%       session_bounds  - bounds in probe time of the different sessions
+%       spike_times     - list of spike times for a cluster
+%       spike_clusters  - ID of the cluster to which each spike belongs
+%       amplitudes      - ampltiude of each spike
+%       
+%   CheckClusterQuality Methods:
+%       plot                        - plots whole figure
+%       amplitude_plot              - plots the spike amplitude over time
+%       isi_plot                    - plots ISI histogram
+%       compute_isi_distribution    - computes the ISIs from a list of spike times
+%       compute_isi_info            - computes information to be printed about ISIs and amplitudes
+%       amplitude_histogram_plot    - plot histogram of spike amplitudes
+%       print_cluster_info          - prints info about ISI calculation
     
+
     properties
+        
         apply_jcolonell_isi_correction = false
+        isi_limit = 30; % ms
+        isi_bin = 0.25; % ms
+        isi_thresh = 1.5; % ms
+        isi_min = 0.166; % ms
+        probe_fs = 30000; % Hz
     end
     
     properties (SetAccess = private)
@@ -13,13 +49,6 @@ classdef CheckClusterQuality < handle
         spike_times
         spike_clusters
         amplitudes
-        
-        
-        isi_limit = 30; % ms
-        isi_bin = 0.25; % ms
-        isi_thresh = 1.5; % ms
-        isi_min = 0.166; % ms
-        probe_fs = 30000; % Hz
     end
     
     
@@ -40,7 +69,16 @@ classdef CheckClusterQuality < handle
         
         
         function plot(obj, cluster_id)
-            
+        %%plot Plots three axes with cluster quality information
+        %
+        %   plot(CLUSTER_ID) produces three plots on one figure about
+        %   cluster quality. On the left is the amplitude of the spikes of
+        %   the cluster over time, with the session recordings delimited.
+        %   In the middle is the distribution of spike amplitudes across
+        %   the reocrding. On the right is the distribution of ISIs. Also
+        %   printed to the command line are some details about the ISI
+        %   calculation.
+        
             figure('position', [137, 338, 1527, 526]);
             
             h_ax(1) = subplot(1, 3, 1);
@@ -64,7 +102,13 @@ classdef CheckClusterQuality < handle
         
         
         function amplitude_plot(obj, h_ax, spike_times, amplitudes)
-            
+        %%amplitude_plot Plots the spike amplitude over time 
+        %
+        %   amplitude_plot(AXIS_HANDLE, SPIKE_TIMES, AMPLITUDES) takes the
+        %   spike times (SPIKE_TIMES) and spike amplitudes (AMPLITUDES) for
+        %   a cluster, and plots them on axis with handle AXIS_HANDLE.
+        %   SPIKE_TIMES and AMPLITUDES should be # spikes x 1 vectors.
+        
             % scatter amplitudes across time
             scatter(h_ax, spike_times, amplitudes, 10, 'k', 'fill');
             
@@ -91,7 +135,14 @@ classdef CheckClusterQuality < handle
         
         
         function isi_plot(obj, h_ax, isis)
-            
+        %%isi_plot Plot the ISI histogram
+        %
+        %   isi_plot(AXIS_HANDLE, ISIS) takes the list of inter-spike
+        %   intervals (ISIS) and plots them as a histogram on axis with 
+        %   handle AXIS_HANDLE.. `isi_thresh` is also plotted on the figure.
+        %
+        %   See also: compute_isi_distribution
+        
             edges = -obj.isi_limit : obj.isi_bin : obj.isi_limit;
             histogram(h_ax, 1e3*[isis, -isis], edges, 'facecolor', 'k');
             
@@ -105,7 +156,11 @@ classdef CheckClusterQuality < handle
         
         
         function isis = compute_isi_distribution(obj, spike_times)
-            
+        %%compute_isi_distribution Computes the ISIs from a list of spike times 
+        %
+        %   ISIS = compute_isi_distribution(SPIKE_TIMES) computes the ISIs
+        %   from the SPIKE_TIMES, and returns it as ISIS.
+        
             n_spikes = length(spike_times);
             isis = [];
             N = min(50000, n_spikes);
@@ -122,7 +177,29 @@ classdef CheckClusterQuality < handle
         
         
         function info = compute_isi_info(obj, spike_times, amplitudes)
-            
+        %%compute_isi_info Computes information to be printed about ISIs
+        %%and amplitudes
+        %
+        %   INFO = compute_isi_info(SPIKE_TIMES, AMPLITUDES) computes
+        %   values about the ISI calculation and spike amplitudes. Returns
+        %   as a structure INFO with fields:
+        %
+        %       n_spikes        - the number of spikes
+        %       n_viol          - the number of ISI violations
+        %       total_rate      - firing rate from first to last spike
+        %       viol_rate       - the rate of ISI violations
+        %       fp_rate         - ISI violation metric
+        %       viol_expected   - number of expected violations from firing rate
+        %       min_amp         - minimum spike amplitude
+        %       med_amp         - median spike amplitude
+        %       amp_ratio       - median / minimum amplitude
+        %
+        %   If `apply_jcolonell_isi_correction` is true, the `fp_rate`
+        %   field is updated with the correction applied by a recent
+        %   version of ecephys_spike_sorting.
+        %
+        %   See also: print_cluster_info
+        
             % interspike intervals
             isis = diff(spike_times);
             
@@ -159,12 +236,18 @@ classdef CheckClusterQuality < handle
             info.amp_ratio = median(amplitudes)/min(amplitudes);
         end
     end
-        
-        
+    
+    
+    
     methods (Static = true)
         
         function amplitude_histogram_plot(h_ax, amplitudes)
-            
+        %%amplitude_histogram_plot Plot histogram of spike amplitudes
+        %
+        %   amplitude_histogram_plot(AXIS_HANDLE, AMPLITUDES) takes the
+        %   list of spike amplitudes and plots them as a histogram to
+        %   assess the "amplitude cutoff" metric.
+        
             % plot the histogram
             h = histogram(h_ax, amplitudes, 500);
             
@@ -177,7 +260,13 @@ classdef CheckClusterQuality < handle
         end
         
         function print_cluster_info(info)
-            
+        %%print_cluster_info Prints the information about the clusters
+        %
+        %   print_cluster_info(INFO) prints the information produced by
+        %   `compute_isi_info`.
+        %
+        %   See also: compute_isi_info
+        
             fprintf('Firing rate: %.7f Hz\n', info.total_rate);
             fprintf('# spikes:    %i\n', info.n_spikes);
             fprintf('ISI viol:    %.7f\n', info.fp_rate);

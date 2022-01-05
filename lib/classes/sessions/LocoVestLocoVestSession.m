@@ -1,5 +1,16 @@
 classdef LocoVestLocoVestSession < RVTSession
-    
+% LocoVestLocoVestSession Class for handling details of a
+% locovest_loco_vest session.
+%
+%   LocoVestLocoVestSession Properties:
+%       trial_group_ids         - integer IDs for each trial group
+%       trial_group_labels      - string IDs for each trial group
+%
+%   LocoVestLocoVestSession Methods:
+%       get_trial_group_id      - Given a trial, return the trial group ID
+%       remove_trials_without_motion - removes some trials without any motion
+%
+%   See also: RVTSession   
     
     properties (Constant = true)
         
@@ -12,7 +23,12 @@ classdef LocoVestLocoVestSession < RVTSession
     methods
         
         function obj = LocoVestLocoVestSession(session)
-            
+        % LocoVestLocoVestSession
+        %
+        %   LocoVestLocoVestSession(SESSION) takes a session structure,
+        %   SESSION, saved in the formatted data file and creates an object
+        %   to handle the data of a 'locovest_loco_vest' session.
+        
             obj = obj@RVTSession(session);
             
             for ii = 1 : session.n_trials
@@ -35,7 +51,11 @@ classdef LocoVestLocoVestSession < RVTSession
         
         
         function group_id = get_trial_group_id(~, trial)
-        %%get which group the given trial belongs to
+        %%get_trial_group_id Given a trial, return the trial group ID
+        %
+        %   GROUP_ID = get_trial_group_id(TRIAL)
+        %   get which trial group ID the given trial in TRIAL, of class
+        %   Trial, belongs to. 
         
             if strcmp(trial.protocol, 'Coupled')
                 group_id = 1;

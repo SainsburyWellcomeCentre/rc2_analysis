@@ -1,5 +1,36 @@
 classdef RVTSession < RC2Session
-    
+% RVTSession Class for handling details of a session with R, VF or T
+% trials
+%
+%   RVTSession Properties:
+%       trials              - cell array with entries of class Trial
+%       use_aligned_data    - default: true
+%
+%   RVTSession Methods:
+%       get_group_label_from_id            - return a trial group label from its ID
+%       get_group_id_from_label            - return a trial group ID from its label
+%       get_trials_with_trial_group_label  - return a cell array of trials with the specified trial label
+%       get_trial_with_id                  - return trials with specified ID (not trial group ID, but trial ID)
+%       get_original_trial_for_replay      - for a replay trial, return the original trial
+%       match_replay_to_original           - match the replay trial to the original trial
+%       get_motion_bouts_for_trial_group   - for all trials in the trial group, get all of the motion bouts
+%       apply_offsets                      - applies offsets to trials from the cached table of offsets
+%       to_aligned                         - for a trial, return the corresponding AlignedTrial
+%
+%   All subclasses deal with a particular protocol and should define:
+%       trial_group_ids
+%       trial_group_labels
+%
+%   Each R/VF/T trial is assigned to a 'group', which is given a label and
+%   an ID. The ID is an integer starting at 1, and the label is a short
+%   string.  This class does not have default for those properties, so they
+%   must be defined by the subclass.
+%   
+%   See also: FourWayProtocolSession, HeadTiltMiceSession,
+%   LocoVestLocoVestSession, LocoVestLocoVestDarknessSession,
+%   MismatchNov2020Session, MismatchJul2021Session,
+%   MismatchDarknessOct2021Session, PassiveExperiment,
+%   PassiveProtocolSession, SparseNoiseSession
     
     properties (SetAccess = protected)
         
@@ -16,7 +47,11 @@ classdef RVTSession < RC2Session
     methods
         
         function obj = RVTSession(session)
-            
+        % RVTSession
+        %
+        %   RVTSession(SESSION) takes a session structure saved in the
+        %   formatted data and creates an object to handle the data.
+        
             obj = obj@RC2Session(session);
             
             for ii = 1 : session.n_trials
@@ -37,7 +72,10 @@ classdef RVTSession < RC2Session
         
         
         function label = get_group_label_from_id(obj, trial_group_id)
-        %%returns trial group label from the trial group id
+        %%get_group_label_from_id Return a trial group label from its ID
+        %
+        %   LABEL = get_group_label_from_id(GROUP_ID) 
+        
             idx = obj.trial_group_ids == trial_group_id;
             label = obj.trial_group_labels{idx};
         end
@@ -45,7 +83,10 @@ classdef RVTSession < RC2Session
         
         
         function label = get_group_id_from_label(obj, trial_group_label)
-        %%returns trial group id from the trial group label
+        %%get_group_id_from_label Return a trial group ID from its label
+        %
+        %   GROUP_ID = get_group_id_from_label(LABEL) 
+        
             idx = strcmp(obj.trial_group_labels, trial_group_label);
             label = obj.trial_group_ids(idx);
         end
@@ -53,8 +94,13 @@ classdef RVTSession < RC2Session
         
         
         function trials = get_trials_with_trial_group_label(obj, trial_group_labels)
-        %%returns trials with trial group label (can be cell array of group
-        %%labels)
+        %%get_trials_with_trial_group_label Return a cell array of trials with the specified trial label
+        %
+        %   TRIALS = get_trials_with_trial_group_label(GROUP_LABELS) 
+        %   gets the set of trials with the trial groups labels in GROUP_LABELS.
+        %   LABELS can be a single string with the trial group label or a
+        %   cell array of group labels, in which case all trials satisfying
+        %   any of the LABELS is returned.
             
             if ~iscell(trial_group_labels)
                 trial_group_labels = {trial_group_labels};
@@ -73,7 +119,13 @@ classdef RVTSession < RC2Session
         
         
         function trial = get_trial_with_id(obj, trial_id)
-        %%returns the trial with id (not to be confused with 'group_id'
+        %%get_trial_with_id Return trials with specified ID (not trial group ID, but trial ID)
+        %
+        %   TRIAL = get_trial_with_id(TRIAL_ID) 
+        %   returns the trial with trial ID, TRIAL_ID. TRIAL is the Trial object. The
+        %   supplied ID is *not* the trial group ID, but the trial ID in
+        %   trial_id property of the Trial object.
+        
             idx = cellfun(@(x)(x.trial_id), obj.trials) == trial_id;
             trial = obj.trials{idx};
         end
@@ -81,7 +133,13 @@ classdef RVTSession < RC2Session
         
         
         function original_trial = get_original_trial_for_replay(obj, replay_trial_id)
-        %%for a trial which is a replay, return the original trial
+        %%get_original_trial_for_replay For a replay trial, return the original trial
+        %
+        %   ORIGINAL_TRIAL = get_original_trial_for_replay(REPLAY_TRIAL_ID)
+        %   for a trial which is a replay, return the original trial.
+        %   REPLAY_TRIAL_ID is an integer refering to the ID of the replay
+        %   trial and ORIGINAL_TRIAL is a Trial object referring to the
+        %   original trial.
         
             replay_trial = obj.get_trial_with_id(replay_trial_id);
             
@@ -96,8 +154,13 @@ classdef RVTSession < RC2Session
         
         
         function offset = match_replay_to_original(obj, trial_id)
-        %%matches a replay trial to its original, and returns the amount
-        %%the replay trial is offset
+        %%match_replay_to_original Match the replay trial to the original trial
+        %
+        %   OFFSET = match_replay_to_original(TRIAL_ID)
+        %   matches a replay trial with trial ID TRIAL_ID to its original,
+        %   and returns the number of sample points the replay is offset
+        %   from the original. # samples is returned as an integer OFFSET.
+        
             
             original_trial = obj.get_original_trial_for_replay(trial_id);
             replay_trial = obj.get_trial_with_id(trial_id);
@@ -169,15 +232,29 @@ classdef RVTSession < RC2Session
         
         
         
-        function all_bouts = get_motion_bouts_for_trial_group(obj, trial_group_id, options)
-        %   'options' can be supplied to determine which bouts are selected
+        function all_bouts = get_motion_bouts_for_trial_group(obj, trial_group_label, options)
+        %%get_motion_bouts_for_trial_group For all trials in a trial
+        %%group, get all of the motion bouts 
+        %
+        %   BOUTS_ARRAY = get_motion_bouts_for_trial_group(GROUP_LABELS, OPTIONS)
+        %
+        %   Returns all bouts in the trials in GROUP_LABELS. GROUP_LABELS 
+        %   can be a single string with a group label, or a cell array of
+        %   group labels. See `get_trials_with_trial_group_label`.
+        %
+        %   OPTIONS can be supplied to determine which bouts are selected
         %       it is a structure with fields
-        %               min_bout_duration -  the minimum duration in s for
+        %               min_bout_duration -  the minimum duration in s for 
         %                                   a bout to be included
         %               include_200ms - whether or not to include the first
         %                               200ms after the solenoid goes low
+        %
+        %   BOUTS_ARRAY is a cell array of MotionBout objects.
+        %
+        %   See also: MotionBout, Trial.motion_bouts,
+        %   get_trials_with_trial_group_label 
         
-            trials = obj.get_trials_with_trial_group_label(trial_group_id); %#ok<*PROPLC>
+            trials = obj.get_trials_with_trial_group_label(trial_group_label); %#ok<*PROPLC>
             
             all_bouts = {};
             for ii = 1 : length(trials)
@@ -199,6 +276,15 @@ classdef RVTSession < RC2Session
         
         
         function apply_offsets(obj, offsets_tbl)
+        %%apply_offsets Applies the cached table of offsets to the
+        %%individual trials
+        %
+        %   apply_offsets(OFFSETS_TABLE) takes the MATLAB table of offsets
+        %   and applies them to all the trials in the session.
+        %
+        %   See also: FormattedData.apply_offsets
+        
+        
         %%applies offsets to replay trials from the table of offsets
             for ii = 1 : length(obj.trials)
                 idx = obj.trials{ii}.trial_id == offsets_tbl.replay_trial_id;
@@ -211,8 +297,13 @@ classdef RVTSession < RC2Session
         
         
         function out_trial = to_aligned(obj, in_trial)
-        %%for a trial in the session find the original trial and create an
-        %%AlignedTrial object
+        %%to_aligned For a trial, return the corresponding AlignedTrial
+        %%object
+        %
+        %   ALIGNED_TRIAL = to_aligned(TRIAL)
+        %   for a trial in the session, TRIAL (of class Trial), find the
+        %   original trial and create an AlignedTrial object and return as
+        %   ALIGNED_TRIAL.
         
             original_id = in_trial.original_trial_id;
             

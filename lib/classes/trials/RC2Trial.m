@@ -1,5 +1,6 @@
 classdef RC2Trial < handle
-    
+% Currently unused
+
     properties (SetAccess = private)
         
         id

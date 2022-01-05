@@ -1,6 +1,17 @@
 classdef PopulationFRPlot < RC2Axis
-    
+% PopulationFRPlot Class for plotting the population firing rate with SEM.
+%
+%  PopulationFRPlot Properties:
+%       h_scale_bar     - handle to the scale bar
+%       scale_bar_s     - size of the scale bar in seconds
+%
+%  PopulationFRPlot Methods:
+%       plot            - do the plot
+%
+%   TODO:   1. do we really need this class?
+
     properties
+        
         h_scale_bar
         scale_bar_s = 0.5
     end
@@ -10,7 +21,11 @@ classdef PopulationFRPlot < RC2Axis
     methods
         
         function obj = PopulationFRPlot(h_ax)
-            
+        %%PopulationFRPlot
+        %
+        %   PopulationFRPlot(AXIS_HANDLE). AXIS_HANDLE is optional, if supplied it should be a
+        %   handle to an axis object. Otherwise, an axis will be created.
+        
             VariableDefault('h_ax', []);
             
             obj = obj@RC2Axis(h_ax);
@@ -19,7 +34,10 @@ classdef PopulationFRPlot < RC2Axis
         
         
         function plot(obj, t, avg, sem)
-            
+        %%plot Plots the firing rate trace
+        %
+        %   plot(TIME, MEAN_TRACE, SEM) plots MEAN_TRACE against TIME and
+        %   also plots MEAN_TRACE + SEM against time.
             
             plot(obj.h_ax, t, avg, 'color', 'k', 'linewidth', 0.75);
             plot(obj.h_ax, t, avg+sem, 'color', [0.5, 0.5, 0.5], 'linewidth', 0.25);

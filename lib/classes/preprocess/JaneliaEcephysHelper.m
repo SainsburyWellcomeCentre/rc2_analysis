@@ -1,13 +1,35 @@
 classdef JaneliaEcephysHelper < handle
-    
+% JaneliaEcephysHelper Class for helping with running
+% ecephys_spike_sorting.
+%
+%  JaneliaEcephysHelper Properties:
+%       leave_window_open_on_error - true or false (default) whether to leave the Windows command
+%                                    prompt open upon an error or not
+%                                    The default is false, but if set to
+%                                    true, the command prompt will remain
+%                                    open if an error occurs *OR* the
+%                                    ecephys_spike_sorting program
+%                                    finishes naturally meaning the user 
+%                                    must close manually to resume any pipelines. Therefore, used more for
+%                                    debugging than general use.
+%       ctl                        - instance of class RC2Analysis
+%       probe_id                   - string containing probe ID
+%       run_script                 - the script we run to start ecephys_spike_sorting
+%       template_script            - the template script we overwrite with current experiment details to create the `run_script`
+%       python_exe                 - the python executable we use to run the `run_script` (can be path to executable in virtual environment)
+%       
+%  JaneliaEcephysHelper Methods:
+%       run_from_raw                - run full ecephys_spike_sorting pipeline
+%       create_output_dirs          - create directories for storing various files
+%       overwrite_ecephys_py_script - overwrite the template_script and save as run_script
+%       run_ecephys                 - run the ecephys_spike_sorting
+%       move_csvs                   - move generated .csvs
+%       move_chanmap                - move the channel map .mat
+%       fix_waveforms               - fix the waveform metrics .csv
+
     properties
         
         leave_window_open_on_error = false
-    end
-    
-    properties (Hidden = true)
-        
-        chose_src_spikeglx_dir = false;
     end
     
     properties (SetAccess = private)
@@ -25,6 +47,12 @@ classdef JaneliaEcephysHelper < handle
     methods
         
         function obj = JaneliaEcephysHelper(ctl, probe_id)
+        %%JaneliaEcephysHelpher
+        %
+        %   JaneliaEcephysHelper(CTL, PROBE_ID) prepares an object with CTL
+        %   being the object of type RC2Preprocess and PROBE_ID being a
+        %   string with the name of a probe recording.
+        
             obj.ctl = ctl;
             obj.probe_id = probe_id;
         end
@@ -32,7 +60,15 @@ classdef JaneliaEcephysHelper < handle
         
         
         function run_from_raw(obj)
-        %%run from raw data
+        %%run_from_raw Run the full pipeline
+        %
+        %   run_from_raw() runs the full pipeline including:
+        %       - preparation of output directories
+        %       - preparing the python script to run
+        %       - running ecephys_spike_sorting
+        %       - cleaning up location of files
+        %       - fixing waveform metrics at the end
+        
             obj.create_output_dirs();
             obj.overwrite_ecephys_py_script();
             obj.run_ecephys();
@@ -44,6 +80,9 @@ classdef JaneliaEcephysHelper < handle
         
         
         function fname = get.run_script(obj)
+        %%gets the file name of the script to start
+        %%ecephys_spike_sorting
+        
             if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
                 fname = fullfile(obj.ctl.file.path_config.ecephys_scripts_dir, 'spikeGLX_pipeline_margrie.py');
             elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
@@ -54,6 +93,9 @@ classdef JaneliaEcephysHelper < handle
         
         
         function fname = get.template_script(obj)
+        %%gets the file name of the template script to overwrite with
+        %%current experiment details, and save as the `run_script`
+        
             if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
                 fname = obj.ctl.file.path_config.ecephys_template;
             elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
@@ -64,6 +106,10 @@ classdef JaneliaEcephysHelper < handle
         
         
         function fname = get.python_exe(obj)
+        %%gets the name of the pyhton executable to use to run the
+        %%`run_script`. Can be path to a python executable in a virtual
+        %%environment.
+        
             if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '3A')
                 fname = obj.ctl.file.path_config.ecephys_python_exe;
             elseif strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
@@ -74,7 +120,19 @@ classdef JaneliaEcephysHelper < handle
         
         
         function create_output_dirs(obj)
-            
+        %%create_output_dirs Prepare output directories for the data from ecephys_spike_sorting
+        %
+        %   create_output_dirs() creates output directories for json files
+        %   created by ecephys_spike_sorting and also an output directory
+        %   for the CatGT output file and Kilosort2 output.
+        %
+        %   These are located in:
+        %       <path_config.processed_output_dir_fast>\<animal_id>\json_files
+        %       <path_config.processed_output_dir_fast>\<animal_id>\output
+        %
+        %   where <animal_id> is the animal ID associated with the probe
+        %   recording.
+        
             output_dir = obj.ctl.file.processed_output_dir_fast(obj.probe_id);
             json_dir = obj.ctl.file.json_dir_fast(obj.probe_id);
             
@@ -96,7 +154,13 @@ classdef JaneliaEcephysHelper < handle
         
         
         function overwrite_ecephys_py_script(obj)
-            
+         %%overwrite_ecephys_py_script Overwrite the template_script and save as run_script
+        %
+        %   overwrite_ecephys_py_script() takes the python script in
+        %   `template_script`, loads it and overwrites information in there
+        %   to prepare a script for running ecephys_spike_sorting. The
+        %   output is saved as `run_script`.
+        
             animal_id = obj.ctl.animal_id_from_probe_id(obj.probe_id);
             
             % gather variables which we need to replace in the script
@@ -132,7 +196,13 @@ classdef JaneliaEcephysHelper < handle
         
         
         function run_ecephys(obj)
-            
+        %%run_ecephys Runs the ecephys_spike_sorting pipeline
+        %
+        %   run_ecephys() starts the python script `run_script` with the
+        %   python executable `python_exe`. If `leave_window_open_on_error`
+        %   the Windows command prompt which is open will remain open on
+        %   error or when the ecephys_spike_sorting pipeline finishes.
+        
             fprintf('Running ecephys_spike_sorting...');
             
             if obj.leave_window_open_on_error
@@ -151,7 +221,11 @@ classdef JaneliaEcephysHelper < handle
         
         
         function move_csvs(obj)
-            
+        %%move_csvs Moves .csvs generated by ecephys_spike_sorting
+        %
+        %   move_csvs() moves .csvs to a single location of form:
+        %       <processed_probe_fast_dir>\<animal_id>\output\catgt_<probe_id>_g0\<probe_id>_g0_imec0\imec0_ks2\csvs
+        
             fprintf('Moving csvs\n')
             
             ks2_dir = obj.ctl.file.imec0_ks2(obj.probe_id);
@@ -176,9 +250,11 @@ classdef JaneliaEcephysHelper < handle
         
         
         function move_chanmap(obj)
-        %%moves the channel map created by the janelia pipeline to the
-        %%original .bin directory (required to fix waveforms) only need to
-        %%do this for new NP2 probe
+        %%move_chanmap Moves the channel map file
+        %
+        %   move_chanmap() moves the channel map created by the janelia pipeline to the
+        %   original .bin directory (required to fix waveforms) only need to
+        %   do this for new NP2 probe
         
             if strcmp(obj.ctl.get_probe_type_from_metadata(obj.probe_id), '24')
                 imec0_ks2 = obj.ctl.file.imec0_ks2(obj.probe_id);
@@ -195,13 +271,19 @@ classdef JaneliaEcephysHelper < handle
         
         
         
-        function fix_waveforms(obj)
-        %%fixes for the fact that the janelia version of
-        %%ecephys_spike_sorting takes the mean waveform properties from the
-        %%processed data, not the raw data. The processed data does seem to
-        %%change the shapes of the waveforms somewhat so here we go back
-        %%and take waveforms from the raw data instead (running similar
-        %%code but on the raw data file)
+        function fix_waveforms(obj
+        %%fix_waveforms Creates new waveform metrics file with properties
+        %%from the raw data rather than processed data.
+        %
+        %   fix_waveforms() fixes for the fact that the janelia version of
+        %   ecephys_spike_sorting takes the mean waveform properties from the
+        %   processed data, not the raw data. The processed data does seem to
+        %   change the shapes of the waveforms somewhat so here we go back
+        %   and take waveforms from the raw data instead (running similar
+        %   code but on the raw data file).
+        %
+        %   Saves new files `mean_waveforms_fix.npy` in the main kilosort
+        %   directory and `waveform_metrics_fix.csv` in the csv directory.
             
             % we will create new json files
             json_dir  = obj.ctl.file.json_dir_fast(obj.probe_id);

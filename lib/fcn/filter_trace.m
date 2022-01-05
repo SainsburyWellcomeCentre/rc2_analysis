@@ -1,9 +1,14 @@
 function trace = filter_trace(trace, fs, cut_off, order)
-% forward and backward filters trace with sample rate of 'fs' with lowpass
-% filter with cut off 'cut_off' and order 'order'.
-%   Default fs = 10000, cut_off = 50, order = 3
+% FILTER_TRACE Low-pass filter the velocity traces
+%
+%   FILTERED_TRACE = filter_trace(TRACE, FS, CUT_OFF, ORDER)
+%   forward and backward filters TRACE (with sample rate FS Hz) with lowpass
+%   Butterworth filter with cut off CUT_OFF and order ORDER.
+%   Default FS = 10000 Hz, cut_off = 50 Hz, order = 3
+%
+%   See also: butter
 
-%% Filter
+% Filter
 VariableDefault('fs', 10000);
 VariableDefault('cut_off', 50);
 VariableDefault('order', 3);

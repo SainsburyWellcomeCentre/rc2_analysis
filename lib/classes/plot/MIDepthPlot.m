@@ -1,6 +1,22 @@
 classdef MIDepthPlot < RC2Axis
-    
+% MIDepthPlot Class for plotting the depth of a cluster against 
+%
+%  MIDepthPlot Properties:
+%       marker_style    - style of dot to plot for each cluster
+%   
+%  MIDepthPlot Methods:
+%       plot            - make the plot
+%       print_layers    - print anatomical region labels at the side
+%
+%   TODO:   1. this class has too many required arguments.
+%           2. make p-value threshold an adjustable property
+
     properties
+        
+        marker_style = 'o'
+    end
+    
+    properties (SetAccess = private)
         
         h_lines
         h_txt
@@ -12,16 +28,27 @@ classdef MIDepthPlot < RC2Axis
         boundaries
         regions
         p
-        
-        marker_style = 'o'
-        
     end
     
     
     methods
         
         function obj = MIDepthPlot(mi, p, direction, depths, boundaries, regions, h_ax)
-            
+        %%MIDepthPlot
+        %
+        %   MIDepthPlot(MODULATION_INDEX, P_VALUE, DIRECTION, DEPTHS, BOUNDARIES, REGIONS, AXIS_HANDLE)
+        %   creates an object in preparation for plotting the depth vs.
+        %   modulation index of each cluster.
+        %
+        %   Args:
+        %       MODULATION_INDEX - # clusters x 1 array containing the modulation index of each cluster
+        %       P_VALUE          - # clusters x 1 array containing a p-value for each cluster
+        %       DIRECTION        - # clusters x 1 array containing 1, 0 or
+        %                          -1 to indicate whether a response was +ve, no change or negative
+        %       DEPTHS           - # clusters x 1 array containing the depth of each cluster
+        %       BOUNDARIES       - (# regions + 1) x 1 array containing the depth of the anatomical region boundaries
+        %       REGIONS          - # regions x 1 cell array of strings with region labels
+        
             VariableDefault('h_ax', []);
             
             obj = obj@RC2Axis(h_ax);
@@ -37,7 +64,16 @@ classdef MIDepthPlot < RC2Axis
         
         
         function plot(obj)
-            
+        %%plot Make the depth vs. MI plot
+        %
+        %   plot() scatters the depth (`depth`) of each cluster against its modulation
+        %   index (`mi`). A cluster is grey if the p-value (`p`) is > 0.05,
+        %   red if p-value is < 0.05 and `direction` is 1, and blue if
+        %   p-value is < 0.05 and `direction` is -1.
+        %
+        %   Anatomical boundaries are also plotted. To print region labels use
+        %   `print_layers` method.
+        
             n_clust = length(obj.p);
             
             % warn user if there are NaN p-values
@@ -83,7 +119,12 @@ classdef MIDepthPlot < RC2Axis
         
         
         function print_layers(obj, position)
-            
+        %%print_layers  Add anatomical region labels at the side
+        %
+        %   print_layers(POSITION) adds the labels in `regions` to the
+        %   plot. POSITION is either 'right' (default) or 'left' and
+        %   indicates which side of the axis to place the text.
+        
             VariableDefault('position', 'right');
             
             % format

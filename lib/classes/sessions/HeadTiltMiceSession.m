@@ -1,5 +1,15 @@
 classdef HeadTiltMiceSession < RVTSession
-    
+% HeadTiltMiceSession Class for handling details of a head_tilt_mice
+% session.
+%
+%   HeadTiltMiceSession Properties:
+%       trial_group_ids         - integer IDs for each trial group
+%       trial_group_labels      - string IDs for each trial group
+%
+%   HeadTiltMiceSession Methods:
+%       get_trial_group_id      - Given a trial, return the trial group ID
+%
+%   See also: RVTSession    
     
     properties (Constant = true)
         
@@ -12,7 +22,12 @@ classdef HeadTiltMiceSession < RVTSession
     methods
         
         function obj = HeadTiltMiceSession(session)
-            
+        % HeadTiltMiceSession
+        %
+        %   HeadTiltMiceSession(SESSION) takes a session structure,
+        %   SESSION, saved in the formatted data file and creates an object
+        %   to handle the data of a 'head_tilt_mice' session.
+        
             obj = obj@RVTSession(session);
             
             for ii = 1 : session.n_trials
@@ -33,7 +48,11 @@ classdef HeadTiltMiceSession < RVTSession
         
         
         function group_id = get_trial_group_id(~, trial)
-        %%get which group the given trial belongs to
+        %%get_trial_group_id Given a trial, return the trial group ID
+        %
+        %   GROUP_ID = get_trial_group_id(TRIAL)
+        %   get which trial group ID the given trial in TRIAL, of class
+        %   Trial, belongs to. 
         
             if strcmp(trial.protocol, 'StageOnly')
                 if trial.config.enable_vis_stim

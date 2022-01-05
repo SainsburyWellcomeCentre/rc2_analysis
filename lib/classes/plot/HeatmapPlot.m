@@ -1,5 +1,17 @@
 classdef HeatmapPlot < RC2Axis
-    
+% HeatmapPlot Class for plotting heatmaps
+%
+%  HeatmapPlot Properties:
+%    h_im       - handle to the heatmap image
+%    h_ax_col   - handle to the axis for the colourbar
+%    h_im_col   - handle to the image in the colourbar
+%    fr_limits  - colour limits of the heatmap and colourbar
+%
+%  HeatmapPlot Methods:
+%    plot       - plots the heatmap
+%
+%   Creates a heatmap image along with a colorbar in the top right
+
     properties (SetAccess = private)
         
         h_im
@@ -17,6 +29,11 @@ classdef HeatmapPlot < RC2Axis
     methods
         
         function obj = HeatmapPlot(h_ax)
+        %%HeatmapPlot
+        %
+        %   HeatmapPlot(AXIS_HANDLE) sets up an object for handling
+        %   heatmaps. AXIS_HANDLE is optional, if supplied it should be a
+        %   handle to an axis object. Otherwise, an axis will be created.
         
             VariableDefault('h_ax', []);
             
@@ -26,7 +43,12 @@ classdef HeatmapPlot < RC2Axis
         
         
         function plot(obj, t, heatmap)
-            
+        %%plot Plots the heatmap
+        %
+        %   plot(TIME, HEATMAP) plots the 2D matrix HEATMAP plotted against TIME on
+        %   the x-axis. TIME should have same length as the second
+        %   dimension of HEATMAP.
+        
             load('r2bcmap.mat', 'map');
             
             n_clusters = size(heatmap, 1);

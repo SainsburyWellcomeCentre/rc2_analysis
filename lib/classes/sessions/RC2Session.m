@@ -1,5 +1,41 @@
 classdef RC2Session < handle
-    
+% RC2Session Class for handling details of a session
+%
+%   RC2Session Properties:
+%       probe_id            - string with the probe recording ID the session was part of
+%       session_id          - string with the session ID
+%       fs                  - sample rate of the NIDAQ session recording
+%       config              - structure containing the configuration for
+%                             this trial (loaded from .cfg file associated with session .bin file)
+%
+%       gain_teensy         - gain_teensy channel
+%       filtered_teensy     - filtered_teensy channel
+%       filtered_teensy_2   - filtered_teensy_2 channel
+%       raw_teensy          - raw_teensy channel
+%       stage               - speed of the stage (c.f. stage_speed)
+%       lick                - lick channel
+%       pump                - pump channel
+%       solenoid            - solenoid channel
+%       photodiode          - photodiode channel
+%       gain_change         - gain_change channel
+%       minidaq_ao0         - minidaq_ao0 channel
+%       multiplexer_output  - multiplexer_output channel
+%       teensy_gain         - teensy_gain channel
+%       camera0             - motion energy for camera0
+%       camera1             - motion energy for camera1
+%       camera_motion_mask  - motion mask on the camera (remove?)
+%
+%       rc2_t               - timebase of the trial in the NIDAQ session recording (0s on first sample point, 1/fs on second etc.)
+%       probe_t             - timebase of the trial synced to the probe recording
+%       camera_t            - timebase of the camera frames synced to the probe recording
+%
+%   RC2Session Methods:
+%       camera0_interp      - interpolate the motion energy data on camera0 so it has the same timebase as the other channel.
+%       camera1_interp      - interpolate the motion energy data on camera1 so it has the same timebase as the other channel.
+%       compute_camera_motion_mask - store a mask of motion in the camera data
+%
+%   See also: RVTSession
+
     properties
         
         probe_id
@@ -35,7 +71,10 @@ classdef RC2Session < handle
     methods
         
         function obj = RC2Session(session)
-            % takes a session structure and converts it to a Session object
+        % RC2Session
+        %
+        %   RC2Session(SESSION) takes a session structure saved in the
+        %   formatted data and creates an object to handle the data.
             
             chan_names = {'session_id', ...
                           'probe_id', ...
@@ -81,7 +120,14 @@ classdef RC2Session < handle
         
         
         function val = camera0_interp(obj)
-            
+        %%camera0_interp Interpolate the motion energy data so it has the same
+        %%timebase as the other channel.
+        %
+        %   MOTION_ENERGY = camera0_interp()
+        %   increases the resolution of the motion energy trace from the
+        %   camera data so it has the same resolution as the other NIDAQ
+        %   traces.
+        
             val = [];
             if ~isempty(obj.camera0)
                 val = interp1(obj.camera_t, obj.camera0, obj.probe_t);
@@ -91,7 +137,14 @@ classdef RC2Session < handle
         
         
         function val = camera1_interp(obj)
-            
+        %%camera1_interp Interpolate the motion energy data so it has the same
+        %%timebase as the other channel.
+        %
+        %   MOTION_ENERGY = camera1_interp()
+        %   increases the resolution of the motion energy trace from the
+        %   camera data so it has the same resolution as the other NIDAQ
+        %   traces.
+        
             val = [];
             if ~isempty(obj.camera1)
                 val = interp1(obj.camera_t, obj.camera1, obj.probe_t);
@@ -101,6 +154,9 @@ classdef RC2Session < handle
         
         
         function compute_camera_motion_mask(obj)
+        %%compute_camera_motion_mask Store a mask of motion in the camera
+        %%data
+        
             obj.camera_motion_mask = compute_camera_motion_mask(obj.camera1_interp, false);
         end
     end

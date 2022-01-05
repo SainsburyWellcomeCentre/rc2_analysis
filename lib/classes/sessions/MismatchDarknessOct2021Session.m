@@ -1,6 +1,18 @@
 classdef MismatchDarknessOct2021Session < RVTSession
-    
-    
+% MismatchDarknessOct2021Session Class for handling details of a
+% mismatch_darkness_oct21 session.
+%
+%   MismatchDarknessOct2021Session Properties:
+%       trial_group_ids         - integer IDs for each trial group
+%       trial_group_labels      - string IDs for each trial group
+%
+%   MismatchDarknessOct2021Session Methods:
+%       get_trial_group_id      - Given a trial, return the trial group ID
+%
+%   See also: RVTSession  
+%
+%   TODO: change the name of the class to match the protocol
+
     properties (Constant = true)
         
         trial_group_ids      = 1 : 3
@@ -12,7 +24,12 @@ classdef MismatchDarknessOct2021Session < RVTSession
     methods
         
         function obj = MismatchDarknessOct2021Session(session)
-            
+        % MismatchDarknessOct2021Session
+        %
+        %   MismatchDarknessOct2021Session(SESSION) takes a session structure,
+        %   SESSION, saved in the formatted data file and creates an object
+        %   to handle the data of a 'mismatch_darkness_oct21' session.
+        
             obj = obj@RVTSession(session);
             
             for ii = 1 : session.n_trials
@@ -33,7 +50,11 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function group_id = get_trial_group_id(~, trial)
-        %%get which group the given trial belongs to
+        %%get_trial_group_id Given a trial, return the trial group ID
+        %
+        %   GROUP_ID = get_trial_group_id(TRIAL)
+        %   get which trial group ID the given trial in TRIAL, of class
+        %   Trial, belongs to.
         
             if strcmp(trial.protocol, 'EncoderOnly')
                 group_id = 1;
@@ -54,7 +75,8 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function idx = get_svm_table_index(obj, cluster_id, protocol_id)
-        %% Overwrite RVTSession method as it does not work for the mismatch protocol
+        %%TODO: UNUSED, REMOVE
+        %%Overwrite RVTSession method as it does not work for the mismatch protocol
         %   need better design upstream
         
             trial_type = obj.protocol_type{obj.protocol_ids == protocol_id};
@@ -69,7 +91,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function [baseline, response, response_ctl] = windowed_mm_responses(obj, cluster, prot_i)
-            
+        %%TODO: UNUSED, REMOVE    
             n_windows = 4;
             window_t = 0.1;
             
@@ -104,7 +126,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function response_magnitude = average_mismatch_response_by_protocol(obj, cluster, prot_i)
-            
+        %%TODO: UNUSED, REMOVE     
             [baseline, response, ~] = obj.windowed_mm_responses(cluster, prot_i);
             
             avg_response = mean(response(:));
@@ -115,7 +137,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function [running, t] = running_around_mismatch_by_protocol(obj, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             trials = obj.trials_of_type(prot_i);
             
             n_trials = length(trials);
@@ -137,7 +159,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function [spike_rate, t, common_t] = firing_around_mismatch_by_protocol(obj, cluster, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE
             cluster_fr = FiringRate(cluster.spike_times);
             trials = obj.trials_of_type(prot_i);
             
@@ -160,7 +182,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function [spike_rate, common_t] = average_firing_around_mismatch_by_protocol(obj, cluster, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             [spike_rate, ~, common_t] = obj.firing_around_mismatch_by_protocol(cluster, prot_i, limits);
             spike_rate = mean(spike_rate, 2);
         end
@@ -168,7 +190,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function [running, t] = running_around_mismatch(obj, trial_id, limits)
-            
+        %%TODO: UNUSED, REMOVE
             trial = obj.trial_by_id(trial_id);
             
             n_samples = range(limits) * trial.fs;
@@ -184,7 +206,7 @@ classdef MismatchDarknessOct2021Session < RVTSession
         
         
         function changed_down = trial_changed_velocity(obj, trial_id, window_1, window_2, n_sds)
-            
+        %%TODO: UNUSED, REMOVE
             limits = [min(window_1), max(window_2)];
             
             [running, t] = running_around_mismatch(obj, trial_id, limits);

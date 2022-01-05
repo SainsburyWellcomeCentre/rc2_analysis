@@ -1,5 +1,27 @@
 classdef TuningTable < handle
-    
+% TuningTable Class for computing a MATLAB table with velocity tuning curve
+% information
+%
+%   TuningTable Properties:
+%       probe_id            - string with the probe recording ID
+%       trials              - a set of trials over which the tuning is to be computed
+%       trial_group_labels  - the trial group labels of these trials
+%       velocity_bins       - instance of class VelocityBins handling computation of velocity bins
+%       vtc                 - instance of class VelocityTuningCurve handling the binning of data
+%       n_rows              - number of rows in the table
+%       tbl                 - the table containing the data
+%
+%   TuningTable Methods:
+%       add_trials          - adds a set of trial to compute velocity bin bounds
+%       tuning_curve        - analyses the tuning curve for a cluster for these trials
+%
+%   Usage:  after creation of the object, a set of trials must be added
+%   using `add_trials`. This computes velocity bins from those trials, with
+%   equal amounts of data in each bin.  `tuning_curve` can then be used to
+%   get the velocity tuning curve information for a cluster.
+%
+%   See also: ShuffleTuning, VelocityBins, VelocityTuningCurve
+
     properties
         
         probe_id
@@ -18,21 +40,33 @@ classdef TuningTable < handle
     methods
         
         function obj = TuningTable(probe_id)
-            
+        % TuningTable
+        %
+        %   TuningTable(PROBE_ID) creates the object. PROBE_ID is a string
+        %   with the probe recording ID.
+        
             obj.probe_id = probe_id;
         end
         
         
         
         function val = get.n_rows(obj)
-        
+        %%number of rows of the table
             val = size(obj.tbl, 1);            
         end
         
         
         
         function add_trials(obj, trials, trial_group_labels)
-            
+        %%add_trials Add a set of trials to use to compute velocity bins
+        %
+        %   add_trials(TRIALS, TRIAL_GROUP_LABELS)
+        %   adds a set of trials to use to compute the velocity bins (with
+        %   equal amounts of data in each bin). TRIALS is a cell array with
+        %   each element being an object of class Trial. TRIAL_GROUP_LABELS
+        %   is a cell array of strings with the trial group labels of the
+        %   trials in Trials.
+        
             obj.trial_group_labels = trial_group_labels;
             obj.trials = trials;
             obj.velocity_bins = VelocityBins(trials);
@@ -42,7 +76,30 @@ classdef TuningTable < handle
         
         
         function curve_info = tuning_curve(obj, cluster)
-            
+        %%tuning_curve Analyses the tuning curve for a cluster for these trials 
+        %
+        %   CURVE = tuning_curve(CLUSTER) computes the firing rates for the
+        %   cluster in CLUSTER (which is an object of class Cluster),
+        %   in the velocity bins computed in `add_trials`. CURVE is a
+        %   structure with fields:
+        %       probe_id        - string, probe recording ID
+        %       cluster_id      - integer, cluster ID
+        %       trial_group_labels - cell array containing the trial group
+        %                           labels of the trials for which we've computed the velocity bins
+        %       trial_ids       - vector of integers, the IDs of the trials for which we've
+        %                           computed the velocity bins
+        %       tuning          - tuning matrix, see VelocityTuningCurve.fr_curve
+        %       timing          - matrix, time spent in each bin, see VelocityTuningCurve.fr_curve
+        %       stationary_fr   - stationary firing rate in each trial see VelocityTuningCurve.fr_curve
+        %       stationary_time - time spent stationary in each trial, see VelocityTuningCurve.fr_curve
+        %       bin_edges       - bounds of the velocity bins
+        %       bin_centers     - centers of the velocity bins
+        %       prc_per_bin     - amount of data in each velocity bin
+        %       shuffled        - structure containing details about linear
+        %       fits to the data as well as fits to shuffled data, see ShuffleTuning
+        %
+        %   See also: ShuffleTuning, VelocityTuningCurve
+        
             [tuning, timing, stat_rate, stat_time] = obj.vtc.fr_curve(cluster);
             
             shuff = ShuffleTuning(tuning, obj.velocity_bins.bin_centers);

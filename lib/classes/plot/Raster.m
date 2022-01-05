@@ -1,15 +1,37 @@
 classdef Raster < RC2Axis
-    
+% Raster Class for plotting rasters
+%
+%  Raster Properties:
+%
+%  Raster Methods:
+%       add_bars      - adds grey bars to the end of the raster
+%       remove_bars   - removes grey bars added by add_bars
+%       ylabel        - adds a y-axis label
+%
+%   TODO:   1. Make consistent with other plot classes and separate
+%              plotting from object creation
+
     properties
         
         h_line
         h_bars
     end
     
+    
+    
     methods
         
         function obj = Raster(spike_times, h_ax, marker_type)
-            
+        %%Raster
+        %
+        %   Raster(SPIKE_TIMES, AXIS_HANDLE, MARKER_TYPE) plots data in
+        %   SPIKE_TIMES.  AXIS_HANDLE is optional, if supplied it should be a
+        %   handle to an axis object. Otherwise, an axis will be created.
+        %   MARKER_TYPE is either 'dot' or 'line' and determines the style
+        %   of the spikes.
+        %   SPIKE_TIMES should be a cell array with each cell containing
+        %   the times of the spikes for a separate row of the raster.
+         
             VariableDefault('h_ax', []);
             
             obj = obj@RC2Axis(h_ax);
@@ -55,7 +77,14 @@ classdef Raster < RC2Axis
         
         
         function add_bars(obj, t_start, t_end)
-            
+        %%add_bars Adds grey bars at the end of each raster line
+        %
+        %   add_bars(START, END) draw horizontal grey bars at the end of
+        %   each raster line to indicate no data in this period. START is a
+        %   # raster lines x 1 vector with the start of the grey bar on
+        %   each line, and END is a single value indicating where to stop
+        %   the bars.
+        
             if ~isempty(obj.h_bars)
                 return
             end
@@ -71,8 +100,10 @@ classdef Raster < RC2Axis
         end
         
         
+        
         function remove_bars(obj)
-            
+        %%remove_bars Removes the grey bars added with add_bars, if they exist.
+        
             if isempty(obj.h_bars)
                 return
             end
@@ -84,7 +115,11 @@ classdef Raster < RC2Axis
             obj.h_bars = [];
         end
         
+        
+        
         function ylabel(obj, str)
+        %%ylabel Adds a ylabel text to the axis (what is the usefulness of this?)
+        
             txt = text('string', str);
             set(obj.h_ax, 'ylabel', txt);
         end

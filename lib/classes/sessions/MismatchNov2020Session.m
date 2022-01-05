@@ -1,5 +1,17 @@
 classdef MismatchNov2020Session < RVTSession
-    
+% MismatchNov2020Session Class for handling details of a
+% mismatch_nov2020 session.
+%
+%   MismatchNov2020Session Properties:
+%       trial_group_ids         - integer IDs for each trial group
+%       trial_group_labels      - string IDs for each trial group
+%
+%   MismatchNov2020Session Methods:
+%       get_trial_group_id      - Given a trial, return the trial group ID
+%
+%   See also: RVTSession  
+%
+%   TODO: change the name of the experiment group
     
     properties (Constant = true)
         
@@ -12,7 +24,12 @@ classdef MismatchNov2020Session < RVTSession
     methods
         
         function obj = MismatchNov2020Session(session)
-            
+        % MismatchNov2020Session
+        %
+        %   MismatchNov2020Session(SESSION) takes a session structure,
+        %   SESSION, saved in the formatted data file and creates an object
+        %   to handle the data of a 'mismatch_nov2020' session.
+        
             obj = obj@RVTSession(session);
             
             for ii = 1 : session.n_trials
@@ -33,7 +50,11 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function group_id = get_trial_group_id(~, trial)
-        %%get which group the given trial belongs to
+        %%get_trial_group_id Given a trial, return the trial group ID
+        %
+        %   GROUP_ID = get_trial_group_id(TRIAL)
+        %   get which trial group ID the given trial in TRIAL, of class
+        %   Trial, belongs to.
         
             if strcmp(trial.protocol, 'CoupledMismatch')
                 if strcmp(trial.config.gain_direction, 'up')
@@ -53,8 +74,18 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function trials = get_trials_with_trial_group_label(obj, varargin)
-        %%reimplementation of get_trials-with_trial_group_label to remove
-        %%some trials which didn't have a mismatch - reason unsolved
+        %%get_trials_with_trial_group_label Return cell array of Trial
+        %%objects which are part of a trial group label
+        %
+        %   TRIALS = get_trials_with_trial_group_label(VARARGIN)
+        %   reimplementation of get_trials_with_trial_group_label to remove
+        %   some trials which didn't have a mismatch - reason unsolved
+        %
+        %   See also: RVTSession.get_trials_with_trial_group_label
+        %
+        %   TODO:   is VARARGIN compatible with the RVTSession
+        %           implmentation?
+        
             trials = get_trials_with_trial_group_label@RVTSession(obj, varargin{:});
             
             mm_duration = cellfun(@(x)(x.mismatch_duration), trials);
@@ -67,7 +98,8 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function idx = get_svm_table_index(obj, cluster_id, protocol_id)
-        %% Overwrite RVTSession method as it does not work for the mismatch protocol
+        %%TODO: UNUSED, REMOVE
+        %%Overwrite RVTSession method as it does not work for the mismatch protocol
         %   need better design upstream
         
             trial_type = obj.protocol_type{obj.protocol_ids == protocol_id};
@@ -82,7 +114,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function [baseline, response, response_ctl] = windowed_mm_responses(obj, cluster, prot_i)
-            
+        %%TODO: UNUSED, REMOVE    
             n_windows = 4;
             window_t = 0.1;
             
@@ -117,7 +149,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function response_magnitude = average_mismatch_response_by_protocol(obj, cluster, prot_i)
-            
+        %%TODO: UNUSED, REMOVE    
             [baseline, response, ~] = obj.windowed_mm_responses(cluster, prot_i);
             
             avg_response = mean(response(:));
@@ -128,7 +160,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function [running, t] = running_around_mismatch_by_protocol(obj, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             trials = obj.trials_of_type(prot_i);
             
             n_trials = length(trials);
@@ -150,7 +182,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function [spike_rate, t, common_t] = firing_around_mismatch_by_protocol(obj, cluster, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             cluster_fr = FiringRate(cluster.spike_times);
             trials = obj.trials_of_type(prot_i);
             
@@ -173,7 +205,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function [spike_rate, common_t] = average_firing_around_mismatch_by_protocol(obj, cluster, prot_i, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             [spike_rate, ~, common_t] = obj.firing_around_mismatch_by_protocol(cluster, prot_i, limits);
             spike_rate = mean(spike_rate, 2);
         end
@@ -181,7 +213,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function [running, t] = running_around_mismatch(obj, trial_id, limits)
-            
+        %%TODO: UNUSED, REMOVE    
             trial = obj.trial_by_id(trial_id);
             
             n_samples = range(limits) * trial.fs;
@@ -197,7 +229,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function changed_down = trial_changed_velocity(obj, trial_id, window_1, window_2, n_sds)
-            
+        %%TODO: UNUSED, REMOVE    
             limits = [min(window_1), max(window_2)];
             
             [running, t] = running_around_mismatch(obj, trial_id, limits);
@@ -218,7 +250,7 @@ classdef MismatchNov2020Session < RVTSession
         
         
         function val = get_trial_protocol_id(obj, trial)
-            
+        %%TODO: UNUSED, REMOVE    
             idx_prot = strcmp(obj.protocol_type, trial.protocol);
             idx_gain = strcmp(obj.protocol_gain, trial.config.gain_direction);
             

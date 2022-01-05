@@ -1,5 +1,11 @@
 classdef PairedBoxPlot < RC2Axis
-    
+% PairedBoxPlot Class for
+%
+%  PairedBoxPlot Properties:
+%
+%  PairedBoxPlot Methods:
+%
+
     properties
         
         h_txt

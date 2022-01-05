@@ -1,5 +1,9 @@
 function config = path_config()
-% path configuration to access data and code
+% PATH_CONFIG Configuration information on the system
+%
+%   CONFIG = path_config()
+%   returns a list of paths on the system allowing the user access data and code
+%   See README for a description of the entries.
 
 % the path containing the .git for rc2_analysis
 config.git_work_tree_dir        = 'C:\Users\lee\Documents\mvelez\rc2_analysis';

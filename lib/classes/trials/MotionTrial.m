@@ -1,4 +1,5 @@
 classdef MotionTrial < RC2Trial
+% Currently unused
     
     properties (Dependent = true)
         

@@ -1,6 +1,11 @@
 function h_fig = a4figure(orientation)
-%%h_fig = A4FIGURE(orientation)
-%   Create an A4 figure
+% A4FIGURE Create an axis on an A4 figure
+%
+%   FIGURE_HANDLE = a4figure(ORIENTATION) creates an A4 sized figure with
+%   orientation ORIENTATION ('portrait' (default) or 'landscape'). The
+%   handle to the figure is returned in FIGURE_HANDLE.
+%
+%   See also: a4axis, a4figure_text
 
 VariableDefault('orientation', 'portrait');
 

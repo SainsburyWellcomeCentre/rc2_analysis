@@ -1,16 +1,25 @@
 function [data, dt, chan_names, config] = read_rc2_bin(fname_bin)
-%%data = READ_RC2(fname_bin)
-%   Read and transform data from a .bin & .cfg pair.
+% READ_RC2_BIN Read data in a .bin file and associated .cfg saved by
+% rc2_matlab.
+%
+%   [DATA, DT, CHANNEL_NAMES, CONFIG] = read_rc2_bin(FILENAME)
+%   reads and transform data from a .bin & .cfg pair.
 %       Inputs:
-%           fname_bin - string, filename of .bin
+%           FILENAME        - string, filename of .bin
 %       Outputs:
-%           data - TxN double, T - sample points, N - channels
+%           DATA            - # sample points x # channels voltage value
+%           DT              - the time difference between sample points
+%           CHANNEL_NAMES   - the string IDs given to the channels
+%           CONFIG          - the full configuration information contained
+%                             in the .cfg file
 %
 %   Assumes that the .bin is paired with a .cfg in the same directory.
-%   Uses the .cfg to obtain N (number of channels) and the offsets and
+%   Uses the .cfg to obtain # channels and the offsets and
 %   scales of each channel.
 %   20200304 - currently assumes that the data was saved by transforming
 %   voltages between -10 and 10V into 16-bit signed integers.
+%
+%   See also: read_rc2_config, read_bin, data_transform
 
 % Assume .cfg exists in same directory
 fname_cfg       = regexprep(fname_bin, '.bin\>', '.cfg');

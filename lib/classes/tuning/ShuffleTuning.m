@@ -1,5 +1,33 @@
-classdef ShuffleTuning < handle
-    
+classdef ShuffleTuning
+% ShuffleTuning Class for getting tuning information
+%
+%   ShuffleTuning Properties:
+%         n_reps        - number of shuffles to perform
+%         x             - # bins x 1 vector giving velocity of bin centers
+%         tuning        - # bins x # trials giving firing rate in a velocity bin for each trial
+%         n_bins        - # bins
+%         n_trials      - # trials
+%         rsq           - the R^2 of a linear fit to the data
+%         beta          - the parameters of the linear fit
+%         r             - the r value of the fit
+%         
+%         rsq_shuff     - n_reps x 1 vector, R^2 values for shuffled data
+%         beta_shuff    - n_reps x 2 vector, parameters of each shuffled fit
+%         r_shuff       - n_reps x 1 vector, correlation 
+%         shuff_tuning  - # bins x n_reps containing average for each shuffle
+%         shuff_sd      - # bins x n_reps containing SD for each shuffle
+%         shuff_n       - # bins x n_reps containing n trials averaged for each shuffle
+%         
+%         p             - p-value from the shuffling procedure
+%         p_lm          - p-value from the linear fit
+%
+%   ShuffleTuning Methods:
+%         get_shuffled_rsq - perform the shuffling and get R^2 for each shuffle
+%         get_summary      - return properties of this class as a structure
+%         get_rsq          - perform the fitting
+%
+%   See also: TuningTable, VelocityBins, VelocityTuningCurve
+
     properties
         
         n_reps = 1000
@@ -28,7 +56,24 @@ classdef ShuffleTuning < handle
     methods
         
         function obj = ShuffleTuning(tuning, x)
-        % Shuffle
+        % ShuffleTuning
+        %
+        %   ShuffleTuning(FIRING_RATE, VELOCITY)
+        %   creates an object for fitting tuning cuves and shuffling the
+        %   data to determine significance of tuning.
+        %
+        %   FIRING_RATE is a # velocity bins x # trials matrix with the
+        %   firing rates of a cluster to a velocity bin for a set of
+        %   trials. VELOCITY is a #velocity bins x 1 vector with the centers 
+        %   of the velocity bins in which the firing rates were computed.
+        %
+        %   A linear fit is performed on the data. Then the FIRING_RATE
+        %   matrix is completely shuffled, and the fitting performed
+        %   multiple times.
+        %   
+        %   A p-value is calculated by using the fraction of shuffled R^2 value
+        %   above the true R^2 value.
+        
             obj.x = x(:); % n bins x 1
             obj.tuning = tuning; % n bins x n trials
             obj.n_bins = size(obj.tuning, 1);
@@ -55,7 +100,13 @@ classdef ShuffleTuning < handle
         
         
         function get_shuffled_rsq(obj)
-            
+        %%get_shuffed_rsq Perform the shuffling and get R^2 for each
+        %%shuffle
+        %
+        %   get_shuffled_rsq() takes the data in `tuning` and shuffles
+        %   with replacement `n_reps` times. Stores the results in
+        %   properties of the object.
+        
             rng(1);
             
             x_ = repmat(obj.x, 1, obj.n_trials);
@@ -82,7 +133,10 @@ classdef ShuffleTuning < handle
         
         
         function val = get_summary(obj)
-            
+        %%get_summary Return the essential properties in a structure to save
+        %
+        %   STRUCT = get_summary()
+        
             props = {'n_reps', ...
                      'rsq', ...
                      'beta', ...
@@ -103,7 +157,16 @@ classdef ShuffleTuning < handle
     methods (Static = true)
         
         function [rsq, beta, r] = get_rsq(x, tuning)
-            
+        %%get_rsq Performs a linear fit to the tuning matrix
+        %
+        %   [R_sq, BETA, R] = get_rsp(VELOCITY, FIRING_RATE)
+        %   takes a # bins x # trials FIRING_RATE matrix and # biins x #
+        %   trials VELOCITY matrix (velocities at which FIRING_RATE
+        %   measured) and performs linear fit and correlation.
+        %
+        %   R_sq & BETA are the R^2 and parameters of the lienar fit
+        %   and R is the correlation between VELOCITY and FIRING_RATE.
+        
             x(isnan(tuning)) = [];
             tuning(isnan(tuning)) = [];
             

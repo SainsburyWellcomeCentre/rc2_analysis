@@ -1,5 +1,6 @@
 classdef ReplayTrial < MotionTrial
-    
+% Currently unused
+
     properties
         
         offset

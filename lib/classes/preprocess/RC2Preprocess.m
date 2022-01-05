@@ -1,13 +1,33 @@
 classdef RC2Preprocess < RC2Format
-    
+% RC2Preprocess Class for preprocessing raw data
+%
+%   RC2Preprocess Properties:
+%
+%   RC2Preprocess Methods:
+%       preprocess_step_1               - first step of preprocessing
+%       janelia_ecephys_spike_sorting   - run ecephys_spike_sorting
+%       create_check_clusters_csv       - create the .csv with the clusters to manually check
+%       create_trigger_file             - separate the trigger channel from the the probe .bin file
+%       correct_trigger_file            - manually correct the trigger file if necessary
+%       create_driftmap                 - create and save a driftmap
+%       process_camera_data             - run processing of the camera data
+%       hf_power                        - create HighFrequencyPowerProfile object
+%       save_hf_power                   - save an analyzed HighFrequencyPowerProfile object
+%       create_mock_track               - create a 'track.csv' with a similar format to the real eventual track file
+%       create_selected_clusters_txt    - create text file with the clusters selected
+%       mua_from_tip_um                 - for MUA get disatnce from probe tip
+%       move_raw_to_local               - move the raw probe data to a local location
+%       cluster_info                    - create CheckClusterQuality object
+
     properties
     end
     
     methods
         
         function obj = RC2Preprocess()
-        %%class for handling preprocessing of the data
-        %   subclass of RC2Analysis
+        %%RC2Preprocess
+        %
+        %   RC2Preprocess()
         
             obj = obj@RC2Format();
         end
@@ -15,7 +35,16 @@ classdef RC2Preprocess < RC2Format
         
         
         function preprocess_step_1(obj, probe_id)
-        %%first step in preprocessing of the spike data
+        %%preprocess_step_1 First step of preprocessing
+        %
+        %   preprocess_step_1(PROBE_ID) runs stage 1 of the preprocessing 
+        %   for probe recording PROBE_ID. This includes:
+        %       - moving raw probe data to a local location
+        %       - run the ecephys_spike_sorting pipeline
+        %       - create a .csv with clusters to check
+        %       - create a .mat with the trigger channel
+        %       - create a driftmap
+        %       - process the motion energy from the camera data
             
             obj.move_raw_to_local(probe_id);
             obj.janelia_ecephys_spike_sorting(probe_id);
@@ -28,7 +57,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function janelia_ecephys_spike_sorting(obj, probe_id)
-        %%runs the Janelia version of ecephys_spike_sorting
+        %%janelia_ecephys_spike_sorting Run ecephys_spike_sorting
+        %
+        %   janelia_ecephys_spike_sorting(PROBE_ID) runs the
+        %   ecephys_spike_sorting pipeline for probe recording PROBE_ID
+        
             je_helper = JaneliaEcephysHelper(obj, probe_id);
             je_helper.run_from_raw();
         end
@@ -36,7 +69,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function create_check_clusters_csv(obj, probe_id)
-            
+        %%create_check_clusters_csv Create the .csv with the clusters to manually check
+        %
+        %   create_check_clusters_csv(PROBE_ID) creates the .csv with the 
+        %   clusters to manually check for probe recording PROBE_ID.
+        
             cc = RestrictClusters(obj, probe_id);
             new_tbl = cc.restrict_metrics_table();
             obj.save.clusters_janelia_csv(probe_id, new_tbl);
@@ -45,7 +82,12 @@ classdef RC2Preprocess < RC2Format
         
         
         function create_trigger_file(obj, probe_id)
-            
+        %%create_trigger_file Separate the trigger channel from the the probe .bin file
+        %
+        %   create_trigger_file(PROBE_ID) separate the trigger channel from 
+        %   the the probe .bin file and save in a .mat, for a probe
+        %   recording PROBE_ID.
+        
             rec = obj.load.spikeglx_ap_recording(probe_id);
             trigger = rec.data(rec.trigger_channel_idx, :);
             obj.save.trigger_mat(probe_id, trigger);
@@ -54,14 +96,23 @@ classdef RC2Preprocess < RC2Format
         
         
         function ct = correct_trigger_file(obj, probe_id)
-        %%opens window to correct the trigger file
+        %%correct_trigger_file Manually correct the trigger file if necessary
+        %
+        %   GUI_HANDLE = correct_trigger_file(PROBE_ID)
+        %   opens a small GUI to correct the trigger trace.
+        %   Returns the handle to the GUI opened in GUI_HANDLE.
+        
             ct = CorrectTrigger(obj, probe_id);
         end
         
         
         
         function create_driftmap(obj, probe_id)
-        %%create and save driftmap
+        %%create_driftmap Create and save a driftmap
+        %
+        %   create_driftmap(PROBE_ID) creates and save a driftmap for a
+        %   probe recording PROBE_ID.
+        
             ks2_dir = obj.file.imec0_ks2(probe_id);
             [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks2_dir);
             
@@ -77,7 +128,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function process_camera_data(obj, probe_id)
-            
+        %%process_camera_data Process the motion energy for camera data
+        %
+        %   process_camera_data(PROBE_ID) computes and save the motion
+        %   energy for the camera data for the probe recording PROBE_ID. 
+        
             session_ids = obj.get_session_ids_list(probe_id);
             for ii = 1 : length(session_ids)
                 ch = CameraProcessingHelper(obj, session_ids{ii});
@@ -88,8 +143,12 @@ classdef RC2Preprocess < RC2Format
         
         
         function hf_power = hf_power(obj, probe_id, shank_id)
-        %%return a HighFrequencyPowerProfile object for probe_id and
-        %%shank_id
+        %%hf_power Create HighFrequencyPowerProfile object
+        %
+        %   HF_POWER = hf_power(PROBE_ID, SHANK_ID)
+        %   return HighFrequencyPowerProfile object for probe recording
+        %   PROBE_ID and shank SHANK_ID. Used to examine peaks in the
+        %   high-frequency power profile.        
             
             recording               = obj.load.spikeglx_ap_recording(probe_id);
             
@@ -105,7 +164,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function save_hf_power(obj, hf_power)
-        %%save information from the hf_power object
+        %%save_hf_power  Save the HighFrequencyPowerProfile object
+        %
+        %   save_hf_power(HF_POWER). After analyzing the high-frequency
+        %   power with the HighFrequencyPowerProfile object, this can be
+        %   used to save the details.
         
             probe_id = hf_power.probe_id;
             shank_id = hf_power.shank_id;
@@ -121,9 +184,13 @@ classdef RC2Preprocess < RC2Format
         
         
         function create_mock_track(obj, probe_id, shank_id, n_points, visp_n_points_from_tip)
-            %%creates a mock probe 'track' with VISpX at top and 'Unknown' at
-            %%bottom
-            % open the file
+        %%create_mock_track Create a 'track.csv' with a similar format to the real eventual track file
+        %
+        %   create_mock_track(PROBE_ID, SHANK_ID, N_POINTS, VISP_N_POINTS_FROM_TIP)
+        %   creates a .csv file with a similar structure to the anatomical
+        %   track.csv file for probe recording PROBE_ID and shank SHANK_ID.
+        %    Creates N_POINTS rows in the .csv, with 'VISpX' in the bottom
+        %    VISP_N_POINTS_FROM_TIP rows and 'Unknown' above that.
             
             [fname, exists] = obj.file.track_csv(probe_id, shank_id);
             
@@ -163,6 +230,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function create_selected_clusters_txt(obj, probe_id)
+        %%create_selected_clusters_txt Create text file with the clusters selected
+        %
+        %   create_selected_clusters_txt(PROBE_ID) takes the .xlsx saved
+        %   after the manual Phy step and extracts the selected clusters to
+        %   save in a text file in the Kilosort directory.
             
             clusters_xlsx = obj.load.clusters_janelia_xlsx(probe_id);
             idx = ~(strcmp(clusters_xlsx.mateo, 'b') | strcmp(clusters_xlsx.lee, 'b'));
@@ -173,8 +245,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function clusters_from_tip_um = mua_from_tip_um(obj, probe_id, shank_id)
-        %%for the high-power frequency plots, return the distances of
-        %%'good' clusters from the probe tip
+        %%mua_from_tip_um For MUA get disatnce from probe tip
+        %
+        %   FROM_TIP = mua_from_tip_um(PROBE_ID, SHANK_ID) gets the multiunit activity
+        %   units for probe recording PROBE_ID, and which lie on shank
+        %   SHANK_ID.
             
             clusters                = obj.format_clusters(probe_id);
             good_clusters           = strcmp({clusters(:).class}, 'good');
@@ -185,20 +260,11 @@ classdef RC2Preprocess < RC2Format
         
         
         
-%         function get_session_bounds(obj, probe_id)
-%         %%from the pattern of triggers, get the boundaries of the sessions
-%             
-%             min_time_between_sessions = 2;  % seconds
-%             
-%             
-%             
-%         end
-        
-        
-        
         function move_raw_to_local(obj, probe_id)
-        %%moves the .ap.bin files from the remote server to the local fast
-        %%drive
+        %%move_raw_to_local Move the raw probe data to a local location
+        %
+        %   move_raw_to_local(PROBE_ID) moves the .ap.bin files from the 
+        %   remote server to the local fast drive.
         %
         %   TODO: add option to choose the remote location
         
@@ -224,7 +290,11 @@ classdef RC2Preprocess < RC2Format
         
         
         function cinfo = cluster_info(obj, probe_id)
-            
+        %%cluster_info Create CheckClusterQuality object
+        %
+        %   cluster_info(PROBE_ID) creates a CheckClusterQuality object for
+        %   probe recording PROBE_ID, to view some quality metrics.
+        
             cinfo = CheckClusterQuality(obj, probe_id);
         end
     end

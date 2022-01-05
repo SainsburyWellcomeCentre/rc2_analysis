@@ -1,5 +1,32 @@
 classdef RC2Format < RC2Analysis
-    
+% RC2Format Class for formatting the preprocessed data and saving to a
+% single .mat file.
+%
+%   RC2Format Properties:
+%       compute_offsets     - whether to run computation of replay trial offsets upon running `format`
+%       compute_svm_table   - whether to run computation of stationary/motion csvs upon running `format`
+%       overwrite           - whether to overwrite existing files (default = false)
+%
+%   RC2Format Methods:
+%       format          - main formatting function
+%       format_anatomy  - format the `anatomy` structure
+%       load_track      - loads information about the anatomy as a
+%                         ProbeTrack object
+%       load_track_with_offset - loads information about the anatomy as a
+%                               ProbeTrack object and applies the offset in the offset.txt file
+%       format_clusters - format the `clusters` structure
+%       format_sessions - format the `sessions` structure
+%       format_session  - format a single data from a single RC2 session
+%       synchronize     - synchronize the trigger on the probe with the RC2 session
+%       create_svm_table - creates and saves the stationary/motion .csv file
+%       create_replay_offsets_table - creates and saves the table of offsets for replay trials as .csv
+%       format_trials   - formats trials within RC2 sessions
+%       insert_timebase - inserts timebases into the formatted sessions structure
+%
+%   See also: RC2Analysis, format
+%   
+%   TODO:   1. move `load_track` method to RC2Analysis
+
     properties
         
         compute_offsets = true
@@ -11,6 +38,10 @@ classdef RC2Format < RC2Analysis
     methods
         
         function obj = RC2Format()
+        %%RC2Format
+        %
+        %   RC2Format() creates object for formatting all the preprocessed
+        %   and raw data into a single file.
             
             obj = obj@RC2Analysis();
         end
@@ -18,6 +49,9 @@ classdef RC2Format < RC2Analysis
         
         
         function set.overwrite(obj, val)
+        %%when setting overwrite we actually just set the `overwrite`
+        %%property of the `save` object
+        
             if islogical(val) && length(val) == 1
                 obj.save.overwrite = val;
             end
@@ -26,7 +60,21 @@ classdef RC2Format < RC2Analysis
         
         
         function format(obj, probe_id)
-            
+        %FORMAT Run formatting pipeline on the data.
+        %
+        %   FORMAT(PROBE_ID) runs the formatting for a probe recording
+        %   PROBE_ID. Including:
+        %       - anatomy   using the probe track .csv and offsets computed
+        %                   from the high-frequency power
+        %       - clusters  using the output from Kilosort2
+        %       - sessions  using the RC2 .bin files
+        %       - syncronization  using the trigger on the probe
+        %       - selected_clusters  using the manually selected clusters
+        %                            in Phy
+        %
+        %   Formatted data is saved to a single .mat file of form:
+        %       <path_config.formatted_data_dir>\<probe_id>.mat
+        
             formatted_data.probe_id                             = probe_id;
             
             shank_ids                                           = obj.get_shank_ids(probe_id);
@@ -59,8 +107,12 @@ classdef RC2Format < RC2Analysis
         
         
         function anatomy = format_anatomy(obj, probe_id, shank_id)
-        %%reads in the probe track and offset.txt file and calculates the
-        %%boundaries of each region on the probe
+        %%format_anatomy Format the anatomy data
+        %
+        %
+        %   format_anatomy(PROBE_ID, SHANK_ID) reads in the probe track and offset.txt file 
+        %   for the probe recording PROBE_ID, and shank SHANK_ID (where
+        %   SHANK_ID is an integer) and computes the boundaries of each region on the probe.
             
             % read probe file
             probe_track                 = obj.load_track(probe_id, shank_id);
@@ -86,7 +138,14 @@ classdef RC2Format < RC2Analysis
         
         
         function probe_track = load_track(obj, probe_id, shank_id)
-        %%loads track info and processes it a bit
+        %%load_track Loads the anatomy data in a 'track_<shank_id>.csv'
+        %
+        %   PROBE_TRACK = load_track(PROBE_ID, SHANK_ID) loads the .csv file associated
+        %   with a PROBE_ID and SHANK_ID (where SHANK_ID is an integer,
+        %   zero-indexed). Returns an object PROBE_TRACK of type
+        %   ProbeTrack.
+        %
+        %   See also: ProbeTrack
             
             probe_track_tbl     = obj.load.track_csv(probe_id, shank_id);
             
@@ -98,8 +157,17 @@ classdef RC2Format < RC2Analysis
         
         
         function probe_track = load_track_with_offset(obj, probe_id, shank_id)
-        %%load the probe track file and apply the offset in the offset.txt
-        %%file
+        %%load_track Loads the anatomy data in a 'track_<shank_id>.csv'
+        %%accounting for offset from high-frequency power profile.
+        %
+        %   PROBE_TRACK = load_track_with_offset(PROBE_ID, SHANK_ID) loads the .csv file associated
+        %   with a PROBE_ID and SHANK_ID (where SHANK_ID is an integer,
+        %   zero-indexed) as well as any offset.txt file 
+        %   Returns an object PROBE_TRACK of type ProbeTrack with `offset`
+        %   property applied.
+        %
+        %   See also: ProbeTrack
+        
             % read probe file
             probe_track         = obj.load_track(probe_id, shank_id);
             track_offset        = obj.load.track_offset(probe_id, shank_id);
@@ -112,15 +180,13 @@ classdef RC2Format < RC2Analysis
         
         
         function clusters = format_clusters(obj, probe_id)
-        %%FORMAT_CLUSTERS
-        %   CLUSTERS = FORMAT_CLUSTERS(probe_id)
+        %%format_clusters Format the `clusters` structure
         %
-        %   Takes the files in the output of kilosort2/ecephys_spike_sorting or
-        %   related fork, and produces a sequence of "cluster" objects with all the
-        %   associated information.
-        %
-        %   Input:  ks_dir - directory of kilosort2 output
-        %   Output: clusters - structure array of clusters with several properties
+        %   CLUSTERS = format_clusters(PROBE_ID) takes the files in the output of 
+        %   kilosort2/ecephys_spike_sorting or related fork, and produces a sequence 
+        %   of "cluster" objects with all the associated information.
+        %   PROBE_ID is the ID of a probe recording. Outputs CLUSTERS, a structure 
+        %   array of clusters with several properties
             
             % read the kilosort data
             params            = obj.load.params(probe_id);
@@ -277,7 +343,12 @@ classdef RC2Format < RC2Analysis
         
         
         function sessions = format_sessions(obj, probe_id)
-        %%formats data in RC2 bin files
+        %%format_sessions Format all RC2 sessions for a probe recording
+        %
+        %   SESSIONS = format_sessions(PROBE_ID) takes the RC2 sessions
+        %   associated with a probe recording and formats them.
+        %
+        %   See also: format_session
             
             session_list = obj.get_session_ids_list(probe_id);
             
@@ -290,7 +361,15 @@ classdef RC2Format < RC2Analysis
         
         
         function session = format_session(obj, session_id)
-        %%format data in RC2 bin file and cameras
+        %%format_session Format a single RC2 session
+        %
+        %   SESSION = format_sessions(SESSION_ID) takes the RC2 session
+        %   SESSION_ID, and formats it. Loads the .bin file and saves each
+        %   channel as a separate field in a structure. Further, calls
+        %   `format_trials` and divides the session into individual trials.
+        %   Returns the structure SESSION.
+        %
+        %   See also: format_sessions, format_trials
             
             % read the bin and cfg file
             [data, dt, chan_names, config] = obj.load.rc2_bin(session_id);
@@ -326,8 +405,23 @@ classdef RC2Format < RC2Analysis
         
         
         function [probe_t, n_triggers, trigger_t] = synchronize(obj, probe_id, sessions)
-        %%synchronize probe recording and RC2 session
-            
+        %%synchronize Synchronize the trigger on the probe with the RC2 session
+        %
+        %   [PROBE_T, NUMBER_OF_TRIGGERS, TRIGGER_T] = synchronize(PROBE_ID, SESSIONS)
+        %   finds each of the sessions of SESSIONS (structure array of sessions) in the trigger
+        %   channel for probe recording PROBE_ID. Returns PROBE_T, with the time 
+        %   in "probe time" of each sample point of the
+        %   session, NUMBER_OF_TRIGGERS which is a structure
+        %   array with fields 'rc' and 'probe' giving the number of
+        %   expected triggers from the .bin file, and the number of
+        %   triggers observed on the 'probe' channel. TRIGGER_T is the
+        %   time, in "probe time" of each rise in the trigger on the probe.  
+        %   Here "probe times" means the time of each sample point of the probe 
+        %   recording where the first sample point has time 0, the second has 
+        %   time 1/fs, etc. where fs is the sample rate of the probe recording (usually 30kHz).
+        %
+        %   See also: insert_timebase
+        
             expected_min_interval = 2;  % s
             
             params              = obj.load.params(probe_id);
@@ -400,7 +494,16 @@ classdef RC2Format < RC2Analysis
         
         
         function create_svm_table(obj, probe_id)
-        %%creates and saves the SVM table
+        %%create_svm_table Creates and saves the stationary/motion .csv file
+        %
+        %   create_svm_table(PROBE_ID) loads the formatted data, goes
+        %   through each trial and separates it into stationary and motion
+        %   periods, then computes the firing rate for each cluster in the
+        %   stationary and motion periods. A MATLAB table is created and
+        %   saved as a .csv.
+        %
+        %   See also: FormattedData.create_svm_table
+        
             data = obj.load_formatted_data(probe_id);
             tbl = data.create_svm_table();
             obj.save.svm_table(probe_id, tbl);
@@ -409,9 +512,13 @@ classdef RC2Format < RC2Analysis
         
         
         function create_replay_offsets_table(obj, probe_id)
-        % creates and saves the table of offsets for replayed trials
-        %   should this come earlier in preprocessing and saved with trial
-        %   structure?
+        %%create_replay_offsets_table Creates and saves the table of offsets for replay trials as .csv
+        %
+        %   create_svm_table(PROBE_ID) loads the formatted data goes
+        %   through each replay trial and aligns it to the original trial.
+        %
+        %   See also: FormattedData.create_replay_offsets_table
+        
             data = obj.load_formatted_data(probe_id);
             tbl = data.create_replay_offsets_table();
             obj.save.offsets_table(probe_id, tbl);
@@ -451,8 +558,12 @@ classdef RC2Format < RC2Analysis
         
         
         function trials = format_trials(session)
-        %%takes a session structure and finds the 'trials' - which for now
-        %%is very dependent on the structure of the solenoid signal.
+        %%format_trials Format individual trials within an RC2 session
+        %
+        %   TRIALS = format_trials(SESSION) takes the session structure created with
+        %   `format_session` and splits it into individual trials using the
+        %   solenoid signal. TRIALS is another structure containing the
+        %   start and end indices of the trial in the session.
             
             % make sure that the solenoid starts high in the session
             assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
@@ -503,7 +614,13 @@ classdef RC2Format < RC2Analysis
         
         
         function sessions = insert_timebase(sessions, probe_t, trigger_t)
-            
+        %%insert_timebase Inserts timebases into the formatted sessions structure
+        %
+        %   SESSIONS = insert_timebase(SESSIONS, PROBE_T, TRIGGER_T)
+        %   takes the information about the "probe time" timebase of the
+        %   RC2 session and rise time of the trigger and inserts into the
+        %   SESSIONS structure.
+        
             for ii = 1 : length(sessions)
                 sessions(ii).probe_t = probe_t{ii};
                 sessions(ii).camera_t = trigger_t{ii};

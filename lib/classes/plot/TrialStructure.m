@@ -1,5 +1,38 @@
-classdef TrialStructure < handle
-    
+classdef TrialStructure
+% TrialStructure Class for plotting the structure of RVT trials.
+%
+%  TrialStructure Properties:
+%       mask_scale       - where to plot the max mask value on y-axis
+%       solenoid_scale   - where to plot the solenoid on y-axis
+%       trig_shift       - how much to shift the masks above 0 on y-axis
+%       aw_scale         - where to plot the max analysis window value on y-axis
+%       n_axes           - number of axes (5)
+%
+%  TrialStructure Methods:
+%       plot_treadmill      - plots the treadmill velocity
+%       plot_visual         - plots the visual motion velocity
+%       plot_stage          - plots the stage velocity
+%       plot_camera         - plots the camera motion energy
+%       plot_general_trace  - shared function for plotting traces
+%       downsample_trace    - downsamples the traces
+%       x_limits            - set x-axis limits and plotboxaspectratio
+%       plot_fr             - plots the firing rate trace
+%       overlay_masks       - plots all the masks
+%       plot_on_axes        - plots specific trace on specific axes
+%       add_text            - adds time information about stationary and motion periods
+%       plot                - main plotting function
+%
+%   The TrialStructure class takes information about a trial and plots the
+%   breakdown of the trial. This includes separate axes for treadmill,
+%   visual and linear stage speeds, as well as the camera motion energy and
+%   firing rate of a population of clusters.
+%
+%   The main method is `plot`, which takes a Trial object and an array of
+%   Cluster objects. The other methods are largely for internal use.
+%   
+%
+%   See also: Trial, Cluster
+
     properties (SetAccess = private)
         
         h_fig
@@ -34,28 +67,31 @@ classdef TrialStructure < handle
         
         
         function plot_treadmill(obj, h_ax)
-            
+        %%plot_treadmill Plots the treadmill speed
+        
             obj.plot_general_trace(h_ax, obj.trial.treadmill_speed, 'R (cm/s)');
         end
         
         
         
         function plot_visual(obj, h_ax)
-            
+        %%plot_visual Plots the speed of the visual motion
+        
             obj.plot_general_trace(h_ax, obj.trial.visual_speed, 'V (cm/s)');
         end
         
         
         
         function plot_stage(obj, h_ax)
-            
+        %%plot_stage Plots the speed of the stage    
             obj.plot_general_trace(h_ax, obj.trial.stage, 'T (cm/s)');
         end
         
         
         
         function plot_camera(obj, h_ax)
-            
+        %%plot_camera Plots the motion energy from the camera
+        
 %             obj.plot_general_trace(h_ax, obj.trial.camera1, 'Camera (a.u.)');
             
 %             lims = prctile(obj.trial.camera1, [0, 30]);
@@ -69,7 +105,8 @@ classdef TrialStructure < handle
         
         
         function plot_general_trace(obj, h_ax, trace, label)
-            
+        %%plot_general_trace Shared function for plotting the traces
+        
             ylabel(h_ax, label)
             obj.x_limits(h_ax);
             
@@ -91,7 +128,8 @@ classdef TrialStructure < handle
         
         
         function [val, downsample_t] = downsample_trace(obj, trace)
-            
+        %%downsample_trace Downsamples trace to 60Hz
+        
             n_samples = round((obj.trial.probe_t(end)-obj.trial.probe_t(1))*60);
             downsample_t = linspace(obj.trial.probe_t(1), obj.trial.probe_t(end), n_samples);
             val = interp1(obj.trial.probe_t, trace, downsample_t);
@@ -100,13 +138,16 @@ classdef TrialStructure < handle
         
         
         function x_limits(obj, h_ax)
+        %%x_limits Set x-axis limits and plotboxaspectratio
+        
             set(h_ax, 'plotboxaspectratio', [10, 1, 1], 'box', 'off');
             set(h_ax, 'xlim', obj.trial.probe_t([1, end]));
         end
         
         
         function plot_fr(obj, h_ax)
-            
+        %%plot_fr Plots firing rate trace for population
+        
             cluster_fr = cell(1, length(obj.clusters));
             for ii = 1 : length(obj.clusters)
                 cluster_fr{ii} = obj.clusters(ii).fr.get_convolution(obj.trial.probe_t);
@@ -119,7 +160,11 @@ classdef TrialStructure < handle
         
         
         function overlay_masks(obj, h_ax)
-            
+        %%overlay_masks Overlays the various masks on the plot
+        %
+        %   overlay_masks(AXIS_HANDLE) overlays "motion mask", "stationary
+        %   mask", "analysis window", "solenoid trace", "teensy gain"
+        
             plot(h_ax, obj.trial.probe_t, obj.mask_scale * obj.trial.motion_mask + obj.trig_shift, 'color', obj.colours('motion'));
             plot(h_ax, obj.trial.probe_t, obj.mask_scale * obj.trial.stationary_mask + obj.trig_shift, 'color', obj.colours('stationary'));
             plot(h_ax, obj.trial.probe_t, obj.solenoid_scale * obj.trial.solenoid + obj.trig_shift, 'color', obj.colours('solenoid'));
@@ -132,7 +177,13 @@ classdef TrialStructure < handle
         
         
         function plot_on_axes(obj, n, trace_type)
-            
+        %%plot_on_axes Plots specific trace on specific axes
+        %
+        %   plot_on_axes(AXIS_NUMBER, TRACE_TYPE) plots a particular trace
+        %   type on a particular axis. AXIS_NUMBER specifies which axis to
+        %   plot the trace on (between 1 and `n_axes`), and TRACE_TYPE is
+        %   one of 'treadmill', 'visual', 'stage', 'camera', and 'fr'.
+        
             obj.h_ax{n} = subplot(obj.n_axes, 1, n); hold on;
             switch trace_type
                 case 'treadmill'
@@ -152,7 +203,11 @@ classdef TrialStructure < handle
         
         
         function add_text(obj, h_ax)
-            
+        %%add_text Adds time information about stationary and motion periods
+        %
+        %   add_text(AXIS_HANDLE) adds text information to the axis
+        %   specified by AXIS_HANDLE.
+        
             text_str = sprintf('Stationary time: %.2f s\nMotion time: %.2f s\nAnalysis window time: %.2f s', ...
                                obj.trial.stationary_time, ...
                                obj.trial.motion_time, ...
@@ -166,7 +221,12 @@ classdef TrialStructure < handle
         
         
         function plot(obj, trial, clusters)
-            
+        %%plot Main plotting function
+        %
+        %   plot(TRIAL, CLUSTERS) takes the information in the Trial object
+        %   TRIAL, and the array of Cluster objects, CLUSTERS, and uses
+        %   them to plot the trial structure.
+        
             obj.trial = trial;
             obj.clusters = clusters;
             

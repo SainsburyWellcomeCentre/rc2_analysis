@@ -1,6 +1,32 @@
 classdef TuningCurvePlot < RC2Axis
-    
+% TuningCurvePlot Class for plotting tuning curves.
+%
+%   TuningCurvePlot Properties:
+%       error_type      - 'sem' (default) or 'sd' determines the error bar to plot
+%       print_stats     - true (default) or false, whether to print stats on figure
+%       dot_size        - size of dots for line plot (default = 10 points)
+%       line_width      - thickness of main line (deafult = 1 point)
+%       n_shuffs_to_plot - number of shuffled fits to plot in background
+%       main_col        - colour of the true fit and tuning curve
+%
+%   TuningCurvePlot Methods:
+%       plot            - plot the tuning curve and stats
+%       color           - change the colour of the tuning curve
+%       ylim            - get or set the y-axis limits
+%       xlim            - get or set the x-axis limits
+
     properties
+        
+        error_type = 'sem'
+        print_stats = true
+        dot_size = 10
+        line_width = 1
+        
+        n_shuffs_to_plot = 4
+        main_col = [0, 0, 0]
+    end
+
+    properties (SetAccess = private)
         
         h_line
         h_dots
@@ -14,26 +40,17 @@ classdef TuningCurvePlot < RC2Axis
         h_fit_shuff
         
         shuff
-        
-        error_type = 'sem'
-        print_stats = true
-        dot_size = 10
-        line_width = 1
-        
-        xmin
-        xmax
-        ymin
-        ymax
-        
-        n_shuffs_to_plot = 4
-        main_col = [0, 0, 0]
     end
+    
     
     
     methods
         
         function obj = TuningCurvePlot(h_ax)
-            
+        %%TuningCurvePlot
+        %
+        %   TuningCurvePlot(AXIS_HANDLE)
+        
             VariableDefault('h_ax', []);
             
             obj = obj@RC2Axis(h_ax);
@@ -41,7 +58,16 @@ classdef TuningCurvePlot < RC2Axis
         
         
         function plot(obj, tuning)
-        %%fr, sd, n, x, shuff, stat_fr, stat_sd, stat_n, p_signrank, h_ax
+        %%plot Plots the tuning curve
+        %
+        %   plot(TUNING) plots the tuning curve infomration contained in
+        %   the structure TUNING. For more information about the tuning curve
+        %   structure see TuningTable. The information plotted includes:
+        %   the mean firing rate in each speed bin, along with a linear fit
+        %   to the data. Several fits to the shuffled data in light grey.
+        %   Further, statistics about the tuning are printed.
+        %
+        %   See also: TuningTable
             
             obj.shuff = tuning.shuffled;
             fr      = nanmean(tuning.tuning, 2);
@@ -114,36 +140,11 @@ classdef TuningCurvePlot < RC2Axis
         
         
         
-        function val = get.xmin(obj)
-            
-            val = min(get(obj.h_ax, 'xlim')); %#ok<*CPROP>
-        end
-        
-        
-        
-        function val = get.xmax(obj)
-            
-            val = max(get(obj.h_ax, 'xlim'));
-        end
-        
-        
-        
-        function val = get.ymin(obj)
-            
-            val = min(get(obj.h_ax, 'ylim')); %#ok<*CPROP>
-        end
-        
-        
-        
-        function val = get.ymax(obj)
-            
-            val = max(get(obj.h_ax, 'ylim'));
-        end
-        
-        
-        
         function color(obj, val)
-            
+        %%color Sets the colour of the true fit and tuning curve
+        %
+        %   color(VALUE) where VALUE is a MATLAB colour format.
+        
             set(obj.h_line, 'color', val);
             for i = 1 : length(obj.h_errorbars)
                 set(obj.h_errorbars(i), 'color', val);
@@ -153,7 +154,13 @@ classdef TuningCurvePlot < RC2Axis
         
         
         function val = ylim(obj, val)
-            
+        %%ylim Get or set the y-axis limits
+        %
+        %   VALUEOUT = ylim(VALUEIN) similar to RC2Axis.ylim, but also
+        %   adjusts the position of the text information.
+        %
+        %   See also: RC2Axis
+        
             VariableDefault('val', []);
             val = obj.get_set_limits(val, 'ylim');
             if obj.print_stats
@@ -165,7 +172,13 @@ classdef TuningCurvePlot < RC2Axis
         
         
         function val = xlim(obj, val)
-            
+        %%xlim Get or set the x-axis limits
+        %
+        %   VALUEOUT = xlim(VALUEIN) similar to RC2Axis.xlim, but also
+        %   adjusts the position of the text information.
+        %
+        %   See also: RC2Axis
+        
             VariableDefault('val', []);
             val = obj.get_set_limits(val, 'xlim');
             

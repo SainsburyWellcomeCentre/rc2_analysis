@@ -1,5 +1,52 @@
 classdef HighFrequencyPowerProfile < handle
-    
+% HighFrequencyPowerProfile Class for analyzing the high-frequency power
+% profile across the probe
+%
+%   HighFrequencyPowerProfile Properties:
+%       first_batch_s           - start time of first batch (default = 60s)
+%       batch_interval_s        - interval between batches (default = 300s)
+%       batch_duration_s        - duration of each batch (default = 10s)
+%       n_batches_to_process    - number of batches to process (default = inf i.e. all data)
+%       lower_hz                - lower frequency of bandpower to calculate (default = 500Hz)
+%       upper_hz                - upper frequency of bandpower to calculate (default = 5000Hz)
+%       smoothing_distance_um   - size of the sliding window filter (default = 100um)
+%       interp_distance_um      - resolution of interpolation of power profile (default = 1um)
+%       channel_ids_to_remove   - IDs of the channels to remove from processing
+%       search_above            - threshold in um to search above for the peak power (default = 1000)
+%       search_below            - threshold in um to search below for the peak power (default = inf)
+%       batches_to_use          - which batches to use (default 1 to 10)
+%       power_raw               - raw power on each channel for each batch
+%       probe_track             - instance of ProbeTrack
+%       clusters_from_tip_um    - all MUA units and their distance from probe tip
+%       ephys_l5                - location of the electrophysiological L5
+%       anatomy_l5              - location of the anatomical L5 (from ProbeTrack)
+%       delta_l5                - difference between ephys_l5 and anatomy_l5
+%       probe_id                - string with probe recording ID
+%
+%   HighFrequencyPowerProfile Methods:
+%       channel_ids_to_process              - ID of the channels to process for the shank
+%       raw_channels_from_tip               - distance of each `channel_ids_to_process` from the probe tip
+%       interp_points_from_tip              - space to interpolate over (`interp_distance_um` resolution)
+%       run                                 - main method for running full analysis
+%       compute_power_on_all_channels       - computes the bandpower on all channels
+%       interpolate_across_channels         - interpoates the bandpower across the channels at `interp_distance_um` resolution
+%       smooth_across_channels              - smooth the interpolated profile from `interpolate_across_channels`
+%       bandpower                           - computes the bandpower for a channel
+%       search_for_l5                       - searchs the smoothed powerfor the peak
+%       separate_into_electrode_columns     - separates the full data into electrode columns
+%       remove_unuseful_channels            - removes reference and bad channels from the data
+%       set_unuseful_channels_to_nan        - sets reference and bad channels to nan (rather than removing)
+%       get_parameters                      - return a structure with the analysis parameters
+%       load_saved_data                     - loads previously saved data
+%       props_to_save                       - which properties of this class to save
+%       apply_parameters                    - applies parameters from a structure
+%       interactive_plot                    - creates interactive plot to view the averaged power profile with anatomical boundaries overlaid
+%       plot_raw_batches                    - plots the power across all channels separately for each batch in a separate subplot
+%       overlay_raw_batches                 - plots power across all channels for each batch on the same plot
+%       plot_interpolated_batches           - similar to `plot_raw_batches` but plots the power interpolated across 
+%                                             banks of electrodes instead of every channel
+%       plot_summary                        - create figure with 3 axes showing various features of the power profile
+
     properties
         
         first_batch_s = 60   % seconds
@@ -54,13 +101,19 @@ classdef HighFrequencyPowerProfile < handle
     methods
         
         function obj = HighFrequencyPowerProfile(recording, probe_id, shank_id)
-        %%class for computing the high frequency ("MUA spectral") power
-        %   profile along a probe shank (Senzai et al., 2018)
+        % HighFrequencyPowerProfile
+        %
+        %   HighFrequencyPowerProfile(RECORDING, PROBE_ID, SHANK_ID)
+        %   class for computing the high frequency ("MUA spectral") power
+        %   profile along a probe shank (c.f. Senzai et al., 2018). 
         %
         %   Inputs:
-        %       recording:    a object of class SpikeGLXRecording
-        %       shank_id:   which shank to compute the power on (zero
+        %       RECORDING - an object of class SpikeGLXRecording
+        %       PROBE_ID -  string with the probe recording ID
+        %       SHANK_ID -  integer with the shank to compute the power on (zero
         %                   indexed) (default = 0)
+        %
+        %   See also: SpikeGLXRecording
         
             VariableDefault('shank_id', 0);
             
@@ -77,8 +130,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function channel_ids = channel_ids_to_process(obj)
-        %%channel IDs for which we will compute the raw power, by default
-        %   we process all channels along a shank (excluding sync channels)
+        %%channel_ids_to_process ID of the channels to process for the shank
+        %
+        %   CHANNEL_IDS = channel_ids_to_process()
+        %   get channel IDs for which we will compute the raw power, by default
+        %   we process all channels along a shank (excluding sync
+        %   channels). Returned as a vector CHANNEL_IDS.
             
             % get all channel IDs for the current shank (this is ordered
             % from bottom of the shank to top
@@ -126,8 +183,8 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function val = get.bad_channel_ids(obj)
-        %%from the bad electrode IDs, identifies the channel IDs which will be
-        %   bad
+        %%from the bad electrode IDs, identifies the channel IDs which will be bad
+        
             channel_ids = obj.rec.all_channel_ids();
             [electrode_ids, shank_ids] = obj.rec.electrode_id_from_channel_id(channel_ids);
             idx = ismember(electrode_ids, obj.bad_electrode_ids(:, 1)) & ismember(shank_ids, obj.bad_electrode_ids(:, 2));
@@ -137,14 +194,17 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function val = get.ephys_l5(obj)
-            
+        %property just calling `search_for_l5` getting distance of peak of
+        %HF power from the probe tip
+        
             val = obj.search_for_l5();
         end
         
         
         
         function val = get.anatomy_l5(obj)
-            
+        %%returns the distance of the middle of VISp5 from the probe tip in um
+        
             val = nan;
             if ~isempty(obj.probe_track)
                 val = obj.probe_track.mid_l5_visp();
@@ -154,7 +214,8 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function val = get.delta_l5(obj)
-            
+        %%returns the difference between `ephys_l5` and `anatomy_l5` in um
+        
             val = 0;
             if ~isnan(obj.anatomy_l5)
                 val = obj.ephys_l5 - obj.anatomy_l5;
@@ -164,8 +225,15 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function val = raw_channels_from_tip(obj)
-        %%for the channels to process on shank_id get the distances from the
-        %   probe tip in microns
+        %%raw_channels_from_tip Distance of each `channel_ids_to_process` from the probe tip
+        %
+        %   DISTANCE = raw_channels_from_tip()
+        %   returns the distance in microns of each channel from the probe
+        %   tip. The distance is computed for each channel returned by
+        %   `channel_ids_to_process`
+        %
+        %   See also: `channel_ids_to_process`
+        
             channel_ids = obj.channel_ids_to_process();
             val = obj.rec.channel_from_tip_um(channel_ids);
         end
@@ -173,8 +241,14 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function val = interp_points_from_tip(obj)
-        %%for the interpolated points in power_interp and power_smooth
-        %%return the distance from the tip    
+        %%interp_points_from_tip Space to interpolate over (`interp_distance_um` resolution)
+        %
+        %   DISTANCE = interp_points_from_tip()
+        %   returns a spatial map at `interp_distance_um` resolution from
+        %   the smallest to the largest distance returned by
+        %   `raw_channels_from_tip`. This map is used to interpolate the HF
+        %   power profile at a higher spatial resolution.
+        
             % we will interpolate at resolution
             from_tip = obj.raw_channels_from_tip();
             val = from_tip(1) : obj.interp_distance_um : from_tip(end);
@@ -184,6 +258,7 @@ classdef HighFrequencyPowerProfile < handle
         
         function val = get.sample_start_t(obj)
         %%start times of each batch
+        
             max_t = (obj.rec.n_samples/obj.rec.fs) - obj.batch_duration_s;
             val = obj.first_batch_s : obj.batch_interval_s : max_t;
             val = val(1:min(obj.n_batches_to_process, length(val)));
@@ -192,12 +267,15 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function run(obj)
-        %%computes all steps in the HF power pipeline:
-        %       1. raw power on all channels
+        %%run Main method for running full analysis
+        %
+        %   run()
+        %   computes all steps in the HF power pipeline:
+        %       1. compute raw power on all channels
         %       2. interpolation over channels at obj.interp_distance_um
         %       resolution
         %       3. smooth across channels with obj.smoothing_distance_um
-        %       distance
+        %       sliding window
             
             obj.compute_power_on_all_channels();
             obj.interpolate_across_channels();
@@ -218,13 +296,15 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function compute_power_on_all_channels(obj, channel_ids)
-        %%compute HF power on several channels
-        %   by default, i.e. if the user does not supply channel_ids,
-        %   computes the power on all channels
-        %   the user can give a vector of channel IDs (zero-indexed)
-        %   on which to compute the raw power
-        %   however, if that option is used, the rest of the module is not
-        %   useable (i.e. interpolation, smoothing and finding L5 peak)
+        %%compute_power_on_all_channels Computes the bandpower on all channels
+        %
+        %   compute_power_on_all_channels(CHANNEL_IDS)
+        %   computes HF power on channels with ID CHANNEL_IDS. 
+        %   If CHANNEL_IDS is not supplied or is empty, all channels
+        %   returned by `channel_ids_to_process` will be processed.
+        %   The rest of the module will not be useable if CHANNEL_IDS is
+        %   supplied, so this optional argument is only useful if you really just want
+        %   the raw power on a set of channels.
         
             VariableDefault('channel_ids', []);
             
@@ -285,8 +365,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function interpolate_across_channels(obj)
-        %%uses the power computation from 'compute_power_on_all_channels',
-        %   interpolates at obj.interp_distance_um resolution
+        %%interpolate_across_channels Interpoates the power across channels at `interp_distance_um` resolution
+        %
+        %   interpolate_across_channels()
+        %   uses the power computation from `compute_power_on_all_channels`,
+        %   separates the data into electrode columns, and
+        %   interpolates each column at obj.interp_distance_um resolution.
             
             channel_ids = obj.channel_ids_to_process;
             
@@ -342,7 +426,10 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function smooth_across_channels(obj)
-        %%smooth across the interpolated power profile from obj.interpolate_across_channels
+        %%smooth_across_channels Smooth the interpolated profile after `interpolate_across_channels`
+        %
+        %   smooth_across_channels()
+        %   smooth across the interpolated power profile from obj.interpolate_across_channels
         %   with a distance of obj.smoothing_distance_um
             
             obj.power_smooth = nan(size(obj.power_interp));
@@ -372,8 +459,13 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function bp = bandpower(obj, channel_id, start_t, end_t)
-        %%compute bandpower between start_t and end_t for channel ID
-        %%'channel_id'
+        %%bandpower Computes the bandpower for a channel
+        %
+        %   bandpower(CHANNEL_ID, START_T, END_T)
+        %   compute bandpower between START_T and END_T for channel ID
+        %   CHANNEL_ID. Bandpower is computed between `lower_hz` and
+        %   `upper_hz`.
+        
             data = obj.rec.get_data_between_t(channel_id, [start_t, end_t], [], false);
             bp = bandpower(single(data), obj.rec.fs, [obj.lower_hz, obj.upper_hz]);
         end
@@ -382,6 +474,7 @@ classdef HighFrequencyPowerProfile < handle
         
         function bp = bandpower_legacy(obj, channel_id, start_t, end_t)
         %%legacy version of power computation
+        
             data = obj.rec.get_data_between_t(channel_id, [start_t, end_t], [], true);
             bp = bandpower(single(data), obj.rec.fs, [obj.lower_hz, obj.upper_hz]);
         end
@@ -389,8 +482,11 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function l5_from_tip = search_for_l5(obj)
-        %%look for a peak in the high frequency power profile contained in
-        %   obj.power_smooth
+        %%search_for_l5 Searchs the smoothed powerfor the peak
+        %
+        %   DISTANCE = search_for_l5()
+        %   look for a peak in the high frequency power profile contained in
+        %   property `power_smooth` and return the distance from the peak.
             
             % search for peak within bounds
             from_tip = obj.interp_points_from_tip;
@@ -406,7 +502,7 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function offset = auto_offset(obj)
-            
+        %%auto_offset    
             offset = obj.ephys_l5 - obj.probe_track.mid_l5_visp();
         end
         
@@ -436,9 +532,16 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function [power_columns, column_channel_ids] = separate_into_electrode_columns(obj, power, channel_ids)
-        %%takes power computed on channel_ids and separates it into
-        %%electrode columns
-            
+        %%separate_into_electrode_columns Separates the full data into electrode columns
+        %
+        %   [POWER_COL, CHANNEL_IDS_COL] = separate_into_electrode_columns(POWER, CHANNEL_IDS)
+        %   takes POWER (#channels x #batches array) computed on CHANNEL_IDS 
+        %   (#channels x 1 vector) and separates it into
+        %   electrode columns. Returns POWER_COL a cell array with each entry
+        %   being the power data for an electrode column (#channel along
+        %   column x # batches) and CHANNEL_IDS_COL  a cell array with the
+        %   channels IDs along each column.
+        
             % split power_raw into n_columns
             n_columns = obj.rec.n_electrode_columns_per_shank;
             
@@ -464,7 +567,19 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function [power, channel_ids] = remove_unuseful_channels(obj, power, channel_ids)
-        %%use list of channel_ids to remove reference and bad channels
+        %%remove_unuseful_channels Removes reference and bad channels from the data
+        %
+        %   [POWER_RM, CHANNEL_IDS_RM] = remove_unuseful_channels(POWER, CHANNEL_IDS)
+        %   takes POWER (#channels x #batches array) computed on CHANNEL_IDS 
+        %   (#channels x 1 vector) and removes channels which are
+        %   reference, identified as bad or otherwise flagged to remove.
+        %       These channel IDs are specified in:
+        %           SpikeGLXRecording.reference_channel_ids
+        %           `bad_channel_ids`
+        %           `channel_ids_to_remove`
+        %
+        %   Retruns POWER_RM (#channels after removal x # batches array)
+        %   and CHANNEL_IDS_RM a vector of channels IDs after removal.
             
                 channel_idx = ~ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:); obj.channel_ids_to_remove(:)]);
                 channel_ids   = channel_ids(channel_idx);
@@ -474,7 +589,21 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function power = set_unuseful_channels_to_nan(obj, power, channel_ids)
-        %%use list of channel_ids to set power to nan on reference and bad channels
+        %%set_unuseful_channels_to_nan Sets reference and bad channels to nan (rather than removing)
+        %
+        %   POWER_NAN = remove_unuseful_channels(POWER, CHANNEL_IDS)
+        %   takes POWER (#channels x #batches array) computed on CHANNEL_IDS 
+        %   (#channels x 1 vector) and sets channels which are
+        %   reference, identified as bad or otherwise flagged to remove as
+        %   NaN values.
+        %       
+        %   These channel IDs are specified in:
+        %           SpikeGLXRecording.reference_channel_ids
+        %           `bad_channel_ids`
+        %           `channel_ids_to_remove`
+        %
+        %   Retruns POWER_NAN (#channels x # batches array) with the nan
+        %   values.
             
                 channel_idx             = ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:); obj.channel_ids_to_remove(:)]);
                 power(channel_idx, :)   = nan;
@@ -483,7 +612,11 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function params = get_parameters(obj)
-        %%get parameters to save with the HF power profiles and offset file
+        %%get_parameters Return a structure with the analysis parameters
+        %
+        %   STRUCT = get_parameters()
+        %   get parameters to save with the HF power profiles and offset
+        %   file. Return these in a structure STRUCT.
         
             props = obj.props_to_save();
             
@@ -495,13 +628,18 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function load_saved_data(obj, mat_fname)
-            
+        %%load_saved_data Loads previously saved data
+        %
+        %   load_saved_data(FILENAME) loads in a .mat file which was
+        %   previously saved. Inserts the parameters into the
+        %   HighFrequencyPowerProfile object.
+        
             props = obj.props_to_save();
             
             params = load(mat_fname, props{:});
             
             % make sure data came from this probe and shank originally
-            assert(strcmp(params.probe_id, obj.probe_id) &  params.shank_id == obj.shank_id); %#ok<CPROPLC,*PROPLC>
+            assert(strcmp(params.probe_id, obj.probe_id) &  params.shank_id == obj.shank_id); %#ok<*PROPLC>
             
             dependent_props = {'bad_electrode_ids', ...
                                'bad_channel_ids', ...
@@ -527,7 +665,11 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function props = props_to_save(obj)
-            
+        %%props_to_save Which properties of this class to save
+        %
+        %   PROPERTIES = props_to_save() returns a cell array of strings
+        %   with the properties of the class to save.
+        
             props = {'probe_id', ...
                      'shank_id', ...
                      'first_batch_s', ...
@@ -559,9 +701,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function apply_parameters(obj, params)
-        %%applies parameters from a params structure
-        %   params should have fields with the same name as the properties
-        %   that you want to change
+        %%apply_parameters Applies parameters from a structure
+        %
+        %   apply_parameters(STRUCT)
+        %   takes a structure STRUCT, which contains fields with the same
+        %   names as the properties in this class and sets the properties
+        %   to have the values that the fields have.
             
             if isempty(params); return; end
             
@@ -574,7 +719,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function hf_plot = interactive_plot(obj)
-            
+        %%interactive_plot Creates interactive plot to view the averaged power profile with anatomical boundaries overlaid
+        %
+        %   Wrapper around HighFrequencyPowerProfilePlot.plot_by_column_interactive
+        %
+        %   See also: HighFrequencyPowerProfilePlot
+        
             hf_plot = HighFrequencyPowerProfilePlot(obj);
             hf_plot.plot_by_column_interactive();
         end
@@ -582,7 +732,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function plot_raw_batches(obj)
-            
+        %%plot_raw_batches Plots the power across all channels separately for each batch in a separate subplot
+        %
+        %   Wrapper around HighFrequencyPowerProfilePlot.raw_batches
+        %
+        %   See also: HighFrequencyPowerProfilePlot
+        
             hf_plot = HighFrequencyPowerProfilePlot(obj);
             hf_plot.raw_batches();
         end
@@ -590,7 +745,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function overlay_raw_batches(obj)
-            
+        %%overlay_raw_batches Plots power across all channels for each batch on the same plot
+        %
+        %   Wrapper around HighFrequencyPowerProfilePlot.overlay_raw_batches 
+        %
+        %   See also: HighFrequencyPowerProfilePlot
+        
             hf_plot = HighFrequencyPowerProfilePlot(obj);
             hf_plot.overlay_raw_batches();
         end
@@ -598,7 +758,12 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function plot_interpolated_batches(obj)
-            
+        %%plot_interpolated_batches Similar to `plot_raw_batches` but plots the power interpolated across banks of electrodes instead of every channel
+        %
+        %   Wrapper around HighFrequencyPowerProfilePlot.interpolated_batches 
+        %
+        %   See also: HighFrequencyPowerProfilePlot
+        
             hf_plot = HighFrequencyPowerProfilePlot(obj);
             hf_plot.interpolated_batches();
         end
@@ -606,15 +771,15 @@ classdef HighFrequencyPowerProfile < handle
         
         
         function h_fig = plot_summary(obj)
-            
+        %%plot_summary Create figure with 3 axes showing various features of the power profile
+        %
+        %   Wrapper around HighFrequencyPowerProfilePlot.plot_summary   
+        %
+        %   See also: HighFrequencyPowerProfilePlot
+        
             hf_plot = HighFrequencyPowerProfilePlot(obj);
             hf_plot.plot_summary();
             h_fig = gcf;
-        end
-        
-        function save(obj)
-            
-            
         end
     end
 end

@@ -1,5 +1,27 @@
 classdef SimpleVenn < RC2Axis
-    
+% SimpleVenn Class for plotting a simple Venn diagram with two groups
+%
+%   The aim is to make sure the areas of circles and area of overlap are
+%   proportional to the number of observations in each of the categories.
+%
+%  SimpleVenn Properties:
+%       A       - number of observations in group A
+%       B       - number of observations in group B
+%       A_and_B - number of observations in group A and B
+%       N       - total number of observations
+%       name_A  - the name to give to group A
+%       name_B  - the name to give to group B
+%       all_col - the colour to give to all observations
+%       A_col   - the colour to give to group A observations
+%       B_col   - the colour to give to group B observations
+%       
+%
+%  SimpleVenn Methods:
+%       plot            - plot the Venn diagram
+%       intersect_area  - the area of intersection
+%
+%   Note: currently requires the Symbolic Math Toolbox in MATLAB
+
     properties
         
         A
@@ -10,6 +32,13 @@ classdef SimpleVenn < RC2Axis
         name_A = 'A'
         name_B = 'B'
         
+        all_col = 'k'
+        A_col = 'b'
+        B_col = 'r'
+    end
+    
+    properties (SetAccess = private)
+        
         radius_A
         radius_B
         target_intersect
@@ -18,10 +47,6 @@ classdef SimpleVenn < RC2Axis
         d_B
         
         consistent
-        
-        all_col = 'k'
-        A_col = 'b'
-        B_col = 'r'
         
         h_all_patch
         h_A_patch
@@ -32,6 +57,12 @@ classdef SimpleVenn < RC2Axis
     methods
         
         function obj = SimpleVenn(h_ax)
+        %%SimpleVenn
+        %
+        %   SimpleVenn(AXIS_HANDLE) pair object with the axis referrenced
+        %   by AXIS_HANDLE. If it is not supplied or empty a new axis will
+        %   be created.
+        
             VariableDefault('h_ax', []);
             obj = obj@RC2Axis(h_ax);
         end
@@ -39,23 +70,26 @@ classdef SimpleVenn < RC2Axis
         
         
         function val = get.radius_A(obj)
+        %%radius of the circle for group A
             val = sqrt(obj.A/(obj.N*pi));
         end
         
         
         
-        function val = get.radius_B(obj)    
+        function val = get.radius_B(obj)
+        %%radius of the circle for group B
             val = sqrt(obj.B/(obj.N*pi));
         end
         
         
         function val = get.target_intersect(obj)    
+        %%target
             val = obj.A_and_B/obj.N;
         end
         
         
         function val = get.d_A(obj)
-            
+        %%solve for the centre of group A circle
             syms x
             d = real(vpasolve(obj.intersect_area(x) == 0, x));
             val = (obj.radius_A^2 - obj.radius_B^2 + d.^2)./(2*d);
@@ -63,7 +97,7 @@ classdef SimpleVenn < RC2Axis
         
         
         function val = get.d_B(obj)
-            
+        %%solve for the centre of group B circle    
             syms x
             d = real(vpasolve(obj.intersect_area(x) == 0, x));
             val = (obj.radius_B^2 - obj.radius_A^2 + d.^2)./(2*d);
@@ -71,7 +105,7 @@ classdef SimpleVenn < RC2Axis
         
         
         function val = get.consistent(obj)
-            
+        %%make sure numbers supplied are consistent   
             val = obj.A_and_B <= obj.A & ...
                 obj.A_and_B <= obj.B & ...
                 obj.A <= obj.N & ...
@@ -80,7 +114,12 @@ classdef SimpleVenn < RC2Axis
         end
         
         function plot(obj, suppress_text)
-            
+        %%plot Plot the Venn diagram
+        %
+        %   plot(SUPPRESS_TEXT) plots the Venn diagram. SUPPRESS_TEXT
+        %   indicates whether to prevent plotting of the text (default =
+        %   false, i.e. do not suppress text).
+        
             VariableDefault('suppress_text', false);
             
             if ~obj.consistent
@@ -143,7 +182,14 @@ classdef SimpleVenn < RC2Axis
         
         
         function A = intersect_area(obj, d)
-            
+        %%intersect_area Intersection area of the two circles depending on
+        %%distance of centres from each other
+        %   solve this to position the two circles so that we get the
+        %   correct overlap area
+        %
+        %   intersect_area(DISTANCE) computes overlap area of two circles
+        %   DISTANCE apart.
+        
             rA = obj.radius_A;
             rB = obj.radius_B;
             

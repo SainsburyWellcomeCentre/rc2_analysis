@@ -1,5 +1,37 @@
 classdef HighFrequencyPowerProfilePlot < handle
-    
+% HighFrequencyPowerProfilePlot Class for plotting the high-frequency power
+% profile across the length of a probe shank.
+%
+%  HighFrequencyPowerProfilePlot Properties:
+%
+%        hf_power               - object of type HighFrequencyPowerProfile containing data to plot
+%        clusters_from_tip_um   - list of depths of clusters from the tip of the probe
+%        current_offset         - amount to offset anatomical boundaries
+%
+%        h_fig                  - handle to the most recent figure plotted
+%        h_ax                   - handle to the most recent axis plotted
+%        probe_track            - object of type ProbeTrack containing the information about anatomical regions
+%        h_region_boundaries    - object of type RegionBoundariesPlot
+%        h_offset_text          - handle to text on the plot regarding offset
+%
+%  HighFrequencyPowerProfilePlot Methods:
+%
+%       set_probe_track             - sets up the figure to use anatomical information in a ProbeTrack object
+%       raw_batches                 - plots the power across all channels separately for each batch in a separate subplot
+%       interpolated_batches        - similar to `raw_batches` but plots the power interpolated across 
+%                                     banks of electrodes instead of every channel
+%       overlay_raw_batches         - plots power across all channels for each batch on the same plot
+%       plot_by_column_interactive  - creates interactive plot to view the averaged power profile with anatomical boundaries overlaid
+%       plot_legacy                 - legacy function to create a plot in an old style (remove)
+%       plot_summary                - create figure with 3 axes showing various features of the power profile
+%
+%     Internal:
+%       plot_all_batches_to_use_and_columns - plot of power for batches to use, each electrode column is a separate line
+%       overlay_cluster_histogram   - adds histogram of cluster depths to an axis
+%       interactive_key_press       - internal function for interactive  shift 
+%
+%   See also: HighFrequencyPowerProfile, ProbeTrack, RegionBoundariesPlot
+
     properties
         
         hf_power
@@ -16,10 +48,6 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         h_region_boundaries
         h_offset_text
-        
-        boundaries
-        region_str
-        anat_l5
     end
     
     
@@ -27,6 +55,16 @@ classdef HighFrequencyPowerProfilePlot < handle
     methods
         
         function obj = HighFrequencyPowerProfilePlot(hf_power)
+        %%HighFrequencyPowerProfilePlot
+        %
+        %   HighFrequencyPowerProfilePlot(HF_POWER) creates the object
+        %   where HF_POWER is an object of class HighFrequencyPowerProfile
+        %   and contains data about the high-frequency power profile along
+        %   a probe shank.
+        %
+        %   The HF_POWER object must be fully formed (i.e. all analysis has
+        %   been run and the properties are complete).
+        
             obj.hf_power = hf_power;
             obj.set_probe_track(hf_power.probe_track);
         end
@@ -34,6 +72,15 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         function set_probe_track(obj, probe_track)
+        %%set_probe_track Sets the anatomical information to use
+        %
+        %   set_probe_track(PROBE_TRACK) takes in the anatomical
+        %   information in PROBE_TRACK, which should be an object of type
+        %   ProbeTrack and contain information about the anatomical regions
+        %   in which a probe shank is located.
+        %
+        %   See also: ProbeTrack
+        
             if isempty(probe_track); return; end
             obj.h_region_boundaries = RegionBoundariesPlot(probe_track);
         end
@@ -41,7 +88,12 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         function raw_batches(obj)
-        %%plots the power profile for each batch (up to 20 batches)
+        %%raw_batches Plots the power profile for each batch (up to 20 batches)
+        %
+        %   raw_batches() plots the high-frequency power profile across the
+        %   probe. Each batch is plotted on a separate axis, and for each
+        %   batch the power on every channel is plotted. This is useful to
+        %   selecting batches with clear cortical peaks.
             
             obj.h_fig = figure('position', [150, 140, 1400, 850], ...
                                'papersize', [50, 40], ...
@@ -81,7 +133,13 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         function interpolated_batches(obj)
-            
+        %%interpolated_batches Plots the power profile for each batch (up to 20 batches)
+        %
+        %   interpolated_batches() plots the high-frequency power profile across the
+        %   probe. Each batch is plotted on a separate axis, and for each
+        %   batch the interpolated power along each electrode columns is
+        %   shown. Similar to `raw_batches`.
+        
             obj.h_fig = figure('position', [150, 140, 1400, 850], ...
                                'papersize', [50, 40], ...
                                'renderer', 'painters');
@@ -110,9 +168,13 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         
-        
         function overlay_raw_batches(obj)
-            
+        %%overlay_raw_batches Plots the power profile for each batch (up to 20 batches)
+        %
+        %   overlay_raw_batches() plots the high-frequency power profile across the
+        %   probe. Each batch is plotted on the same axis and the power on
+        %   all channels is shown for each batch.
+        
             obj.h_fig = figure('position', [150, 140, 1400, 850], ...
                 'papersize', [50, 40], ...
                 'renderer', 'painters');
@@ -138,10 +200,20 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         
-        
         function plot_by_column_interactive(obj, type)
-        %%separates the raw power on each channel into separate columns and
-        %%plots them all
+        %%plot_by_column_interactive Create interactive plot to view the averaged power profile with anatomical boundaries overlaid
+        %
+        %   plot_by_column_interactive() creates an interactive plot
+        %   showing the interpolated power (along electrode columns) along the probe shank, 
+        %   for all the batches selected (selected batches are in the `batches_to_use` property of `hf_power`). 
+        %   The average power profile is also plotted along with an indication of the peak HF power in cortex.
+        %
+        %   Anatomical boundaries from `probe_track` are also initially overlaid as if there
+        %   were no offset. The user can then shift those boundaries using
+        %   the left and right arrow keys (1um shift) or `a` and `d` keys
+        %   on the keyboard (10um shift), to check whether aligning mid L5
+        %   from anatomy and HF power cortical peak makes sense or if extra
+        %   criteria are required to detect the peak.
             
             VariableDefault('type', 'raw');
         
@@ -189,40 +261,6 @@ classdef HighFrequencyPowerProfilePlot < handle
             
             set(obj.h_ax, 'plotboxaspectratio', [2, 1, 1]);
             set(obj.h_fig, 'keypressfcn', @(x, y)obj.interactive_key_press(x, y));
-        end
-        
-        
-        
-        function plot_all_batches_to_use_and_columns(obj, h_ax)
-            
-            power_raw = ...
-                obj.hf_power.set_unuseful_channels_to_nan(obj.hf_power.power_raw, obj.hf_power.channel_ids_to_process);
-
-            power_raw = power_raw(:, obj.hf_power.batches_to_use);
-            
-            % separate the data into electrode columns
-            [power_raw_columns, column_channel_ids] = ...
-                obj.hf_power.separate_into_electrode_columns(power_raw, obj.hf_power.channel_ids_to_process);
-            
-            cols = lines(size(power_raw_columns, 2));
-            
-            for ii = 1 : size(power_raw_columns, 2)
-                
-                from_tip_um = obj.hf_power.rec.channel_from_tip_um(column_channel_ids{ii});
-                
-                for jj = 1 : size(power_raw_columns{ii}, 2)
-                    plot(h_ax, from_tip_um, power_raw_columns{ii}(:, jj), 'color', cols(ii, :), 'linewidth', 0.75);
-                end
-            end
-        end
-        
-        
-        
-        function overlay_cluster_histogram(obj, h_ax)
-            
-            [n, edges] = histcounts(obj.hf_power.clusters_from_tip_um, 0:25:2000);
-            h = histogram(h_ax, 'bincounts', max(get(h_ax, 'ylim'))*n/max(n)/2, 'binedges', edges);
-            set(h, 'facealpha', 0.6);
         end
         
         
@@ -352,7 +390,22 @@ classdef HighFrequencyPowerProfilePlot < handle
         
         
         function plot_summary(obj)
-            
+        %%plot_summary Create summary figure of the high-frequency power profile data
+        %
+        %   plot_summary() creates a figure with 3 axis. Left shows the
+        %   high-frequency power profile from individual batches (normalised to
+        %   peak for each batch), along with the unshifted boundaries from
+        %   the anatomy. Peak HF power is shown (red) and mid L5 from the
+        %   anatomy is shown in blue.
+        %
+        %   Middle axis shows the average high-frequency power profile
+        %   along with the anatomical boundaries shifted so that the peak
+        %   HF power and mid L5 match.
+        %
+        %   Right axis shows the distribution of clusters along the probe 
+        %   along with the anatomical boundaries shifted so that the peak
+        %   HF power and mid L5 match.
+        
             % gather info needed to make plot
             ephys_l5 = obj.hf_power.ephys_l5;
             anatomy_l5 = obj.hf_power.anatomy_l5;
@@ -473,6 +526,42 @@ classdef HighFrequencyPowerProfilePlot < handle
             
             % for saving set the paper orientation to landscape
             set(gcf, 'paperorientation', 'landscape');
+        end
+    end
+    
+    
+    methods (Access = protected)
+        
+        function plot_all_batches_to_use_and_columns(obj, h_ax)
+        %%plot_all_batches_to_use_and_columns    
+            power_raw = ...
+                obj.hf_power.set_unuseful_channels_to_nan(obj.hf_power.power_raw, obj.hf_power.channel_ids_to_process);
+
+            power_raw = power_raw(:, obj.hf_power.batches_to_use);
+            
+            % separate the data into electrode columns
+            [power_raw_columns, column_channel_ids] = ...
+                obj.hf_power.separate_into_electrode_columns(power_raw, obj.hf_power.channel_ids_to_process);
+            
+            cols = lines(size(power_raw_columns, 2));
+            
+            for ii = 1 : size(power_raw_columns, 2)
+                
+                from_tip_um = obj.hf_power.rec.channel_from_tip_um(column_channel_ids{ii});
+                
+                for jj = 1 : size(power_raw_columns{ii}, 2)
+                    plot(h_ax, from_tip_um, power_raw_columns{ii}(:, jj), 'color', cols(ii, :), 'linewidth', 0.75);
+                end
+            end
+        end
+        
+        
+        
+        function overlay_cluster_histogram(obj, h_ax)
+            
+            [n, edges] = histcounts(obj.hf_power.clusters_from_tip_um, 0:25:2000);
+            h = histogram(h_ax, 'bincounts', max(get(h_ax, 'ylim'))*n/max(n)/2, 'binedges', edges);
+            set(h, 'facealpha', 0.6);
         end
         
         

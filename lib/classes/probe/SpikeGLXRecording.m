@@ -1,5 +1,21 @@
 classdef SpikeGLXRecording < SpikeGLXMetaData
-    
+% SpikeGLXRecording Class for reading and handling data in SpikeGLX
+% .bin and .meta files
+%
+%   SpikeGLXRecording Properties:
+%       data    - #samples x #channels memory map to data file
+%       t       - #samples x 1, timebase of probe recording
+%       mmf_t   - 
+%
+%   SpikeGLXRecording Methods:
+%       get_data_between_t
+%       trigger_data
+%
+%   This is a subclass of SpikeGLXMetaData.
+%
+%   See also: SpikeGLXMetaData
+
+
     properties (SetAccess = private)
         
         data
@@ -17,11 +33,18 @@ classdef SpikeGLXRecording < SpikeGLXMetaData
     methods
         
         function obj = SpikeGLXRecording(glx_dir, type)
-       %% SpikeGLXRecording()
-        %   Class controlling access to raw AP or LFP data.
+        % SpikeGLXRecording
         %
-        %       glx_dir = directory with SpikeGLX ap.bin and ap.meta data
-        %       type = 'ap' or 'lf'
+        %   SpikeGLXRecording(DIRECTORY, RECORDING_TYPE)
+        %
+        %   Class controlling access to the SpikeGLX data in .bin
+        %   contained in the directory DIRECTORY.
+        %
+        %   There can only be one *.ap.bin or *.lf.bin file in DIRECTORY
+        %   The metadata file must also exist for this to work.
+        %
+        %   RECORDING_TYPE is either 'ap' or 'lf' and specifies which file
+        %   to work with.  By default RECORDING_TYPE is 'ap'
             
             obj = obj@SpikeGLXMetaData(glx_dir, type);
             
@@ -39,7 +62,19 @@ classdef SpikeGLXRecording < SpikeGLXMetaData
         
         
         function [val, t_out] = get_data_between_t(obj, channel_ids, t_in, type, legacy_on)
-            
+        %%get_data_between_t Gets data between two timepoints
+        %
+        %   [DATA, T_OUT] = get_data_between_t(CHANNEL_IDS, T_IN, TYPE)
+        %   gets the data between two time points.
+        %
+        %   Inputs:
+        %       CHANNEL_IDS     - list of channel IDs for which to return data
+        %       T_IN            - 1 x 2 array with time limits between which to return data
+        %       TYPE            - 's', uv', or empty (default). If TYPE is
+        %                         empty, the data is return as is without transformation. If
+        %                         TYPE is 's', the data is converted to single precesion. If
+        %                         TYPE is 'uv', the data returned is in microvolts.
+        
             % by default just return the int16 data
             VariableDefault('type', []);
             VariableDefault('legacy_on', false);
@@ -78,7 +113,10 @@ classdef SpikeGLXRecording < SpikeGLXMetaData
         
         
         function val = trigger_data(obj)
-        %%return int16 value of trigger data
+        %%trigger_data Return the trigger channel
+        %
+        %   trigger_data() returns the int16 value of trigger channel
+        
             val = obj.data(obj.trigger_channel_idx, :);
         end
     end

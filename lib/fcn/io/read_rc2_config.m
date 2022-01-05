@@ -1,11 +1,16 @@
 function config = read_rc2_config(cfg_fname) %#ok<*STOUT>
-%%config = PARSE_RC2_CONFIG(cfg_fname)
+% READ_RC2_CONFIG Reads the .cfg file associated with a .bin recording.
+% 
+%   CONFIG = read_rc2_config(FILENAME)
 %  
-%  Convert the config file saved by rc2 into a structure.
+%   Convert the config file, FILENAME, saved by rc2 into a structure.
+%   FILENAME is a full path to a .cfg file.
 %
 %   The config file is a sequence of key/value pairs. It only performs a
 %   very simple parse, so if there are new lines etc. in any of the filenames
 %   etc. we have a problem...
+%
+%   See also: read_rc2_bin, read_bin, data_transform
 
 
 

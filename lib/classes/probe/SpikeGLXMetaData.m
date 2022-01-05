@@ -1,9 +1,43 @@
 classdef SpikeGLXMetaData < handle
-    
+% SpikeGLXMetaData Class for reading and handling data in a SpikeGLX
+% metadata file.
+%
+%   SpikeGLXMetaData Properties:
+%       type                - 'ap' or 'lf' indicating type of recording
+%       bin_fname           - full path to the .bin SpikeGLX file
+%       meta_fname          - full path to the .meta SpikeGLX file
+%       shank_ids_used      - IDs of the shanks in the recording
+%       n_shanks_used       - # shanks used (=length(shank_ids_used))
+%       n_saved_channels    - # saved channels in the recording
+%       n_samples           - # samples saved in the recording
+%       fs                  - sampling frequency
+%       n_bit               - bit resolution of saved data
+%       uV_per_bit          - uV/bit (transform to uV)
+%       all_channel_ids     - list of all channel IDs used
+%       trigger_channel_idx     - index in the saved data of the trigger channel
+%       reference_channel_idx   - index in the saved data of the reference channels
+%       reference_channel_ids   - IDs of the reference channels
+%       config                  - structure containing the metadata information
+%       probe                   - instance of class Probe
+%       ai_volts                - 
+%       gain                    - gain of channels
+%       n_electrode_columns_per_shank - # of columns of electrodes on each shank
+%
+%   SpikeGLXMetaData Methods:
+%       channel_from_tip_um             - distance of channels from probe tip
+%       channel_from_left_um            - distance of channels from left-most electrode
+%       get_probe_type                  - get the probe type ('3A' or '24')
+%       electrode_id_from_channel_id    - for a given channel ID return the electrode and shank IDs
+%       get_idx_of_channel_id           - get index in the data of the channel
+%       get_channel_ids_along_shank     - get channel IDs along a shank
+%       get_channel_ids_along_column    - get channel IDs along an electrode column of a shank
+%       order_channel_ids               - order the channel IDs
+%       read_spikeglx_config            - read the .meta file
+
     properties (SetAccess = private)
         
         type
-        
+
         bin_fname
         meta_fname
         
@@ -44,14 +78,16 @@ classdef SpikeGLXMetaData < handle
     methods
         
         function obj = SpikeGLXMetaData(glx_dir, type)
-       %% SpikeGLXMetaData()
-        %   Class containing config information about the SpikeGLX recording
-        %   contained in the directory 'glx_dir'.
-        %   There can only be one *.ap.bin or *.lf.bin file in glx_dir
-        %   Metadata file must also exist for this to work
+        % SpikeGLXMetaData
         %
-        %       glx_dir = directory with SpikeGLX ap.bin and ap.meta data
-        %       type = 'ap' or 'lf'
+        %   SpikeGLXMetaData(DIRECTORY, RECORDING_TYPE)
+        %   
+        %   Class containing config information about the SpikeGLX recording
+        %   contained in the directory DIRECTORY.
+        %   There can only be one *.ap.bin or *.lf.bin file in DIRECTORY
+        %   The metadata file must also exist for this to work.
+        %   RECORDING_TYPE is either 'ap' or 'lf' and specifies which file
+        %   to work with.  By default RECORDING_TYPE is 'ap'
         
             % 'ap' or 'lf'
             obj.type = type;
@@ -95,7 +131,7 @@ classdef SpikeGLXMetaData < handle
         
         
         function val = get.n_bit(obj)
-            
+        %%bit resolution of saved data    
             if strcmp(obj.get_probe_type(), '3A')
                 val = 10;
             elseif strcmp(obj.get_probe_type(), '24')
@@ -106,7 +142,7 @@ classdef SpikeGLXMetaData < handle
         
         
         function val = get.gain(obj)
-        %%gain, dependent on whether 'ap' or 'lf'
+        %%channel gain, dependent on whether 'ap' or 'lf'
             if strcmp(obj.get_probe_type(), '3A')
                 if strcmp(obj.type, 'ap')
                     val = 500;
@@ -181,7 +217,10 @@ classdef SpikeGLXMetaData < handle
         
         
         function val = channel_from_tip_um(obj, channel_id)
-        %%return microns from tip of channel with ID 'channel_id' (zero
+        %%channel_from_tip_um Distance of channels from probe tip
+        %
+        %   DISTANCE = channel_from_tip_um(CHANNEL_ID)
+        %   return microns from tip of channel with ID 'channel_id' (zero
         %   indexed)
             
             assert(all(ismember(channel_id, obj.all_channel_ids)) & all(channel_id >= 0), 'not all channel ids exist')
@@ -192,7 +231,10 @@ classdef SpikeGLXMetaData < handle
         
         
         function val = channel_from_left_um(obj, channel_ids)
-        %%return microns from leftmost electrode of channel with ID 'channel_id' (zero
+        %%channel_from_left_um Distance of channels from left-most electrode
+        %
+        %   DISTANCE = channel_from_left_um(CHANNEL_ID)
+        %   return microns from leftmost electrode of channel with ID 'channel_id' (zero
         %   indexed)
         
             assert(all(ismember(channel_ids, obj.all_channel_ids)) & all(channel_ids >= 0), 'not all channel ids exist')
@@ -203,7 +245,9 @@ classdef SpikeGLXMetaData < handle
         
         
         function type = get_probe_type(obj)
-        %%get type of probe from metadata file
+        %%get_probe_type Get the probe type ('3A' or '24')
+        %
+        %   get type of probe from metadata file
         %   e.g. 3A for Phase 3A,  24 for Neuropixels 2.0, 4 shank
         
             if isfield(obj.config, 'imDatPrb_type')
@@ -216,8 +260,11 @@ classdef SpikeGLXMetaData < handle
         
         
         function [electrode_id, shank_id] = electrode_id_from_channel_id(obj, channel_ids)
-        %%for a channel ID (or vector of channel IDs), get the shank and
-        %   electrode which it occurred
+        %%electrode_id_from_channel_id For a given channel ID return the electrode and shank IDs
+        %
+        %   [ELECTRODE_ID, SHANK_ID] = electrode_id_from_channel_id(CHANNEL_ID)
+        %   for a channel ID (or vector of channel IDs), get the shank and
+        %   electrode which it occurred (all zero-indexed)
         
             if strcmp(obj.get_probe_type, '3A')
                 entries         = textscan(obj.config.imroTbl, '(%d %d %*s %*s %*s', 'EndOfLine', ')', 'HeaderLines', 1);
@@ -247,8 +294,11 @@ classdef SpikeGLXMetaData < handle
         
         
         function idx = get_idx_of_channel_id(obj, channel_ids)
-        %%returns the index in the data of the channel IDs
-        %   channel ID must be >= 0 and exist in the data or error is
+        %%get_idx_of_channel_id Get index in the data of the channel
+        %
+        %   INDEX = get_idx_of_channel_id(CHANNEL_IDS)
+        %   returns the index in the data of the channel IDs
+        %   channel IDs must be >= 0 and exist in the data or error is
         %   thrown
         
             assert(all(ismember(channel_ids, obj.all_channel_ids)) & all(channel_ids >= 0), 'not all channel ids exist')
@@ -258,7 +308,10 @@ classdef SpikeGLXMetaData < handle
         
         
         function channel_ids = get_channel_ids_along_shank(obj, shank_id)
-        %%given a shank ID, returns a list of channel IDs working from left
+        %%get_channel_ids_along_shank Get channel IDs along a shank
+        %
+        %   CHANNEL_IDS = get_channel_ids_along_shank(SHANK_ID)
+        %   given a shank ID, returns a list of channel IDs working from left
         %   to right, bottom to top
             
             % remove trigger channel
@@ -286,7 +339,10 @@ classdef SpikeGLXMetaData < handle
         
         
         function channel_ids = get_channel_ids_along_column(obj, shank_id, column_id)
-        %%given a shank ID and column ID (zero indexed) on that shank, 
+        %%get_channel_ids_along_column get channel IDs along an electrode column of a shank
+        %
+        %   CHANNEL_IDS = get_channel_ids_along_column(SHANK_ID, COLUMN_ID)
+        %   given a shank ID and column ID (zero indexed) on that shank, 
         %   returns a list of channel ids from bottom to top of the probe
             
             % channels on the shank
@@ -306,7 +362,10 @@ classdef SpikeGLXMetaData < handle
         
         
         function channel_ids = order_channel_ids(obj)
-        %%get a "natural" ordering of all the channels on the probe from 
+        %%order_channel_ids Order the channel IDs
+        %
+        %   CHANNEL_IDS = order_channel_ids()
+        %   order all the channels on the probe from 
         %   left to right, bottom to top, across all shanks
         
             n_shanks = obj.probe.n_shanks;
@@ -322,8 +381,13 @@ classdef SpikeGLXMetaData < handle
     methods (Static = true)
         
         function config = read_spikeglx_config(bin_fname)
-        % get the configuration data (.meta file) for an associated .bin file
-        % you supply the .bin filename
+        %%read_spikeglx_config Read the .meta file.
+        %
+        %   CONFIG =  read_spikeglx_config(FILENAME)
+        %   gets the configuration data (.meta file) for an associated .bin file
+        %   FILENAME is the full path to the .bin file (not the .meta
+        %   file). CONFIG is a structure containing the fields in the .meta
+        %   file.
             
             % generated the .meta filename from supplied bin
             meta_fname = strrep(bin_fname, '.bin', '.meta');
