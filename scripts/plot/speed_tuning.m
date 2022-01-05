@@ -1,7 +1,56 @@
-% plot speed tuning curve for an experimental group
-%  tuning cuves must have been generated and saved using
+% Plot speed tuning curve for an experimental group
+%  Tuning cuves must have been generated and saved using
 %  RC2Analysis.create_tuning_curves
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate plots for all clusters
+%                               and all probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group
+%
+%       trial_group_labels:     Will generate a plots with speed tuning
+%                               curves for the trials specified. 
+%                               Should be a cell array, with each entry
+%                               either a string specifying a trial group,
+%                               or a cell array of strings specifying
+%                               multiple trial groups.
+%                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
+%                               will plot three sets of tuning curves, the first
+%                               for all 'R' (running) trials, the
+%                               second for all trials of any of 
+%                               'T_bank', 'T_RT' or 'T_R' type, and the
+%                               third for all 'RT'
+%                               (running+translation) trials.
+%                       Importantly, the provided entries must match the
+%                       entries used to create the tuning curve information
+%                       (see RC2Analysis.create_tuning_curves, and
+%                       FormattedData.create_tuning_curves).
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\      
+%
+% If `save_figs` is true, one pdf will be created for each probe recording,
+% and contain a A4 page for each cluster, containing the raster data for
+% several conditions.
 
+%%
 % experiment_groups       = {'mismatch_darkness_oct21'};
 % trial_group_labels      = {'R', 'T', 'RT_gain_up'};
 % save_figs               = true;

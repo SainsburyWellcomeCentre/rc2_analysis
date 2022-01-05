@@ -1,4 +1,4 @@
-classdef RC2Axis
+classdef RC2Axis < handle
 % RC2Axis Class for general handling of axes
 %
 %   Many of the plotting classes are subclasses of this class.
