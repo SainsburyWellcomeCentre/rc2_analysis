@@ -51,7 +51,7 @@ catGT_dest = r'D:\mvelez\mateoData_probe\ecephys_spike_sorting_test\kilosort2_cu
 # ------------
 # CatGT params
 # ------------
-run_CatGT = False   # set to False to sort/process previously processed data.
+run_CatGT = True   # set to False to sort/process previously processed data.
 # catGT streams to process, e.g. just '-ap' for ap band only, '-ap -ni' for
 # ap plus ni aux inputs
 catGT_stream_string = '-ap'

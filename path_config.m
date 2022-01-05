@@ -35,7 +35,7 @@ config.ecephys_python_exe       = 'C:\Users\lee\Documents\jcolonell\ecephys_spik
 
 % this is for our new Neuropixels 2.0 data
 config.ecephys_np2_scripts_dir  = 'C:\Users\lee\Documents\jcolonell\ecephys_spike_sorting_np2\ecephys_spike_sorting\scripts';
-config.ecephys_np2_template     = 'C:\Users\lee\Documents\mvelez\rc2_analysis\lib\ecephys\np2\spikeGLX_pipeline.py';
+config.ecephys_np2_template     = 'C:\Users\lee\Documents\mvelez\rc2_analysis\lib\ecephys\np2\spikeGLX_pipeline_np2.py';
 config.ecephys_np2_python_exe   = 'C:\Users\lee\Documents\jcolonell\ecephys_spike_sorting_np2\.venv\Scripts\python.exe';
 
 config.runningmouse_python_exe  = 'C:\Users\lee\Documents\mvelez\atyson\runningmouse\Scripts\python.exe';
