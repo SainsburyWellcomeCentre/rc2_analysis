@@ -28,7 +28,7 @@
 %                               (running+translation) trials.
 %
 %       heatmap_trigger:        For each of the entries in
-%                               'trial_group_labels', a cell array specifying which
+%                               'trial_group_labels', a string specifying which
 %                               aspect of the trials to trigger on. Should
 %                               be either 'motion' (onset of motion) or
 %                               'mismatch' (onset of a mismatch event).
