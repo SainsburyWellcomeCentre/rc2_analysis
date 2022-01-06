@@ -1,6 +1,59 @@
-%%script for producing a unity plot for stationary vs. motion for each
-%%cluster and trial group
+% Plot stationary vs. motion unity plot for an experiment group and trial
+% group for each cluster individually. i.e. show the individual trials on
+% the unity plot (c.f. population_svm_unity_and_mi_plot).
+%
+%   Specify options:
+%
+%       experiment_groups:      Will generate unity plots including all
+%                               clusters in the probe recordings 
+%                               in the specified experiment group. e.g. one of:
+%                                   'darkness',
+%                                   'visual_flow',
+%                                   'mismatch_nov20',
+%                                   'mismatch_jul21',
+%                                   'mismatch_darkness_oct21'
+%                               Should be a cell array of strings with each
+%                               entry an experiment group.
+%
+%       trial_group_labels:     Will generate a unity plot for each of the
+%                               trial groups specified. 
+%                               Should be a cell array, with each entry
+%                               either a string specifying a trial group,
+%                               or a cell array of strings specifying
+%                               multiple trial groups.
+%                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
+%                               will create three unity plots, the first
+%                               combining across 'R' (running) trials, the
+%                               second combining across any trial of
+%                               'T_bank', 'T_RT' or 'T_R' type, and the
+%                               third combining across 'RT'
+%                               (running+translation) trials.
+%
+%       marker_type:            the type of marker to use on the plot (any
+%                               of those accepted by matlab) e.g. 'o' or
+%                               'v'. Should be a cell array of the same
+%                               length as `trial_group_labels`.
+%
+%       save_figs:              true or false, whether to save the figures to pdf
+%
+%       overwrite:              true or false. If figure pdf's already exist,
+%                               whether to overwrite 
+%       
+%       figure_dir:             cell array of strings specifying which
+%                               directory to save pdf's. The directory will
+%                               be relative to the directory specified by
+%                               path_config.figure_dir (in
+%                               `path_config.m`), so that {'one', 'two',
+%                               'three'} will save .pdfs to:
+%                               <path_config.figure_dir>\one\two\three\      
+%
+%
+% If `save_figs` is true, one pdf is saved for each probe recording with a
+% page for each cluster showing the unity plots for each of the trial
+% groups specified with `trial_group_labels`.
 
+
+%%
 % experiment_groups       = {'visual_flow'};
 % trial_group_labels      = {'RVT', 'RV', 'VT_RVT', 'VT_RV', 'V_RVT', 'V_RV'};
 % marker_style            = {'o', 'o', 'o', 'o', 'o', 'o'};
@@ -16,7 +69,6 @@
 % save_figs               = true;
 % overwrite               = true;
 % figure_dir              = {'unity_plots', 'darkness', 'stationary_vs_motion', 'single_cluster'};
-
 
 
 %%
