@@ -1,1 +1,0 @@
-[Thd 15628 CPU 22 1/05/22 12:11:31.732] Cmdline: CatGT -dir=D:/mvelez/mateoData_probe/janelia_pipeline/CAA-1115689 -run=CAA-1115689_rec1_rec2 -g=0 -t=0 -prb_fld -prb=0 -ap -aphipass=300 -aplopass=9000 -gbldmx -gfix=0,0.1,0.02 -SY=0,384,0,0 -dest=D:/mvelez/mateoData_probe/janelia_pipeline/CAA-1115689/output -out_prb_fld
