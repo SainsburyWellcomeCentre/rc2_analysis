@@ -1,5 +1,14 @@
 function sessions = data_cleansing(sessions)
-
+% DATA_CLEANSING Correct for mistakes/inconsistencies during acquisition
+%
+%   SESSIONS = data_clearning(SESSIONS)
+%   corrects for any mistakes during acquisition or with the raw data
+%   during the formatting step (called by RC2Format.format)
+%   Takes an array of structures, SESSIONS, and returns the structure array
+%   but with certain elements cleaned up so that all formatted data is
+%   consistent.
+%
+%   See also: RC2Format.format
 
 if strcmp(sessions(1).session_id, 'CA_176_1_rec1_001')
     % insert log names to make consistent with later data

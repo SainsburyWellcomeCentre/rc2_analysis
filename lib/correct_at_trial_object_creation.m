@@ -1,4 +1,12 @@
 function trial = correct_at_trial_object_creation(trial)
+% CORRECT_AT_TRIAL_OBJECT_CREATION Corrects for missing data in the
+% formatted data
+%
+%   TRIAL = correct_at_trial_object_creation(TRIAL) takes a Trial object
+%   and corrects a subset of these so that all trials are consistent.
+%
+%   TODO: This should go in data_cleansing, no need to have another
+%   function at Trial object creation.
 
 if any(strcmp(trial.session_id, ...
                 {'CAA-1110262_rec1_001', ...
