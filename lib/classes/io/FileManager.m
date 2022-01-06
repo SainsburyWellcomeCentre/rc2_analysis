@@ -1,4 +1,4 @@
-classdef FileManager
+classdef FileManager < handle
 % FileManager Class for handling paths and filenames on the system
 %
 %  FileManager Properties:

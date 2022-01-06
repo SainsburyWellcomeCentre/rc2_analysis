@@ -1,4 +1,4 @@
-classdef CSVManager
+classdef CSVManager < handle
 % CSVManager Class for helping with creation and saving of .csvs
 %
 %  CSVManager Properties:

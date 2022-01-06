@@ -1,4 +1,4 @@
-classdef ShuffleTuning
+classdef ShuffleTuning < handle
 % ShuffleTuning Class for getting tuning information
 %
 %   ShuffleTuning Properties:

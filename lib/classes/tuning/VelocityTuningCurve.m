@@ -1,4 +1,4 @@
-classdef VelocityTuningCurve
+classdef VelocityTuningCurve < handle
 % VelocityTuningCurve Class for computing the firing rate in a set of
 % velocity bins
 %

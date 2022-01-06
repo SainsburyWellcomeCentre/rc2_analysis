@@ -1,4 +1,4 @@
-classdef Git
+classdef Git < handle
 % Git Class for handling information about git
 %
 %  Git Properties:

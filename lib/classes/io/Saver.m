@@ -1,4 +1,4 @@
-classdef Saver
+classdef Saver < handle
 % Saver Class for helping with saving different types of data on the system
 %
 %  Saver Properties:

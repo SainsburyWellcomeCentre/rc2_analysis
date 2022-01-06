@@ -1,4 +1,4 @@
-classdef RasterDisplayFigure
+classdef RasterDisplayFigure < handle
 % RasterDisplayFigure Class for handling the plotting of raster data, along
 % with other axes such as running velocity and continuous spike rates
 %

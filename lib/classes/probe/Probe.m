@@ -1,4 +1,4 @@
-classdef Probe
+classdef Probe < handle
 % Probe Class for handling geometrical information about probe
 %
 %   Probe Properties:

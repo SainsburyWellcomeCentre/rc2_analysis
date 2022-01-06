@@ -1,4 +1,4 @@
-classdef Loader
+classdef Loader < handle
 % Loader Class for helping with loading different types of data on the
 % system
 %

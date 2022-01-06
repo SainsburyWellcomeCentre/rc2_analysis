@@ -1,4 +1,4 @@
-classdef RasterDisplaySection
+classdef RasterDisplaySection < handle
 % RasterDisplaySection Class for controlling a section of a
 % RasterDisplayFigure.
 %
