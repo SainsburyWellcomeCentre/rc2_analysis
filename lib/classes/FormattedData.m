@@ -13,6 +13,7 @@ classdef FormattedData < handle
 %       data                - contains all the structures in the formatted data file
 %
 %   FormattedData Methods:
+%       list_trial_group_labels             - returns a list of the trial group labels available for this data
 %       load_tuning_curves                  - loads previously created .mat files with the tuning curve data
 %       apply_offsets                       - applies the offsets saved in the offsets .csv files to the trials
 %       get_session_with_id                 - returns a session object with a session ID
@@ -150,6 +151,22 @@ classdef FormattedData < handle
             end
             
             obj.apply_offsets();
+        end
+        
+        
+        
+        function val = list_trial_group_labels(obj)
+        %%list_trial_group_labels Returns a list of the trial group labels
+        %%available for this data
+        %
+        %   TRIAL_GROUP_LABELS = list_trial_group_labels()
+        %   returns a cell array of strings with the available trial group
+        %   labels for this experiment
+        
+            sessions = obj.motion_sessions();
+            trial_group_labels = cellfun(@(x)(x.trial_group_labels), sessions, 'uniformoutput', false);
+            trial_group_labels = [trial_group_labels{:}];
+            val = unique(trial_group_labels);
         end
         
         
