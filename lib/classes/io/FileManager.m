@@ -44,6 +44,7 @@ classdef FileManager < handle
 %       original_trigger_mat        - path to the 'original_trigger.mat' file
 %       trigger_points_removed      - path to the 'trigger_points_removed.mat' file
 %       selected_clusters_txt       - path to the 'selected_clusters.txt' file
+%       selected_mua_clusters_txt   - path to the 'selected_mua_clusters.txt' file
 %       svm_table                   - path to the "stationary/motion" .csv files
 %       offsets_table               - path to the "replay trial offsets" .csv files
 %       tuning_curves               - path to the "tuning curve" .mat files
@@ -61,6 +62,7 @@ classdef FileManager < handle
 %       clusters_janelia_csv        - path to the 'clusters_janelia.csv' file
 %       mua_clusters_janelia_csv    - path to the 'mua_clusters_janelia.csv' file
 %       clusters_janelia_xlsx       - path to the 'clusters_janelia.xlsx' file
+%       mua_clusters_janelia_xlsx   - path to the 'mua_clusters_janelia.xlsx' file
 %       hf_power_figure             - path to the 'hf_power_<shank_id>.pdf' file
 %       tracks_dir                  - path to the directory containing the track/HF power files
 %       driftmap                    - path to the 'driftmap.pdf' file
@@ -719,6 +721,22 @@ classdef FileManager < handle
         
         
         
+        function [fname, exists] = selected_mua_clusters_txt(obj, probe_id)
+        %%selected_mua_clusters_txt Path to the 'selected_mua_clusters.txt'
+        %%file 
+        %
+        %   [FILENAME, EXISTS] = selected_mua_clusters_txt(PROBE_ID)
+        %   for probe recording with ID string, PROBE_ID
+        %
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            dname = obj.imec0_ks2(probe_id);
+            fname = fullfile(dname, 'selected_mua_clusters.txt');
+            exists = isfile(fname);
+        end
+        
+        
+        
         function [fname, exists] = svm_table(obj, probe_id)
         %%svm_table Path to the "stationary/motion" .csv files
         %
@@ -963,6 +981,21 @@ classdef FileManager < handle
         %   EXISTS is true if the file exists and false otherwise.
         
             fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'clusters_janelia.xlsx');
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = mua_clusters_janelia_xlsx(obj, probe_id)
+        %%mua_clusters_janelia_xlsx Path to the 'mua_clusters_janelia.xlsx'
+        %%file 
+        %
+        %   [FILENAME, EXISTS] = mua_clusters_janelia_xlsx(PROBE_ID)
+        %   for probe recording with ID string, PROBE_ID
+        %
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'mua_clusters_janelia.xlsx');
             exists = isfile(fname);
         end
         

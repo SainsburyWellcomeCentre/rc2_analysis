@@ -16,6 +16,7 @@ classdef RC2Preprocess < RC2Format
 %       save_hf_power                   - save an analyzed HighFrequencyPowerProfile object
 %       create_mock_track               - create a 'track.csv' with a similar format to the real eventual track file
 %       create_selected_clusters_txt    - create text file with the clusters selected
+%       create_selected_mua_clusters_txt - create text file with the MUA clusters selected
 %       mua_from_tip_um                 - for MUA get disatnce from probe tip
 %       move_raw_to_local               - move the raw probe data to a local location
 %       cluster_info                    - create CheckClusterQuality object
@@ -255,6 +256,22 @@ classdef RC2Preprocess < RC2Format
             idx = ~(strcmp(clusters_xlsx.mateo, 'b') | strcmp(clusters_xlsx.lee, 'b'));
             selected_clusters = clusters_xlsx.cluster_id(idx);
             obj.save.selected_clusters_txt(probe_id, selected_clusters);
+        end
+        
+        
+        
+        function create_selected_mua_clusters_txt(obj, probe_id)
+        %%create_selected_mua_clusters_txt Create text file with a list of
+        %%the selected MUA clusters 
+        %
+        %   create_selected_mua_clusters_txt(PROBE_ID) takes the .xlsx
+        %   saved after the manual Phy step and extracts the selected MUA
+        %   clusters to save in a text file in the Kilosort directory.
+            
+            clusters_xlsx = obj.load.mua_clusters_janelia_xlsx(probe_id);
+            idx = ~((clusters_xlsx.mateo == 1) | (clusters_xlsx.lee == 1));
+            selected_clusters = clusters_xlsx.cluster_id(idx);
+            obj.save.selected_mua_clusters_txt(probe_id, selected_clusters);
         end
         
         

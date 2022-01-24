@@ -87,6 +87,7 @@ classdef RC2Format < RC2Analysis
             formatted_data.sessions                             = obj.format_sessions(probe_id);
             [probe_t, formatted_data.n_triggers, trigger_t]     = obj.synchronize(probe_id, formatted_data.sessions); %#ok<*ASGLU>
             formatted_data.selected_clusters                    = obj.load.selected_clusters(probe_id);
+            formatted_data.selected_mua_clusters                = obj.load.selected_mua_clusters(probe_id);
             formatted_data.sessions                             = obj.insert_timebase(formatted_data.sessions, probe_t, trigger_t);
             
             % correct for acquisition mistakes

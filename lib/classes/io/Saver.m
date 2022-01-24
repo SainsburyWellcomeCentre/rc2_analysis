@@ -18,6 +18,7 @@ classdef Saver < handle
 %    clusters_janelia_csv       - save the clusters which pass quality metric criteria to .csv
 %    mua_clusters_janelia_csv   - save the clusters which pass quality metric criteria for MUA to .csv
 %    selected_clusters_txt      - save the manually selected clusters to a .txt
+%    selected_mua_clusters_txt  - save the manually selected MUA clusters to a .txt
 %    trigger_mat                - save the sync trigger channel to a separate .mat
 %    original_trigger_mat       - if trigger needs to be updated save original trigger channels to separate .mat
 %    trigger_points_removed     - if updating trigger indicate which samples were removed
@@ -202,6 +203,26 @@ classdef Saver < handle
         %  recording with ID, PROBE_ID.
         
             fname = obj.file_manager.selected_clusters_txt(probe_id);
+            if obj.check_save(fname)
+                fid = fopen(fname, 'w');
+                for i = 1 : length(cluster_ids)
+                    fprintf(fid, '%i\r\n', cluster_ids(i));
+                end
+                fclose(fid);
+            end
+        end
+        
+        
+        
+        function selected_mua_clusters_txt(obj, probe_id, cluster_ids)
+        %%selected_mua_clusters_txt Save the manually selected MUA clusters
+        %%to a .txt 
+        %
+        %  selected_mua_clusters_txt(PROBE_ID, CLUSTER_IDS) save the list
+        %  of selected MUA cluster IDs for probe recording with ID,
+        %  PROBE_ID.
+        
+            fname = obj.file_manager.selected_mua_clusters_txt(probe_id);
             if obj.check_save(fname)
                 fid = fopen(fname, 'w');
                 for i = 1 : length(cluster_ids)
