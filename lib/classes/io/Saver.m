@@ -16,6 +16,7 @@ classdef Saver < handle
 %    track_offset               - save the offset between ephys and anatomy L5 for a shank to .txt
 %    hf_power_parameters        - save the HF power parameters to .mat
 %    clusters_janelia_csv       - save the clusters which pass quality metric criteria to .csv
+%    mua_clusters_janelia_csv   - save the clusters which pass quality metric criteria for MUA to .csv
 %    selected_clusters_txt      - save the manually selected clusters to a .txt
 %    trigger_mat                - save the sync trigger channel to a separate .mat
 %    original_trigger_mat       - if trigger needs to be updated save original trigger channels to separate .mat
@@ -176,6 +177,19 @@ classdef Saver < handle
         %  recording with ID, PROBE_ID.
         
             fname = obj.file_manager.clusters_janelia_csv(probe_id);
+            obj.writetable(fname, tbl);
+        end
+        
+        
+        
+        function mua_clusters_janelia_csv(obj, probe_id, tbl)
+        %%mua_clusters_janelia_csv Save the clusters which pass quality
+        %%metric criteria for MUA to .csv
+        %
+        %  mua_clusters_janelia_csv(PROBE_ID, TABLE) save the data in TABLE
+        %  for probe recording with ID, PROBE_ID.
+        
+            fname = obj.file_manager.mua_clusters_janelia_csv(probe_id);
             obj.writetable(fname, tbl);
         end
         

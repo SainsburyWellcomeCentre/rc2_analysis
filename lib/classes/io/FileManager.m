@@ -59,6 +59,7 @@ classdef FileManager < handle
 %       waveform_metrics_csv        - path to the 'waveform_metrics.csv' file
 %       waveform_metrics_fixed_csv  - path to the 'waveform_metrics_fix.csv' file
 %       clusters_janelia_csv        - path to the 'clusters_janelia.csv' file
+%       mua_clusters_janelia_csv    - path to the 'mua_clusters_janelia.csv' file
 %       clusters_janelia_xlsx       - path to the 'clusters_janelia.xlsx' file
 %       hf_power_figure             - path to the 'hf_power_<shank_id>.pdf' file
 %       tracks_dir                  - path to the directory containing the track/HF power files
@@ -934,6 +935,20 @@ classdef FileManager < handle
         %   EXISTS is true if the file exists and false otherwise.
         
             fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'clusters_janelia.csv');
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = mua_clusters_janelia_csv(obj, probe_id)
+        %%mua_clusters_janelia_csv Path to the 'mua_clusters_janelia.csv' file
+        %
+        %   [FILENAME, EXISTS] = mua_clusters_janelia_csv(PROBE_ID)
+        %   for probe recording with ID string, PROBE_ID
+        %
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'mua_clusters_janelia.csv');
             exists = isfile(fname);
         end
         

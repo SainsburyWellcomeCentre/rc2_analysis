@@ -79,5 +79,30 @@ classdef RestrictClusters < handle
             
             new_tbl = metrics(idx, :);
         end
+        
+        
+        
+        function new_tbl = restrict_mua_metrics_table(obj)
+        %%restrict_mua_metrics_table Loads the metrics.csv and restricts it
+        %%to clusters which satisfy certain quality criteria for our MUA
+        %%clusters
+        %
+        %   TABLE = restrict_mua_metrics_table() restricts the metrics.csv
+        %   to clusters which satisfy quality of criteria. 
+        %       < `amp_cutoff`
+        %       < `max_drift`
+        
+            metrics = obj.ctl.load.metrics_csv(obj.probe_id);
+            
+            % remove heading with Var1
+            if ismember('Var1', metrics.Properties.VariableNames)
+                metrics.Var1 = [];
+            end
+            
+            idx = metrics.amplitude_cutoff < obj.amp_cutoff & ...
+                  metrics.max_drift < obj.max_drift;
+              
+            new_tbl = metrics(idx, :);
+        end
     end
 end

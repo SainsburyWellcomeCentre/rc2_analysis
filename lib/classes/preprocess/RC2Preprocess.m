@@ -7,6 +7,7 @@ classdef RC2Preprocess < RC2Format
 %       preprocess_step_1               - first step of preprocessing
 %       janelia_ecephys_spike_sorting   - run ecephys_spike_sorting
 %       create_check_clusters_csv       - create the .csv with the clusters to manually check
+%       create_check_mua_clusters_csv   - create the .csv with the clusters to manually check for MUA clusters
 %       create_trigger_file             - separate the trigger channel from the the probe .bin file
 %       correct_trigger_file            - manually correct the trigger file if necessary
 %       create_driftmap                 - create and save a driftmap
@@ -79,6 +80,20 @@ classdef RC2Preprocess < RC2Format
             obj.save.clusters_janelia_csv(probe_id, new_tbl);
         end
            
+        
+        
+        function create_check_mua_clusters_csv(obj, probe_id)
+        %%create_check_mua_clusters_csv Create the .csv with the clusters
+        %%to manually check for MUA clusters
+        %
+        %   create_check_mua_clusters_csv(PROBE_ID) creates the .csv with
+        %   the clusters to manually check for probe recording PROBE_ID. 
+        
+            cc = RestrictClusters(obj, probe_id);
+            new_tbl = cc.restrict_mua_metrics_table();
+            obj.save.mua_clusters_janelia_csv(probe_id, new_tbl);
+        end
+        
         
         
         function create_trigger_file(obj, probe_id)
