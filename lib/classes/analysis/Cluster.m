@@ -11,7 +11,7 @@ classdef Cluster < handle
 %       distance_from_probe_tip - distance of the cluster from the probe tip in um
 %       duration        - peak-to-trough duration of the average waveform in ms
 %       overall_firing_rate - average firing rate of cluster across the probe recording
-%       fr              - instance of class FiringRates handling spike rates of cluster across recording
+%       fr              - instance of class FiringRate handling spike rates of cluster across recording
 %       shank_id        - shank ID on which cluster appears
 %
 %   Cluster Methods:
