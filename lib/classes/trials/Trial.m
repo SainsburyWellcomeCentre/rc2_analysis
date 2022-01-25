@@ -70,6 +70,8 @@ classdef Trial < handle
 %       mismatch_onset_t    - time (in probe recording time) on which a mismatch event starts
 %       mismatch_offset_t   - time (in probe recording time) on which a mismatch event begins to ramp down
 %       mismatch_onset_sample - sample point (of the trial) on which a mismatch event starts
+%       mismatch_offset_sample - sample point (of the trial) on which a mismatch event end (gain is ramped_down)
+%       mismatch_saliency   - return the saliency of the mismatch trial
 %       is_mismatch_trial   - boolean, whether this trial is a "mismatch" trial
 %       mismatch_duration   - duration of the mismatch between starting to ramp up and starting to ramp down
 %       to_aligned          - create an object of type AlignedTrial for this trial
@@ -924,8 +926,8 @@ classdef Trial < handle
         %
         %   TIME = mismatch_offset_t()
         
-            mm_offset_idx = find(diff(obj.teensy_gain > 2.5) == -1) + 1;
-            t = obj.probe_t(mm_offset_idx);
+            idx = obj.mismatch_offset_sample();
+            t = obj.probe_t(idx);
         end
         
         
@@ -937,6 +939,44 @@ classdef Trial < handle
         %   SAMPLE = mismatch_onset_sample()
         
             idx = find(diff(obj.teensy_gain > 2.5) == 1) + 1;
+        end
+        
+        
+        
+        function idx = mismatch_offset_sample(obj)
+        %%mismatch_offset_sample Sample point (of the trial) on which a
+        %%mismatch event end (begins ramp down of gain)
+        %
+        %   SAMPLE = mismatch_offset_sample()
+        
+            idx = find(diff(obj.teensy_gain > 2.5) == -1) + 1;
+        end
+        
+        
+        
+        function [delta_speed, idx] = mismatch_saliency(obj)
+        %%mismatch_saliency Saliency of the mismatch trial
+        %
+        %   [DELTA_SPEED, IDX] = mismatch_saliency() returns the maximum of
+        %   the difference between the running speed and the command speed
+        %   to the stage or visual stimulus during a mismatch event.
+        %
+        %   DELTA_SPEED is in cm/s and IDX is the sample point of the trial
+        %   at which the maximum difference occurs.
+        
+            % if not a mismatch trial return NaN
+            if ~obj.is_mismatch_trial()
+                delta_speed = nan;
+                return
+            end
+            
+            onset_sample = obj.mismatch_onset_sample();
+            offset_sample = obj.mismatch_offset_sample();
+            
+            speed_difference = obj.gain_teensy - obj.filtered_teensy_2;
+            
+            [delta_speed, idx] = max(speed_difference(onset_sample:offset_sample));
+            idx = idx + onset_sample - 1;
         end
         
         
