@@ -227,24 +227,17 @@ classdef FiringRate < handle
         %   at FS Hz, with true in the spike location and false elsewhere.
         %   #samples x 1 array is returned in SPIKE_TRAIN, and the
         %   corresponding timebase returned in TIMEBASE (#samples x 1).
-        %
-        %   If spike times occur within the resultion of FS, they *will not be
-        %   distinct*.
             
             % pretend that the trace starts at 0, these are the start and end indices
             % of a vector sampled at fs Hz.
             start_idx               = obj.time2sample(tlim(1), fs);
             end_idx                 = obj.time2sample(tlim(2), fs);
             
-            % get the indices of each spike
-            spike_idx               = obj.time2sample(spike_times, fs) - start_idx + 1;
-            % this is the length of a vector starting at tlim(1), ending at tlim(2)
-            % and sampled at 'fs'
-            len                     = end_idx - start_idx + 1;
+            % get the sample of each spike
+            spike_idx               = obj.time2sample(spike_times, fs);
             
-            % put the spikes in the vector
-            spike_train             = false(len, 1);
-            spike_train(spike_idx)  = 1;
+            % for each sample count the number of spikes within that sample
+            spike_train             = arrayfun(@(x)(sum(spike_idx == x)), start_idx:end_idx);
             
             % the time base of the spike train
             t                       = obj.sample2time(start_idx:end_idx, fs);
