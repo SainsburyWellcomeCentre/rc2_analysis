@@ -383,6 +383,43 @@ classdef FormattedData < handle
         
         
         
+        function selected_clusters = selected_mua_clusters(obj, region_acronym)
+        %%selected_mua_clusters Returns an object array of class Clusters
+        %%with the MUA clusters selected on the manual sorting step
+        %
+        %   CLUSTERS = selected_mua_clusters(REGION_ACRONYM) returns an
+        %   object array of class Clusters in CLUSTERS. REGION_ACRONYM is 
+        %   optional, and if supplied should be a string 'any' (default),
+        %   or a valid brain region acronym.
+        %
+        %   Only a subset of acronyms are allowed, and specified in the
+        %   `region_mapping.csv` file (see `is_region_subregion_of`).
+        %
+        %   If supplied only clusters allocated to that region will be
+        %   returned in the array.
+        %
+        %   See also: selected_clusters, is_region_subregion_of
+        
+            VariableDefault('region_acronym', 'any');
+            
+            idx = ismember([obj.clusters(:).id], obj.data.selected_mua_clusters);
+            
+            if strcmp(region_acronym, 'any')
+                selected_clusters = obj.clusters(idx);
+                return
+            end
+            
+            % regions of all clusters
+            all_regions = {obj.clusters(:).region_str};
+            
+            % index of those clusters which are in the specified region
+            idx = idx(:) & is_region_subregion_of(region_acronym, all_regions);
+            
+            selected_clusters = obj.clusters(idx);
+        end
+        
+        
+        
         function visp_clusters = VISp_clusters(obj, is_selected, spiking_class)
         %%VISp_clusters Returns an object array of class Clusters with the
         %%clusters which are allocated to a VISp layer
