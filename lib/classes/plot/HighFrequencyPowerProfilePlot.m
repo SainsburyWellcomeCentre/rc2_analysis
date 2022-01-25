@@ -560,6 +560,9 @@ classdef HighFrequencyPowerProfilePlot < handle
         function overlay_cluster_histogram(obj, h_ax)
             
             [n, edges] = histcounts(obj.hf_power.clusters_from_tip_um, 0:25:2000);
+            if sum(n) == 0
+                return
+            end
             h = histogram(h_ax, 'bincounts', max(get(h_ax, 'ylim'))*n/max(n)/2, 'binedges', edges);
             set(h, 'facealpha', 0.6);
         end
