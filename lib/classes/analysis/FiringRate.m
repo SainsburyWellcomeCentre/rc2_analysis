@@ -237,7 +237,11 @@ classdef FiringRate < handle
             spike_idx               = obj.time2sample(spike_times, fs);
             
             % for each sample count the number of spikes within that sample
-            spike_train             = arrayfun(@(x)(sum(spike_idx == x)), start_idx:end_idx);
+            spike_train             = zeros(1, end_idx-start_idx+1);
+            u_spike                 = unique(spike_idx);
+            n_times                 = histc(spike_idx, u_spike);
+            u_idx                   = u_spike - start_idx + 1;
+            spike_train(u_idx)     = n_times;
             
             % the time base of the spike train
             t                       = obj.sample2time(start_idx:end_idx, fs);
