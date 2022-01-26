@@ -429,14 +429,19 @@ classdef Loader < handle
         
             fname = obj.file_manager.selected_clusters_txt(probe_id);
             
-            format_spec = '%f%[^\n\r]';
-            fid = fopen(fname, 'r');
-            data = textscan(fid, format_spec, ...
-                            'texttype', 'string', ...
-                            'headerlines', 0, ...
-                            'returnonerror', false);
-            fclose(fid);
-            cluster_ids = data{1};
+            cluster_ids = [];
+            
+            if isfile(fname)
+                
+                format_spec = '%f%[^\n\r]';
+                fid = fopen(fname, 'r');
+                data = textscan(fid, format_spec, ...
+                    'texttype', 'string', ...
+                    'headerlines', 0, ...
+                    'returnonerror', false);
+                fclose(fid);
+                cluster_ids = data{1};
+            end
         end
         
         
