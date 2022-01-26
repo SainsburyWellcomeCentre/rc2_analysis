@@ -492,6 +492,11 @@ classdef HighFrequencyPowerProfile < handle
             from_tip = obj.interp_points_from_tip;
             search_idx = find(from_tip > obj.search_above & from_tip < obj.search_below);
             
+            if isempty(search_idx)
+                l5_from_tip = nan;
+                return
+            end
+            
             avg_power = mean(mean(obj.power_smooth(:, :, obj.batches_to_use), 2), 3);
             
             [~, max_idx] = max(avg_power(search_idx));
