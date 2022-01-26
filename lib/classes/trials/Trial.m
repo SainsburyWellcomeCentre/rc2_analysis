@@ -958,14 +958,14 @@ classdef Trial < handle
         %%mismatch_saliency Saliency of the mismatch trial
         %
         %   [DELTA_SPEED, IDX] = mismatch_saliency() returns the maximum of
-        %   the difference between the running speed and the command speed
-        %   to the stage or visual stimulus during a mismatch event.
+        %   the difference between the running speed and the speed of the
+        %   stage during a mismatch event.
         %
         %   DELTA_SPEED is in cm/s and IDX is the sample point of the trial
         %   at which the maximum difference occurs.
         
             % if not a mismatch trial return NaN
-            if ~obj.is_mismatch_trial()
+            if ~obj.is_mismatch_trial() || ~strcmp(obj.protocol, 'CoupledMismatch')
                 delta_speed = nan;
                 return
             end
@@ -973,7 +973,7 @@ classdef Trial < handle
             onset_sample = obj.mismatch_onset_sample();
             offset_sample = obj.mismatch_offset_sample();
             
-            speed_difference = obj.gain_teensy - obj.filtered_teensy_2;
+            speed_difference = obj.stage - obj.filtered_teensy_2;
             
             [delta_speed, idx] = max(speed_difference(onset_sample:offset_sample));
             idx = idx + onset_sample - 1;

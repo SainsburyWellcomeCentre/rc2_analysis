@@ -136,6 +136,8 @@ classdef FormattedData < handle
                         obj.sessions{ii} = MismatchJul2021Session(obj.data.sessions(ii));
                     case 'mismatch_darkness_oct2021'
                         obj.sessions{ii} = MismatchDarknessOct2021Session(obj.data.sessions(ii));
+                    case 'mismatch_darkness_jan2022'
+                        obj.sessions{ii} = MismatchDarknessJan2022Session(obj.data.sessions(ii));
                     case 'sparse_noise'
                         obj.sessions{ii} = SparseNoiseSession(obj.data.sessions(ii));
                     case 'sf_tf'
