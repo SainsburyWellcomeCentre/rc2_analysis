@@ -60,5 +60,28 @@ classdef MismatchDarknessJan2022Session < RVTSession
                 group_id = 2;
             end
         end
+        
+        
+        
+        function trials = get_trials_with_trial_group_label(obj, varargin)
+        %%get_trials_with_trial_group_label Return cell array of Trial
+        %%objects which are part of a trial group label
+        %
+        %   TRIALS = get_trials_with_trial_group_label(VARARGIN)
+        %   reimplementation of get_trials_with_trial_group_label to remove
+        %   some trials which were not true repeats
+        %
+        %   See also: RVTSession.get_trials_with_trial_group_label
+        
+            trials = get_trials_with_trial_group_label@RVTSession(obj, varargin{:});
+            
+            if strcmp(obj.probe_id, 'CAA-1116247_rec1')
+                idx = cellfun(@(x)(x.trial_id), trials) == 2;
+                if sum(idx) > 0
+                    warning('Trial with ID 2 removed from data');
+                    trials(idx) = [];
+                end
+            end
+        end
     end
 end
