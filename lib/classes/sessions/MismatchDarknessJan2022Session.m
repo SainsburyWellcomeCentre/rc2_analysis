@@ -14,7 +14,7 @@ classdef MismatchDarknessJan2022Session < RVTSession
     properties (Constant = true)
         
         trial_group_ids      = 1 : 2
-        trial_group_labels    = {'T', 'RT_gain_up'};
+        trial_group_labels    = {'T_RT', 'RT_gain_up'};
     end
     
     
