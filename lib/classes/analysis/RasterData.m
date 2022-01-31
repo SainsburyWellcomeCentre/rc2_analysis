@@ -14,8 +14,8 @@ classdef RasterData < handle
 %                             convolution (default, 60Hz)
 %
 %   RasterData Methods:
-%       spike_array         - 
-%       spike_convolutions  - 
+%       spike_array         - return a cell array with spike times around the events
+%       spike_convolutions  - return a matrix with spike FR convolutions around the events
 %
 %   
 %   After creation of the object, the event times should be set by setting
@@ -109,8 +109,8 @@ classdef RasterData < handle
         
         
         function val = spike_convolutions(obj)
-        %%spike_convolutions Return a cell array with spike times around the
-        %%events
+        %%spike_convolutions Return a matrix with spike FR convolutions
+        %%around the events
         %
         %   FIRING_RATE_MTX = spike_convolutions()
         %   for each event convolves the spikes for the `cluster` around the
