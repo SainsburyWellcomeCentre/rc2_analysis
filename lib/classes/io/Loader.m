@@ -8,6 +8,8 @@ classdef Loader < handle
 %  Loader Methods:
 %    rc2_bin                     - load .bin for a RC2 session
 %    camera_csv                  - load .csv containing camera motion energy for a session
+%    camera0_dlc_pupil           - load a .csv containing tracking data of the pupil
+%    camera0_saccades            - load a .csv containing frame numbers of saccade onsets
 %    formatted_data              - load .mat containing formatted data for a probe recording
 %    load_from_formatted_data    - load a specific variable(s) from the formatted data .mat file
 %    experiment_list             - load the .csv "experiment list" file
@@ -108,6 +110,71 @@ classdef Loader < handle
             end
             tbl = obj.readtable(fname);
             motion_energy = tbl.Var1;
+        end
+        
+        
+        
+        function dlc_table = camera0_dlc_pupil(obj, session_id)
+        %%camera0_dlc_pupil Load a .csv containing tracking data of the pupil for
+        %%a session
+        %
+        %   DLC_TABLE = camera0_dlc_pupil(SESSION_ID) 
+        %   loads the .csv containing pupil tracking data from DeepLabCut
+        %   for a session with ID, SESSION_ID.
+        %
+        %   Outputs:
+        %     DLC_TABLE - MATLAB table with the columns of the .csv. The
+        %                 exact format of the table will differ and depend
+        %                 on how DLC was run.
+        %
+        %   If a .csv file can't be found for SESSION_ID, DLC_TABLE is
+        %   empty. 
+        
+            [fname, exist] = obj.file_manager.camera0_dlc_pupil_fast(session_id);
+            if ~exist
+                [fname, exist] = obj.file_manager.camera0_dlc_pupil_slow(session_id);
+            end
+            
+            if ~exist
+                dlc_table = [];
+                return
+            end
+            
+            dlc_table = obj.readtable(fname);
+        end
+        
+        
+        
+        function saccade_table = camera0_saccades(obj, session_id)
+        %%camera0_saccades Load a .csv containing tracking data of the pupil for
+        %%a session
+        %
+        %   SACCADE_TABLE = camera0_saccades(SESSION_ID) 
+        %   loads the .csv containing frames number of which saccades
+        %   occurred (onset) along with the direction of the saccade
+        %   ('nasal' or 'temporal') for a session with ID, SESSION_ID.
+        %
+        %   Outputs:
+        %     SACCADE_TABLE - MATLAB table with the columns of the .csv,
+        %                     which are currently 'saccade_frame', the
+        %                     camera frame on which the saccade occurred
+        %                     and 'direction' which indicates the direction
+        %                     of the saccade.
+        %
+        %   If a .csv file can't be found for SESSION_ID, SACCADE_TABLE is
+        %   empty.
+        
+            [fname, exist] = obj.file_manager.camera0_saccades_fast(session_id);
+            if ~exist
+                [fname, exist] = obj.file_manager.camera0_saccades_slow(session_id);
+            end
+            
+            if ~exist
+                saccade_table = [];
+                return
+            end
+            
+            saccade_table = obj.readtable(fname);
         end
         
         

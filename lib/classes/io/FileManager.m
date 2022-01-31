@@ -16,6 +16,10 @@ classdef FileManager < handle
 %                                 files for motion energy (using slow drive)
 %       camera_csv_fast         - path to the .csv file for motion energy (using fast drive)
 %       camera_csv_slow         - path to the .csv file for motion energy (using slow drive)
+%       camera0_dlc_pupil_fast  - path to the .csv file containing tracking data of the pupil (using fast drive)
+%       camera0_dlc_pupil_slow  - path to the .csv file containing tracking data of the pupil (using slow drive)
+%       camera0_saccades_fast   - path to the .csv file containing frame numbers of saccade onsets (using fast drive)
+%       camera0_saccades_slow   - path to the .csv file containing frame numbers of saccade onsets (using slow drive)
 %       raw_camera_dir          - path to the directory containing the original .avi files
 %       raw_camera_avi          - path to the .avi files
 %       glx_ap_bin_raw          - path to the raw .ap.bin files
@@ -223,6 +227,78 @@ classdef FileManager < handle
         
             dname = obj.camera_csv_dir_slow(session_id);
             fname = fullfile(dname, sprintf('%s.csv', camera_id));
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = camera0_dlc_pupil_fast(obj, session_id)
+        %%camera0_dlc_pupil_fast Path to the .csv file containing tracking
+        %%data of the pupil (using fast drive) 
+        %
+        %   [FILENAME, EXISTS] = camera0_dlc_pupil_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form: 
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\camera0_dlc_pupil.csv
+        
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'camera0_dlc_pupil.csv');
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = camera0_dlc_pupil_slow(obj, session_id)
+        %%camera0_dlc_pupil_slow Path to the .csv file containing tracking
+        %%data of the pupil (using slow drive) 
+        %
+        %   [FILENAME, EXISTS] = camera0_dlc_pupil_slow(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form: 
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\camera0_dlc_pupil.csv
+        
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            dname = obj.camera_csv_dir_slow(session_id);
+            fname = fullfile(dname, 'camera0_dlc_pupil.csv');
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = camera0_saccades_fast(obj, session_id)
+        %%camera0_saccades_fast Path to the .csv file containing frame
+        %%numbers of saccade onsets (using fast drive) 
+        %
+        %   [FILENAME, EXISTS] = camera0_saccades_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form: 
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\camera0_saccades.csv
+        
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'camera0_saccades.csv');
+            exists = isfile(fname);
+        end
+        
+        
+        
+        function [fname, exists] = camera0_saccades_slow(obj, session_id)
+        %%camera0_saccades_slow Path to the .csv file containing frame
+        %%numbers of saccade onsets (using slow drive) 
+        %
+        %   [FILENAME, EXISTS] = camera0_saccades_slow(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form: 
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\camera0_saccades.csv
+        
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            dname = obj.camera_csv_dir_slow(session_id);
+            fname = fullfile(dname, 'camera0_saccades.csv');
             exists = isfile(fname);
         end
         
