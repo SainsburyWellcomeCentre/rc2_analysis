@@ -336,7 +336,7 @@ classdef FormattedData < handle
         %
         %   See also: Cluster
         
-            idx = [obj.clusters(:).id] == cluster_id;
+            idx = ismember([obj.clusters(:).id], cluster_id);
             cluster = obj.clusters(idx);
         end
         
