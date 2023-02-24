@@ -239,7 +239,7 @@ The following information is saved:
 
 The above code can be run without any anatomy information.
 However, if the anatomy from `brainreg-segment` is ready it should be placed in the tracks directory `<kilosort_dir>\tracks`
-in a file with name `track_<shank_id>.csv`.
+in a file with name `track_<shank_id>.csv`. NOTE: At this point, the anatomy data acquired in `brainreg-segment`has to be taken according to the following rules: 1) Always start to trace the probe track from the pia; 2) Make sure the number of sampling points chosen to fit the traced probe track corresponds to 1um - e.g. if the probe was introduced 1750um deep into the brain, make sure to choose 1750 sampling points when fitting the traced probe track.
 The above steps can be run again, when the anatomy information is present, and the region boundaries will be plotted and the offset
 between anatomical layer 5 and electrophysiological layer 5 will be computed and saved to a file of the form `<kilosort_dir>\tracks\offset_<shank_id>.txt`.
 
