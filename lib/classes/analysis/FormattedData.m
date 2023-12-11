@@ -1256,6 +1256,10 @@ classdef FormattedData < handle
                 % 'trial_types'
                 trials = obj.get_trials_with_trial_group_label(trial_types{ii});
                 
+                if isempty(trials)
+                    continue
+                end
+                
                 % if the trials are replays, align them to the original
                 for jj = 1 : length(trials)
                     aligned_trials{jj} = trials{jj}.to_aligned;

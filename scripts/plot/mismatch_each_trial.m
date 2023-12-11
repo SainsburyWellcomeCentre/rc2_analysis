@@ -58,6 +58,14 @@ limits                  = [-1, 1];
 n_traces_per_fig        = 5;
 
 
+% experiment_groups       = {'mismatch_nov20'};
+% trial_group_labels      = {'RVT_gain_down'};
+% save_figs               = true;
+% overwrite               = true;
+% figure_dir              = {'mismatch_trials', 'mismatch_nov20'};
+% limits                  = [-1, 1];
+% n_traces_per_fig        = 5;
+
 %%
 ctl                     = RC2Analysis();
 probe_ids               = ctl.get_probe_ids(experiment_groups{:});

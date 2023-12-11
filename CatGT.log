@@ -1,0 +1,3 @@
+[Thd 19240 CPU 2 5/20/22 19:49:53.555] Cmdline: CatGT -dir=D:/mvelez/mateoData_probe/janelia_pipeline/CAA-1116245 -run=CAA-1116245_rec1 -g=0 -t=0 -prb_fld -prb=0 -ap -aphipass=300 -aplopass=9000 -gbldmx -gfix=0,0.1,0.02 -SY=0,384,0,0 -dest=D:/mvelez/mateoData_probe/janelia_pipeline/CAA-1116245/output -out_prb_fld
+[Thd 19240 CPU 2 5/20/22 19:55:20.457] Run CAA-1116245_rec1_g0 Gfix prb 0 edits/sec 0.118
+[Thd 19240 CPU 2 5/20/22 19:55:20.488] 

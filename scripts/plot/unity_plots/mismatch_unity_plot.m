@@ -48,12 +48,14 @@
 
 
 %%
+% experiment_groups       = {'darkness','mismatch_darkness_oct21'};
+% trial_group_labels      = {{'T_bank', 'T_RT', 'T_R', 'T'}};
 experiment_groups       = {'mismatch_nov20'};
-trial_group_labels      = {'RVT_gain_up', 'RVT_gain_down'};
-marker_style            = {'o', 'o'};
+trial_group_labels      = {'RVT_gain_down'};
+marker_style            = {'o'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'mismatch_unity_plot', 'mismatch_nov20'};
+figure_dir              = {'mismatch_unity_plot'};
 
 
 %%

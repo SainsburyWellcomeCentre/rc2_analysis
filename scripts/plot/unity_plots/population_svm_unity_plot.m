@@ -2,17 +2,23 @@
 
 
 % experiment_groups       = {'visual_flow'};
-% trial_group_labels      = {'RVT', 'RV', 'VT_RVT', 'VT_RV', 'V_RVT', 'V_RV'};
-% marker_style            = {'o', 'o', 'o', 'o', 'o', 'o'};
+% trial_group_labels      = {'RVT', 'RV', {'VT_RVT', 'VT_RV'}, {'V_RVT', 'V_RV'}};
+% marker_style            = {'o', 'o', 'o', 'o'};
 % save_figs               = true;
 % overwrite               = true;
 % figure_dir              = {'unity_plots', 'visual_flow', 'stationary_vs_motion', 'population'};
-% mi_figure_dir           = {'mi_vs_depth', 'visual_flow', 'stationary_vs_motion', 'population'};
 
+
+% experiment_groups       = {'visual_flow','mismatch_nov20','mismatch_jul21'};
+% trial_group_labels      = {{'RVT','RVT_gain_up'}, {'RV','RV_gain_up'}};
+% marker_style            = {'o', 'o'};
+% save_figs               = true;
+% overwrite               = true;
+% figure_dir              = {'unity_plots', 'visual_flow', 'stationary_vs_motion', 'population'};
 
 %%
-experiment_groups       = {'darkness'};
-trial_group_labels      = {'RT', 'R', {'T_bank', 'T_RT', 'T_R'}};
+experiment_groups       = {'darkness','mismatch_darkness_oct21'};
+trial_group_labels      = {{'RT', 'RT_gain_up'}, 'R', {'T_bank', 'T_RT', 'T_R', 'T'}};
 marker_style            = {'o', 'o', 'o'};
 save_figs               = true;
 overwrite               = true;
@@ -21,13 +27,12 @@ figure_dir              = {'unity_plots', 'darkness', 'stationary_vs_motion', 'p
 
 
 %%
-% experiment_groups       = {'mismatch_jul21'};
+% experiment_groups       = {'mismatch_nov20','mismatch_jul21'};
 % trial_group_labels      = {'RVT_gain_up', 'RV_gain_up', 'R', 'T'};
 % marker_style            = {'o', 'o', 'o', 'o'};
 % save_figs               = true;
 % overwrite               = true;
 % figure_dir              = {'unity_plots', 'mismatch_jul21', 'stationary_vs_motion', 'population'};
-% mi_figure_dir           = {'mi_vs_depth', 'mismatch_jul21', 'stationary_vs_motion', 'population'};
 
 
 

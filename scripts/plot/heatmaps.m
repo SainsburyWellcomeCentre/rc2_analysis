@@ -127,7 +127,7 @@
 experiment_groups       = {'visual_flow', 'mismatch_nov20', 'mismatch_jul21'};
 trial_group_labels      = {{'RVT', 'RVT_gain_up'}, {'RV', 'RV_gain_up'}};
 heatmap_trigger         = {'motion', 'motion'};
-limits                  = [-1, 1];
+limits                  = [-1, 4];
 common_fs               = 60;
 save_figs               = true;
 overwrite               = true;
