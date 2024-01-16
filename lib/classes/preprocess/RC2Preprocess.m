@@ -253,7 +253,7 @@ classdef RC2Preprocess < RC2Format
         %   save in a text file in the Kilosort directory.
             
             clusters_xlsx = obj.load.clusters_janelia_xlsx(probe_id);
-            idx = ~(strcmp(clusters_xlsx.mateo, 'b') | strcmp(clusters_xlsx.lee, 'b'));
+            idx = ~(strcmp(clusters_xlsx.mateo, 'b') & strcmp(clusters_xlsx.lee, 'b'));
             selected_clusters = clusters_xlsx.cluster_id(idx);
             obj.save.selected_clusters_txt(probe_id, selected_clusters);
         end
