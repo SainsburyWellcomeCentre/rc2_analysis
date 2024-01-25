@@ -49,7 +49,7 @@ classdef TrialStructure < handle
         solenoid_scale = 5
         trig_shift = 3
         aw_scale = 22.5
-        n_axes = 5
+        n_axes = 6
     end
     
     
@@ -91,10 +91,16 @@ classdef TrialStructure < handle
         
         
         
-        function plot_camera(obj, h_ax)
+        function plot_camera0(obj, h_ax)
         %%plot_camera Plots the motion energy from the camera
+            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.camera0/max(obj.trial.camera0), 'Camera 0 (a.u.)');            
+
+        end
         
-            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.camera1/max(obj.trial.camera1), 'Camera (a.u.)');
+        
+        function plot_camera1(obj, h_ax)
+        %%plot_camera Plots the motion energy from the camera
+            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.camera1/max(obj.trial.camera1), 'Camera 1 (a.u.)');
             
 %             lims = prctile(obj.trial.camera1, [0, 30]);
 %             m = median(obj.trial.camera1(obj.trial.camera1 > lims(1) & obj.trial.camera1 < lims(2)));
@@ -103,7 +109,6 @@ classdef TrialStructure < handle
 %             ylabel(h_ax, 'Camera (a.u.)')
 %             obj.x_limits(h_ax);
         end
-        
         
         
         function plot_general_trace(obj, h_ax, trace, label)
@@ -194,8 +199,10 @@ classdef TrialStructure < handle
                     obj.plot_visual(obj.h_ax{n});
                 case 'stage'
                     obj.plot_stage(obj.h_ax{n});
-                case 'camera'
-                    obj.plot_camera(obj.h_ax{n});
+                case 'camera1'
+                    obj.plot_camera1(obj.h_ax{n});
+                case 'camera0'
+                    obj.plot_camera0(obj.h_ax{n});
                 case 'fr'
                     obj.plot_fr(obj.h_ax{n});
             end
@@ -235,8 +242,9 @@ classdef TrialStructure < handle
             obj.plot_on_axes(1, 'treadmill');
             obj.plot_on_axes(2, 'visual');
             obj.plot_on_axes(3, 'stage');
-            obj.plot_on_axes(4, 'camera');
-            obj.plot_on_axes(5, 'fr');
+            obj.plot_on_axes(4, 'camera1');
+            obj.plot_on_axes(5, 'camera0');
+            obj.plot_on_axes(6, 'fr');
             
             obj.add_text(obj.h_ax{1});
             xlabel(obj.h_ax{5}, 'Time (s)');

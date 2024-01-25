@@ -369,6 +369,25 @@ classdef AlignedTrial < handle
             end
         end
         
+        function val = camera0(obj, idx)
+        %%camera1 Return the motion energy for camera1 channel for the aligned trial
+        %
+        %   MOTION_ENERGY = camera1(INDEX)
+        %   If INDEX is supplied it should be a boolean vector of length
+        %   `n_points` indicating which part of the trace to return. If not
+        %   supplied or empty, the entire trace is returned.
+        %
+        %   See also: Trial
+        
+            VariableDefault('idx', []);
+            
+            if ~isempty(obj.trial.camera0)
+                val = obj.trial.camera0(obj.offset + (1:obj.n_points));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
+        end
         
         
         function val = solenoid(obj, idx)
