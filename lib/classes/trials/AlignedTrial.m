@@ -388,6 +388,19 @@ classdef AlignedTrial < handle
                 val = [];
             end
         end
+
+        function val = pupil_diameter(obj, idx)
+        %%TODO
+        
+            VariableDefault('idx', []);
+            
+            if ~isempty(obj.trial.pupil_diameter)
+                val = obj.trial.pupil_diameter(obj.offset + (1:obj.n_points));
+                if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
+        end
         
         
         function val = solenoid(obj, idx)

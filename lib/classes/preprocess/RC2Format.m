@@ -397,6 +397,8 @@ classdef RC2Format < RC2Analysis
                 session.(camera_ids{ii}) = obj.load.camera_csv(session_id, camera_ids{ii});
             end
             
+            session.pupil_diameter = obj.load.pupil_diameter(session_id);
+            
             session.trials = obj.format_trials(session);
             session.n_trials = length(session.trials);
             

@@ -56,6 +56,7 @@ classdef RC2Session < handle
         teensy_gain
         camera0
         camera1
+        pupil_diameter
         
         rc2_t
         probe_t
@@ -66,6 +67,7 @@ classdef RC2Session < handle
         camera0_
         camera1_
         camera_t
+        pupil_diameter_
     end
     
     
@@ -97,6 +99,7 @@ classdef RC2Session < handle
                           'filtered_teensy_2', ...
                           'camera0', ...
                           'camera1', ...
+                          'pupil_diameter', ...
                           'rc2_t', ...
                           'probe_t', ...
                           'camera_t'};
@@ -116,8 +119,10 @@ classdef RC2Session < handle
             if ~isempty(obj.camera0)
                 obj.camera0_ = obj.camera0;
                 obj.camera1_ = obj.camera1;
+                obj.pupil_diameter_ = obj.pupil_diameter;
                 obj.camera0 = obj.camera0_interp();
                 obj.camera1 = obj.camera1_interp();
+                obj.pupil_diameter = obj.pupil_diameter_interp();
             end
         end
         
@@ -152,6 +157,15 @@ classdef RC2Session < handle
             val = [];
             if ~isempty(obj.camera1)
                 val = interp1(obj.camera_t, obj.camera1, obj.probe_t);
+            end
+        end
+        
+        function val = pupil_diameter_interp(obj)
+        %%TODO
+        
+            val = [];
+            if ~isempty(obj.pupil_diameter)
+                val = interp1(obj.camera_t, obj.pupil_diameter, obj.probe_t);
             end
         end
     end

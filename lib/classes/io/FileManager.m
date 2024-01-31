@@ -249,6 +249,16 @@ classdef FileManager < handle
         end
         
         
+        function [fname, exists] = pupil_diameter_slow(obj, session_id)
+        %%TODO
+        
+            dname = obj.camera_csv_dir_slow(session_id);
+            fname = fullfile(dname, 'pupil_diameter.csv');
+            exists = isfile(fname);
+        end
+        
+        
+        
         
         function [fname, exists] = camera0_dlc_pupil_slow(obj, session_id)
         %%camera0_dlc_pupil_slow Path to the .csv file containing tracking

@@ -137,12 +137,14 @@ classdef Trial < handle
         teensy_gain
         camera0
         camera1
+        pupil_diameter
     end
     
     properties (Dependent = true, Hidden = true)
         
         camera0_
         camera1_
+        pupil_diameter_
         camera_t
         camera_idx
     end
@@ -265,12 +267,20 @@ classdef Trial < handle
         end
         
         
-        
         function val = get.camera1_(obj)
         %%motion energy for camera1, camera timebase
             val = [];
             if ~isempty(obj.session.camera1_)
                val = obj.session.camera1_(obj.camera_idx);
+            end
+        end
+
+
+        function val = get.pupil_diameter_(obj)
+        %%TODO
+            val = [];
+            if ~isempty(obj.session.pupil_diameter_)
+                val = obj.session.pupil_diameter_;
             end
         end
         
@@ -283,8 +293,7 @@ classdef Trial < handle
             end
         end
         
-        
-        
+
         function val = get.camera1(obj)
         %%motion energy for camera1, interpolated to session
             val = [];
@@ -293,6 +302,14 @@ classdef Trial < handle
             end
         end
         
+        
+        function val = get.pupil_diameter(obj)
+        %%TODO
+            val = [];
+            if ~isempty(obj.session.pupil_diameter)
+                val = obj.session.pupil_diameter(obj.start_idx:obj.end_idx);
+            end
+        end
         
         
         function val = get.teensy_gain(obj)

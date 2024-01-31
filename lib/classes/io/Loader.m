@@ -144,6 +144,22 @@ classdef Loader < handle
         end
         
         
+        function diameter = pupil_diameter(obj, session_id)
+        %TODO
+            [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
+            if ~exist
+                [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
+            end
+            
+            if ~exist
+                diameter = [];
+                return
+            end
+            
+            dlc_table = obj.readtable(fname);
+            diameter = dlc_table.Var1;
+        end
+        
         
         function saccade_table = camera0_saccades(obj, session_id)
         %%camera0_saccades Load a .csv containing tracking data of the pupil for

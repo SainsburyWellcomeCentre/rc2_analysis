@@ -49,7 +49,7 @@ classdef TrialStructure < handle
         solenoid_scale = 5
         trig_shift = 3
         aw_scale = 22.5
-        n_axes = 6
+        n_axes = 7
     end
     
     
@@ -89,7 +89,13 @@ classdef TrialStructure < handle
             obj.plot_general_trace(h_ax, obj.trial.stage, 'T (cm/s)');
         end
         
-        
+
+        function plot_pupil_diameter(obj, h_ax)
+        %%TODO
+            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.pupil_diameter/max(obj.trial.pupil_diameter), 'Pupil diameter (pixels)');            
+
+        end
+
         
         function plot_camera0(obj, h_ax)
         %%plot_camera Plots the motion energy from the camera
@@ -203,6 +209,8 @@ classdef TrialStructure < handle
                     obj.plot_camera1(obj.h_ax{n});
                 case 'camera0'
                     obj.plot_camera0(obj.h_ax{n});
+                case 'pupil_diameter'
+                    obj.plot_pupil_diameter(obj.h_ax{n});
                 case 'fr'
                     obj.plot_fr(obj.h_ax{n});
             end
@@ -244,7 +252,8 @@ classdef TrialStructure < handle
             obj.plot_on_axes(3, 'stage');
             obj.plot_on_axes(4, 'camera1');
             obj.plot_on_axes(5, 'camera0');
-            obj.plot_on_axes(6, 'fr');
+            obj.plot_on_axes(6, 'pupil_diameter');
+            obj.plot_on_axes(7, 'fr');
             
             obj.add_text(obj.h_ax{1});
             xlabel(obj.h_ax{5}, 'Time (s)');
