@@ -173,8 +173,9 @@ b. Open results in Phy (e.g. at Windows Command Prompt)
 c. Plot cluster information in MATLAB (e.g. at MATLAB prompt):
 ```
 >> cluster_info = ctl.cluster_info(<probe_id>);
->> cluster_info.plot(<cluster_id>);
+>> cluster_info.plot(<cluster_id>); 
 ```
+<cluster_id> is an integer, not a string.
     
 Historically, we have created a new file `clusters_janelia.xlsx`, and added our judgements as separate columns (with headers 'mateo' and 'lee').
 After going through the clusters labelling each cluster with:  g - green (clearly good), w - white (passable), b - brown (discard)
