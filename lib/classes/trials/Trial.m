@@ -483,15 +483,19 @@ classdef Trial < handle
         %   returns the Trial object associated with the original trial
         
             trial_array = [obj.session.trials{:}];
-            config_array = [trial_array(:).config];
-            if isempty(config_array)
+            if isempty(trial_array)
                 trial = [];
             else
-                idx = strcmp({config_array(:).log_fname}, obj.config.wave_fname);
-                if sum(idx) == 1
-                    trial = obj.session.trials{idx};
-                else
+                config_array = [trial_array(:).config];
+                if isempty(config_array)
                     trial = [];
+                else
+                    idx = strcmp({config_array(:).log_fname}, obj.config.wave_fname);
+                    if sum(idx) == 1
+                        trial = obj.session.trials{idx};
+                    else
+                        trial = [];
+                    end
                 end
             end
         end

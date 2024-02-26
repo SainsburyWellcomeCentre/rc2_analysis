@@ -119,3 +119,27 @@ if strcmp(sessions(1).session_id, 'CAA-1112872_rec1_001')
     end
 end
 
+
+
+if strcmp(sessions(1).session_id, 'CAA-1121416_rec1_001') & strcmp(sessions(2).session_id, 'CAA-1121416_rec2_001')
+    fname = 'Y:\mvelez\mateoData_rc2\CAA-1121416\CAA-1121416\passive_protocol_sequence.mat';
+    passive_protocol_sequence = load(fname);
+    for ii = 1 : sessions(1).n_trials   
+         sessions(1).trials(ii).config.trial_sequence = passive_protocol_sequence.trial_order(ii);
+    end
+    sessions(2).trials = sessions(2).trials(1: sessions(2).n_trials - 1);
+    sessions(2).n_trials = length(sessions(1).trials);
+    sessions(2).config.prot = sessions(2).config.prot(1: sessions(2).n_trials - 1);
+    for  ii = 1 : sessions(2).n_trials   
+         sessions(2).trials(ii).config.trial_sequence = passive_protocol_sequence.trial_order(ii);
+    end
+    
+end
+
+
+
+
+
+
+
+
