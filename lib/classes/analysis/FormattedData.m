@@ -194,7 +194,7 @@ classdef FormattedData < handle
         %   See also: create_tuning_curves, RC2Analysis.create_tuning_curves
         
             tbl = obj.ctl.load_tuning_curves(obj.probe_id);
-            group_idx = find(ismember(tbl.trial_groups, trial_group));
+            group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
             tuning_curves = tbl.tuning_curves{group_idx};
             cluster_idx = [tuning_curves(:).cluster_id] == cluster_id;
             tuning_curve = tuning_curves(cluster_idx);
@@ -1256,11 +1256,7 @@ classdef FormattedData < handle
                 % get all trials of type specified in the cell array
                 % 'trial_types'
                 trials = obj.get_trials_with_trial_group_label(trial_types{ii});
-                
-                if isempty(trials)
-                    continue
-                end
-                
+             
                 % if the trials are replays, align them to the original
                 for jj = 1 : length(trials)
                     aligned_trials{jj} = trials{jj}.to_aligned;
