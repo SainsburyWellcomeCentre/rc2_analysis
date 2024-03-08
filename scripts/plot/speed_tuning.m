@@ -59,8 +59,8 @@
 
 
 %%
-experiment_groups       = {'darkness'};
-trial_group_labels      = {'RT', 'R', {'T_bank', 'T_RT', 'T_R'}};
+experiment_groups       = {'darkness', 'mismatch_darkness_oct21'};
+trial_group_labels      = {{'T_bank', 'T_RT', 'T_R'}, 'T'};
 save_figs               = true;
 overwrite               = true;
 figure_dir              = {'tuning_curves', 'darkness'};
@@ -69,103 +69,101 @@ figure_dir              = {'tuning_curves', 'darkness'};
 
 %%
 ctl                     = RC2Analysis();
-probe_ids               = ctl.get_probe_ids(experiment_groups{:});
 ctl.setup_figures(figure_dir, save_figs);
 
-tuning          = {};
-p_svm           = [];
-direction       = [];
-probe_id        = {};
-cluster_id      = [];
-cluster_region  = {};
 
-for ii = 1 : length(probe_ids)
+for ll = 1 : length(trial_group_labels)
+    tuning          = {};
+    p_svm           = [];
+    direction       = [];
+    probe_id        = {};
+    cluster_id      = [];
+    cluster_region  = {};
     
-    data        = ctl.load_formatted_data(probe_ids{ii});
-    clusters    = data.VISp_clusters();
-    
-    for jj = 1 : length(clusters)
-        
-        for kk = 1 : length(trial_group_labels)
-            
-            [~, p_svm(ii, jj, kk), direction(ii, jj, kk)] = data.is_stationary_vs_motion_significant(clusters(jj).id, trial_group_labels{kk});
-            tuning{ii}{jj}{kk} = data.load_tuning_curves(clusters(jj).id, trial_group_labels{kk});
+    probe_ids           = ctl.get_probe_ids(experiment_groups{ll});
+
+    for ii = 1 : length(probe_ids)
+
+        data        = ctl.load_formatted_data(probe_ids{ii});
+        clusters    = data.VISp_clusters();
+
+        for jj = 1 : length(clusters)
+
+
+          [~, p_svm(ii, jj), direction(ii, jj)] = data.is_stationary_vs_motion_significant(clusters(jj).id, trial_group_labels{ll});
+          tuning{ii}{jj} = data.load_tuning_curves(clusters(jj).id, trial_group_labels{ll});
+
+            % extra info to plot on the figure
+            probe_id{ii, jj} = probe_ids{ii};
+            cluster_id(ii, jj) = clusters(jj).id;
+            cluster_region{ii, jj} = clusters(jj).region_str;
         end
-        
-        % extra info to plot on the figure
-        probe_id{ii, jj} = probe_ids{ii};
-        cluster_id(ii, jj) = clusters(jj).id;
-        cluster_region{ii, jj} = clusters(jj).region_str;
     end
-end
+
         
 
-%% plot
+    %% plot
 
-for ii = 1 : length(probe_ids)  
-    
-    for jj = 1 : length(tuning{ii})
-        
-        h_fig                   = ctl.figs.a4figure();
-        plot_array              = PlotArray(3, 2);
-        
-        tuning_curve_plot       = {};
-        shuff_histogram         = {};
-        
-        for kk = 1 : length(trial_group_labels)
-            
-            pos         = plot_array.get_position(2*kk-1);
+    for ii = 1 : length(probe_ids)  
+
+        for jj = 1 : length(tuning{ii})
+
+            h_fig                   = ctl.figs.a4figure();
+            plot_array              = PlotArray(3, 2);
+
+            tuning_curve_plot       = {};
+            shuff_histogram         = {};
+
+
+            pos         = plot_array.get_position(2-1);
             h_ax        = axes('units', 'centimeters', 'position', pos);
-            
-            tuning_curve_plot{kk} = TuningCurvePlot(h_ax);
-            
+
+            tuning_curve_plot = TuningCurvePlot(h_ax);
+
             multicol = lines(2);
-            
-            if p_svm(ii, jj, kk) < 0.05 && direction(ii, jj, kk) == 1
+
+            if p_svm(ii, jj) < 0.05 && direction(ii, jj) == 1
                 % tonic increase
                 main_col = [0.85, 0.32, 0.1];
-            elseif p_svm(ii, jj, kk) < 0.05 && direction(ii, jj, kk) == -1
+            elseif p_svm(ii, jj) < 0.05 && direction(ii, jj) == -1
                 % tonic decrease
                 main_col = [0, 0.45, 0.75];
             else
                 main_col = 'k';
             end
-            
-            tuning_curve_plot{kk}.main_col = main_col;
-            tuning_curve_plot{kk}.plot(tuning{ii}{jj}{kk});
-            title(gca, trial_group_labels{kk}, 'interpreter', 'none');
-            
-            if kk == length(trial_group_labels)
-                tuning_curve_plot{kk}.xlabel('Speed (cm/s)');
-                tuning_curve_plot{kk}.ylabel('Firing rate (Hz)');
-            end
-            
-            pos         = plot_array.get_position(2*kk);
+
+            tuning_curve_plot.main_col = main_col;
+            tuning_curve_plot.plot(tuning{ii}{jj});
+            title(gca, trial_group_labels{ll}, 'interpreter', 'none');
+
+            tuning_curve_plot.xlabel('Speed (cm/s)');
+            tuning_curve_plot.ylabel('Firing rate (Hz)');
+
+            pos         = plot_array.get_position(2);
             h_ax2        = axes('units', 'centimeters', 'position', pos);
-            
-            shuff_histogram{kk} = TuningCurveHistogram(h_ax2);
-            shuff_histogram{kk}.plot(tuning{ii}{jj}{kk});
+
+            shuff_histogram = TuningCurveHistogram(h_ax2);
+            shuff_histogram.plot(tuning{ii}{jj});
+
+            mx              = tuning_curve_plot.xmin;
+            Mx              = tuning_curve_plot.xmax;
+            My              = tuning_curve_plot.ymax;
+
+            tuning_curve_plot.xlim([mx, Mx]);
+            tuning_curve_plot.ylim([0, My]);
+
+            FigureTitle(h_fig, sprintf('%s, Cluster %i, %s', ...
+                    probe_id{ii, jj}, ...
+                    cluster_id(ii, jj), ...
+                    cluster_region{ii, jj}));
+
+            ctl.figs.save_fig_to_join();
         end
-        
-        mx              = min(cellfun(@(x)(x.xmin), tuning_curve_plot));
-        Mx              = max(cellfun(@(x)(x.xmax), tuning_curve_plot));
-        My              = max(cellfun(@(x)(x.ymax), tuning_curve_plot));
-        
-        for kk = 1 : length(tuning_curve_plot)
-            tuning_curve_plot{kk}.xlim([mx, Mx]);
-            tuning_curve_plot{kk}.ylim([0, My]);
-        end
-        
-        FigureTitle(h_fig, sprintf('%s, Cluster %i, %s', ...
-                probe_id{ii, jj}, ...
-                cluster_id(ii, jj), ...
-                cluster_region{ii, jj}));
-        
-        ctl.figs.save_fig_to_join();
+
+        fname = sprintf('%s.pdf', probe_ids{ii});
+        ctl.figs.join_figs(fname, overwrite);
+        ctl.figs.clear_figs();
     end
-    
-    fname = sprintf('%s.pdf', probe_ids{ii});
-    ctl.figs.join_figs(fname, overwrite);
-    ctl.figs.clear_figs();
+
 end
 
