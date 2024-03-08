@@ -92,7 +92,7 @@ classdef TrialStructure < handle
 
         function plot_pupil_diameter(obj, h_ax)
         %%TODO
-            obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.pupil_diameter/max(obj.trial.pupil_diameter), 'Pupil diameter (pixels)');            
+            obj.plot_general_trace(h_ax, obj.trial.pupil_diameter, 'Pupil diameter (pixels)');            
 
         end
 
