@@ -1,3 +1,5 @@
+close all;
+
 experiment_groups           = 'passive_same_luminance';
 trial_types                 = {'VT', 'V', 'T_Vstatic'};
 
@@ -107,3 +109,44 @@ for probe_i = 1 : length(probe_ids)
 
    end
 end
+
+figure(2);
+
+hold on;
+modulation_index_rec1 = [];
+modulation_index_rec2 = [];
+
+for clust_i = 1 : 30
+    modulation_index_rec1(end+1) = (motion_fr_median_rec1(clust_i) - stationary_fr_median_rec1(clust_i))...
+        / (motion_fr_median_rec1(clust_i) + stationary_fr_median_rec1(clust_i));
+   
+    modulation_index_rec2(end+1) = (motion_fr_median_rec2(clust_i) - stationary_fr_median_rec2(clust_i))...
+        / (motion_fr_median_rec2(clust_i) + stationary_fr_median_rec2(clust_i));
+    
+    if direction_rec1(clust_i) ~= 0
+        if direction_rec2(clust_i) == 1
+            scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'red', 'o');
+        elseif direction_rec2(clust_i) == -1
+            scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'blue', 'o');
+        else 
+            scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'black', 'o');
+        end
+
+        if direction_rec1(clust_i) == 1
+            scatter(1, modulation_index_rec1(clust_i), scatterball_size(3), 'red', 'o');  
+        elseif direction_rec1(clust_i) == -1
+            scatter(1, modulation_index_rec1(clust_i), scatterball_size(3), 'blue', 'o');
+        end
+        plot([1 2], [modulation_index_rec1(clust_i), modulation_index_rec2(clust_i)], 'black');
+    end
+end
+xlim([0 3]);
+ylim([-1.2 1.2]);
+
+
+only_responsive_rec1 = direction_rec1 ~= 0;
+avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_rec1))
+std_mi_rec1 = nanstd(modulation_index_rec1(only_responsive_rec1))
+avg_mi_rec2  = nanmean(modulation_index_rec2(only_responsive_rec1))
+std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_rec1))
+[p] = signrank(modulation_index_rec1(only_responsive_rec1), modulation_index_rec2(only_responsive_rec1))
