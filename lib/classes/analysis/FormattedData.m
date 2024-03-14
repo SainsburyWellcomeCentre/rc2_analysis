@@ -200,6 +200,15 @@ classdef FormattedData < handle
             tuning_curve = tuning_curves(cluster_idx);
         end
         
+        function tuning_curve = load_tuning_curves_acceleration(obj, cluster_id, trial_group)
+        %%TODO
+        
+            tbl = obj.ctl.load_tuning_curves_acceleration(obj.probe_id);
+            group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
+            tuning_curves = tbl.tuning_curves{group_idx};
+            cluster_idx = [tuning_curves(:).cluster_id] == cluster_id;
+            tuning_curve = tuning_curves(cluster_idx);
+        end
         
         
         function apply_offsets(obj)
@@ -1273,7 +1282,34 @@ classdef FormattedData < handle
             end
         end
         
+        function tbl = create_tuning_curves_acceleration(obj, trial_types)
+        %%TODO
         
+            tbl = cell(1, length(trial_types));
+            
+            for ii = 1 : length(trial_types)
+                
+                tt = TuningTableAcc(obj.probe_id);
+                
+                % get all trials of type specified in the cell array
+                % 'trial_types'
+                trials = obj.get_trials_with_trial_group_label(trial_types{ii});
+             
+                % if the trials are replays, align them to the original
+                for jj = 1 : length(trials)
+                    aligned_trials{jj} = trials{jj}.to_aligned;
+                end
+                
+                % add these trials to the TuningTable object
+                tt.add_trials(aligned_trials, trial_types{ii});
+                
+                % all selected clusters add them to the tuning table
+                clusters = obj.selected_clusters();
+                for jj = 1 : length(clusters)
+                    tbl{ii}(jj) = tt.tuning_curve(clusters(jj));
+                end
+            end
+        end
         
         function [traces, t] = get_traces_around_times(obj, trials, times, limits, fs)
         %%get_traces_around_times Return an array of velocity

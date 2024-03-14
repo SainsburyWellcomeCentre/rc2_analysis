@@ -296,6 +296,12 @@ classdef Loader < handle
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         
+        function tuning_curves = tuning_curves_acceleration(obj, probe_id)
+        %%TODO
+        
+            fname = obj.file_manager.tuning_curves_acceleration(probe_id);
+            tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
+        end
         
         
         function track = track_csv(obj, probe_id, shank_id)

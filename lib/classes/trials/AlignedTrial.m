@@ -206,6 +206,23 @@ classdef AlignedTrial < handle
         end
         
         
+        function val = acceleration(obj, idx)
+        %%velocity Return the speed for the aligned trial
+        %
+        %   SPEED = velocity(INDEX)
+        %   If INDEX is supplied it should be a boolean vector of length
+        %   `n_points` indicating which part of the trace to return. If not
+        %   supplied or empty, the entire trace is returned.
+        %
+        %   See also: Trial
+        
+            VariableDefault('idx', []);
+            
+            val = obj.trial.acceleration(obj.offset + (1:obj.n_points));
+            
+            if ~isempty(idx), val = val(idx); end
+        end
+        
         
         function val = treadmill_speed(obj, idx)
         %%treadmill_speed Return the treadmill speed for the aligned trial

@@ -863,6 +863,13 @@ classdef FileManager < handle
             exists = isfile(fname);
         end
         
+        function [fname, exists] = tuning_curves_acceleration(obj, probe_id)
+        %%TODO
+        
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'tuning_curves_acceleration', sprintf('%s.mat', probe_id));
+            exists = isfile(fname);
+        end
+        
         
         
         function [fname, exists] = hf_power_parameters(obj, probe_id, shank_id)

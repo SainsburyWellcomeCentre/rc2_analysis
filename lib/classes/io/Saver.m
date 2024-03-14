@@ -91,6 +91,16 @@ classdef Saver < handle
             obj.savemat(fname, tbl_struct);
         end
         
+        function tuning_curves_acceleration(obj, probe_id, tbl_struct)
+        %%tuning_curves Save tuning curve information for clusters to .mat
+        %
+        %  tuning_curves(PROBE_ID, STRUCT) save the data in STRUCT for probe
+        %  recording with ID, PROBE_ID.
+        
+            fname = obj.file_manager.tuning_curves_acceleration(probe_id);
+            obj.savemat(fname, tbl_struct);
+        end
+        
         
         
         function formatted_data(obj, probe_id, formatted_data)
