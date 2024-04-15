@@ -258,7 +258,8 @@ classdef FormattedData < handle
         %   TODO: this is suboptimal atm... would have to change every time
         %   experiment is done and different session order occurs
         
-            if strcmp(obj.probe_id, 'CAA-1112872_rec1_rec1b_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1121416_rec1_rec2')
+            if strcmp(obj.probe_id, 'CAA-1112872_rec1_rec1b_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1121416_rec1_rec2')...
+                    |  strcmp(obj.probe_id, 'CAA-1121763_rec1_rec2')
                 sessions = obj.sessions(1:2);
             else
                 sessions = obj.sessions(1);
