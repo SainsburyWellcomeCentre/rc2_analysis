@@ -62,7 +62,7 @@ classdef HighFrequencyPowerProfile < handle
         
         channel_ids_to_remove
         
-        search_above = 1000  % um from probe tip
+        search_above = 500  % um from probe tip - dependent on the probe angle (e.g. 1000 if it's perpendicular)
         search_below = inf
         
         batches_to_use = 1:10;
@@ -180,15 +180,20 @@ classdef HighFrequencyPowerProfile < handle
             end
         end
         
-        
-        
+ 
+
         function val = get.bad_channel_ids(obj)
         %%from the bad electrode IDs, identifies the channel IDs which will be bad
         
             channel_ids = obj.rec.all_channel_ids();
             [electrode_ids, shank_ids] = obj.rec.electrode_id_from_channel_id(channel_ids);
-            idx = ismember(electrode_ids, obj.bad_electrode_ids(:, 1)) & ismember(shank_ids, obj.bad_electrode_ids(:, 2));
-            val = channel_ids(idx);
+            try
+                idx = ismember(electrode_ids, obj.bad_electrode_ids(:, 1)) & ismember(shank_ids, obj.bad_electrode_ids(:, 2));
+                val = channel_ids(idx);
+            catch
+                % Temporary workaround for the new probe type
+                val = [];
+            end
         end
         
         
@@ -569,8 +574,8 @@ classdef HighFrequencyPowerProfile < handle
             end
         end
         
-        
-        
+
+
         function [power, channel_ids] = remove_unuseful_channels(obj, power, channel_ids)
         %%remove_unuseful_channels Removes reference and bad channels from the data
         %
@@ -585,10 +590,15 @@ classdef HighFrequencyPowerProfile < handle
         %
         %   Retruns POWER_RM (#channels after removal x # batches array)
         %   and CHANNEL_IDS_RM a vector of channels IDs after removal.
-            
+            try
                 channel_idx = ~ismember(channel_ids, [obj.rec.reference_channel_ids; obj.bad_channel_ids(:); obj.channel_ids_to_remove(:)]);
                 channel_ids   = channel_ids(channel_idx);
                 power         = power(channel_idx, :);
+            catch
+                % Temporary workaround for the new probe type
+                power = power;
+                channel_ids = channel_ids;
+            end
         end
         
         
