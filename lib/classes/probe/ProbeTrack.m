@@ -1,6 +1,6 @@
 classdef ProbeTrack < handle
 % ProbeTrack Class for handling information in the track.csv generated
-% after brainreg_segment
+% after brainreg_segment or brainglobe_segmentation
 %
 %   ProbeTrack Properties:
 %       offset              - a value in um about how much to offset
@@ -78,7 +78,13 @@ classdef ProbeTrack < handle
         function val = get.from_probe_tip(obj)
         %%for each point in the probe track table get the distance from the
         %   probe tip, not accounting for the electrophysiology offset
-            val  = obj.tbl.Position(end) - obj.tbl.Position;
+            if any("Position" == string(obj.tbl.Properties.VariableNames))
+                % for brainreg_segment
+                val = obj.tbl.Position(end) - obj.tbl.Position;
+            elseif any("Index" == string(obj.tbl.Properties.VariableNames))
+                % for braingloble_segmentation
+                val = obj.tbl.Index(end) - obj.tbl.Index;
+            end
         end
         
         
