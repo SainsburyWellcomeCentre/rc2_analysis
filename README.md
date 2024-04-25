@@ -314,7 +314,7 @@ To work with the data run:
    
 This creates a `FormattedData` object in the workspace with access to all data in the recording.
 
-
+Work in progress: If you are using "protocol always vis", add the <session_id> in lib/data_cleansing.m file.
 
 
 ## Figures
