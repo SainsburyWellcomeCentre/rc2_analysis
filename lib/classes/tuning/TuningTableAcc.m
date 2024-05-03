@@ -11,6 +11,8 @@ classdef TuningTableAcc < handle
         
         n_rows
         tbl = table([]);
+        
+        mode = "all"
     end
     
     
@@ -40,7 +42,7 @@ classdef TuningTableAcc < handle
         
             obj.trial_group_labels = trial_group_labels;
             obj.trials = trials;
-            obj.acceleration_bins = AccelerationBins(trials);
+            obj.acceleration_bins = AccelerationBins(trials, obj.mode);
             obj.atc = AccelerationTuningCurve(trials, obj.acceleration_bins);
         end
         

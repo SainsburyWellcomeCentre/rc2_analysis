@@ -202,12 +202,15 @@ classdef FormattedData < handle
         
         function tuning_curve = load_tuning_curves_acceleration(obj, cluster_id, trial_group)
         %%TODO
-        
-            tbl = obj.ctl.load_tuning_curves_acceleration(obj.probe_id);
-            group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
-            tuning_curves = tbl.tuning_curves{group_idx};
-            cluster_idx = [tuning_curves(:).cluster_id] == cluster_id;
-            tuning_curve = tuning_curves(cluster_idx);
+            tuning_curve = {};
+            for i_table = 1 : 3
+                tbl = obj.ctl.load_tuning_curves_acceleration(obj.probe_id, i_table);
+                group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
+                tbl = tbl.tuning_curves{group_idx};
+                
+                cluster_idx = [tbl(:).cluster_id] == cluster_id;
+                tuning_curve{i_table} = tbl(cluster_idx);
+            end
         end
         
         
@@ -1285,8 +1288,9 @@ classdef FormattedData < handle
         
         function tbl = create_tuning_curves_acceleration(obj, trial_types)
         %%TODO
-        
-            tbl = cell(1, length(trial_types));
+            modalities = ["all", "acc", "dec"];
+            
+            tbl = cell(1, length(modalities), length(trial_types));
             
             for ii = 1 : length(trial_types)
                 
@@ -1300,17 +1304,24 @@ classdef FormattedData < handle
                 for jj = 1 : length(trials)
                     aligned_trials{jj} = trials{jj}.to_aligned;
                 end
-                
-                % add these trials to the TuningTable object
-                tt.add_trials(aligned_trials, trial_types{ii});
-                
-                % all selected clusters add them to the tuning table
-                clusters = obj.selected_clusters();
-                for jj = 1 : length(clusters)
-                    tbl{ii}(jj) = tt.tuning_curve(clusters(jj));
+
+                for i_mod = 1 : length(modalities)
+                    % Use all accelerations, or only positive or negative
+                    % values
+                    tt.mode = modalities(i_mod);
+                    
+                    % add these trials to the TuningTable object
+                    tt.add_trials(aligned_trials, trial_types{ii});
+
+                    % all selected clusters add them to the tuning table
+                    clusters = obj.selected_clusters();
+                    for jj = 1 : length(clusters)
+                        tbl{i_mod}{ii}(jj) = tt.tuning_curve(clusters(jj));
+                    end
                 end
             end
         end
+       
         
         function [traces, t] = get_traces_around_times(obj, trials, times, limits, fs)
         %%get_traces_around_times Return an array of velocity

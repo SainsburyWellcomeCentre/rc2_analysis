@@ -1,5 +1,6 @@
 %TODO
 
+close all
 %%
 experiment_groups       = {'darkness', 'mismatch_darkness_oct21'};
 trial_group_labels      = {{'T_bank', 'T_RT', 'T_R'}, 'T'};
@@ -7,7 +8,7 @@ save_figs               = true;
 overwrite               = true;
 figure_dir              = {'tuning_curves', 'darkness_acc'};
 
-
+modalities = ["all", "acc", "dec"];
 
 %%
 ctl                     = RC2Analysis();
@@ -21,6 +22,7 @@ for ll = 1 : length(trial_group_labels)
     probe_id        = {};
     cluster_id      = [];
     cluster_region  = {};
+
     
     probe_ids           = ctl.get_probe_ids(experiment_groups{ll});
 
@@ -50,55 +52,62 @@ for ll = 1 : length(trial_group_labels)
 
         for jj = 1 : length(tuning{ii})
 
-            h_fig                   = ctl.figs.a4figure();
-            plot_array              = PlotArray(3, 2);
+            h_fig  = ctl.figs.a4figure();
 
-            tuning_curve_plot       = {};
-            shuff_histogram         = {};
+            for kk = 1 : length(tuning{ii}{jj})
+
+                plot_array              = PlotArray(3, 2);
+
+                tuning_curve_plot       = {};
+                shuff_histogram         = {};
 
 
-            pos         = plot_array.get_position(2-1);
-            h_ax        = axes('units', 'centimeters', 'position', pos);
+                pos         = plot_array.get_position(kk * 2 - 1);
+                pos(2) = pos(2) - 5;
+                h_ax        = axes('units', 'centimeters', 'position', pos);
 
-            tuning_curve_plot = TuningCurvePlot(h_ax);
+                tuning_curve_plot = TuningCurvePlot(h_ax);
 
-            multicol = lines(2);
+                multicol = lines(2);
 
-            if p_svm(ii, jj) < 0.05 && direction(ii, jj) == 1
-                % tonic increase
-                main_col = [0.85, 0.32, 0.1];
-            elseif p_svm(ii, jj) < 0.05 && direction(ii, jj) == -1
-                % tonic decrease
-                main_col = [0, 0.45, 0.75];
-            else
-                main_col = 'k';
+                if p_svm(ii, jj) < 0.05 && direction(ii, jj) == 1
+                    % tonic increase
+                    main_col = [0.85, 0.32, 0.1];
+                elseif p_svm(ii, jj) < 0.05 && direction(ii, jj) == -1
+                    % tonic decrease
+                    main_col = [0, 0.45, 0.75];
+                else
+                    main_col = 'k';
+                end
+
+                tuning_curve_plot.main_col = main_col;
+                tuning_curve_plot.plot(tuning{ii}{jj}{kk});
+                title(gca, trial_group_labels{ll}, 'interpreter', 'none');
+
+                tuning_curve_plot.xlabel('Acceleration (cm/s^2)');
+                tuning_curve_plot.ylabel('Firing rate (Hz)');
+
+                pos         = plot_array.get_position(kk * 2);
+                pos(2) = pos(2) - 5;
+                h_ax2        = axes('units', 'centimeters', 'position', pos);
+
+                shuff_histogram = TuningCurveHistogram(h_ax2);
+                shuff_histogram.plot(tuning{ii}{jj}{kk});
+
+                mx              = tuning_curve_plot.xmin;
+                Mx              = tuning_curve_plot.xmax;
+                My              = tuning_curve_plot.ymax;
+
+                tuning_curve_plot.xlim([mx, Mx]);
+                tuning_curve_plot.ylim([0, My]);
+
+
+
+                FigureTitle(h_fig, sprintf('%s, Cluster %i, %s', ...
+                        probe_id{ii, jj}, ...
+                        cluster_id(ii, jj), ...
+                        cluster_region{ii, jj}));
             end
-
-            tuning_curve_plot.main_col = main_col;
-            tuning_curve_plot.plot(tuning{ii}{jj});
-            title(gca, trial_group_labels{ll}, 'interpreter', 'none');
-
-            tuning_curve_plot.xlabel('Acceleration (cm/s^2)');
-            tuning_curve_plot.ylabel('Firing rate (Hz)');
-
-            pos         = plot_array.get_position(2);
-            h_ax2        = axes('units', 'centimeters', 'position', pos);
-
-            shuff_histogram = TuningCurveHistogram(h_ax2);
-            shuff_histogram.plot(tuning{ii}{jj});
-
-            mx              = tuning_curve_plot.xmin;
-            Mx              = tuning_curve_plot.xmax;
-            My              = tuning_curve_plot.ymax;
-
-            tuning_curve_plot.xlim([mx, Mx]);
-            tuning_curve_plot.ylim([0, My]);
-
-            FigureTitle(h_fig, sprintf('%s, Cluster %i, %s', ...
-                    probe_id{ii, jj}, ...
-                    cluster_id(ii, jj), ...
-                    cluster_region{ii, jj}));
-
             ctl.figs.save_fig_to_join();
         end
 

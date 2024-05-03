@@ -863,10 +863,16 @@ classdef FileManager < handle
             exists = isfile(fname);
         end
         
-        function [fname, exists] = tuning_curves_acceleration(obj, probe_id)
+        function [fname, exists] = tuning_curves_acceleration(obj, probe_id, i_table)
         %%TODO
-        
-            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'tuning_curves_acceleration', sprintf('%s.mat', probe_id));
+            if i_table == 1
+                table = "all";
+            elseif i_table == 2
+                table = "acc";
+            elseif i_table == 3
+                table = "dec";
+            end
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'tuning_curves_acceleration', sprintf('%s_%s.mat', probe_id, table));
             exists = isfile(fname);
         end
         

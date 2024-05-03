@@ -5,6 +5,7 @@ classdef AccelerationBins < handle
         trials
         prc_per_bin
         bin_edges
+        mode
     end
     
     properties (Dependent = true)
@@ -13,13 +14,12 @@ classdef AccelerationBins < handle
         bin_centers
     end
     
-    
-    
+
     methods
         
-        function obj = AccelerationBins(trials)
+        function obj = AccelerationBins(trials, mode)
         % TODO.
-        
+            obj.mode = mode;
             obj.trials = trials;
             obj.prc_per_bin = 5;
             obj.bin_edges = obj.acceleration_bounds();
@@ -60,8 +60,15 @@ classdef AccelerationBins < handle
             for trial_i = 1 : length(obj.trials)
                 
                 acc = obj.trials{trial_i}.acceleration();
-                idx = obj.trials{trial_i}.motion_mask();
-                all_accelerations = [all_accelerations; acc(idx)];    
+                idx_motion = obj.trials{trial_i}.motion_mask();
+                selected = acc(idx_motion);
+
+                if obj.mode == "acc"
+                    selected = selected(selected > 0);
+                elseif obj.mode == "dec"
+                    selected = selected(selected < 0);
+                end
+                all_accelerations = [all_accelerations; selected];
             end
             
             prcbnd = 0 : obj.prc_per_bin : 100+eps;

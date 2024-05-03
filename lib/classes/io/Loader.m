@@ -296,10 +296,10 @@ classdef Loader < handle
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         
-        function tuning_curves = tuning_curves_acceleration(obj, probe_id)
+        function tuning_curves = tuning_curves_acceleration(obj, probe_id, i_table)
         %%TODO
         
-            fname = obj.file_manager.tuning_curves_acceleration(probe_id);
+            fname = obj.file_manager.tuning_curves_acceleration(probe_id, i_table);
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         

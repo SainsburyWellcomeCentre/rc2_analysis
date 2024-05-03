@@ -41,9 +41,7 @@ classdef AccelerationTuningCurve < handle
                 for bin_i = 1 : obj.bins.n_bins
                     
                     mask = obj.bin_mask{ii}(:, bin_i);
-%                     if sum(mask) > 0
-                        tuning(bin_i, ii) = mean(fr_conv(mask));
-%                     end
+                    tuning(bin_i, ii) = mean(fr_conv(mask));
                     timing(bin_i, ii) = sum(mask) / obj.trials{ii}.fs;
                 end
                 
@@ -87,7 +85,7 @@ classdef AccelerationTuningCurve < handle
             
             for ii = 1 : length(obj.trials)
                 
-                vel = obj.trials{ii}.acceleration();
+                acc = obj.trials{ii}.acceleration();
                 
                 obj.stationary_mask{ii} = obj.trials{ii}.stationary_mask();
                 
@@ -103,12 +101,12 @@ classdef AccelerationTuningCurve < handle
                 
                 mmask = obj.trials{ii}.motion_mask();
                 
-                obj.bin_mask{ii} = false(length(vel), obj.bins.n_bins);
+                obj.bin_mask{ii} = false(length(acc), obj.bins.n_bins);
                 
                 for jj = 1 : obj.bins.n_bins    
                     
-                    mask = vel >= obj.bins.bin_edges(jj) & ...
-                        vel < obj.bins.bin_edges(jj+1);
+                    mask = acc >= obj.bins.bin_edges(jj) & ...
+                        acc < obj.bins.bin_edges(jj+1);
                     
                     obj.bin_mask{ii}(:, jj) = mask & mmask;
                     

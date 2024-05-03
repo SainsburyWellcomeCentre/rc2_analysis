@@ -396,11 +396,15 @@ classdef RC2Analysis < handle
             
             tuning_curves = data.create_tuning_curves_acceleration(trial_types);
             
-            tbl_struct.trial_groups = trial_types;
-            tbl_struct.tuning_curves = tuning_curves;
-            
-            obj.save.tuning_curves_acceleration(probe_id, tbl_struct);
-        end
+            for i_table = 1 : length(tuning_curves)
+               
+                tbl_struct.trial_groups = trial_types;
+                tbl_struct.tuning_curves = tuning_curves{i_table};
+
+                obj.save.tuning_curves_acceleration(probe_id, tbl_struct, i_table);
+            end
+         end
+        
         
         
         function tbl = load_tuning_curves(obj, probe_id)
@@ -412,11 +416,11 @@ classdef RC2Analysis < handle
         %
         %   See also:   create_tuning_curves,
         %   FormattedData.create_tuning_curves
-        
-            tbl = obj.load.tuning_curves(probe_id);
+
+            tbl = obj.load.tuning_curves(probe_id, i_table);
         end
         
-        function tbl = load_tuning_curves_acceleration(obj, probe_id)
+        function tbl = load_tuning_curves_acceleration(obj, probe_id, i_table)
         %%load_tuning_curves Loads the tuning curves for a probe recording
         %
         %   CURVES = load_tuning_curves(PROBE_ID)
@@ -426,7 +430,7 @@ classdef RC2Analysis < handle
         %   See also:   create_tuning_curves,
         %   FormattedData.create_tuning_curves
         
-            tbl = obj.load.tuning_curves_acceleration(probe_id);
+            tbl = obj.load.tuning_curves_acceleration(probe_id, i_table);
         end
         
         
