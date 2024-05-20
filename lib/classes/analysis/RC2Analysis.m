@@ -417,7 +417,7 @@ classdef RC2Analysis < handle
         %   See also:   create_tuning_curves,
         %   FormattedData.create_tuning_curves
 
-            tbl = obj.load.tuning_curves(probe_id, i_table);
+            tbl = obj.load.tuning_curves(probe_id);
         end
         
         function tbl = load_tuning_curves_acceleration(obj, probe_id, i_table)

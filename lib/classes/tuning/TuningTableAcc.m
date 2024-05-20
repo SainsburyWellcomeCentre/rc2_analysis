@@ -53,6 +53,15 @@ classdef TuningTableAcc < handle
         
             [tuning, timing, stat_rate, stat_time] = obj.atc.fr_curve(cluster);
             
+            
+            % Remove the last bin - hacky way
+            tuning = tuning(2:end-1, :);
+            timing = timing(2:end-1, :);
+            if length(obj.acceleration_bins.bin_edges) == 21
+                obj.acceleration_bins.bin_edges = obj.acceleration_bins.bin_edges(2:end-1);
+            end
+            % end of hack
+            
             shuff = ShuffleTuning(tuning, obj.acceleration_bins.bin_centers);
             
             curve_info.probe_id = obj.probe_id;

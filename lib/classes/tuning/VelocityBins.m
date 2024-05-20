@@ -16,7 +16,7 @@ classdef VelocityBins < handle
 %   TODO:   1. does not look like `bin_edges` will be recomputed if the
 %              `prc_per_bin` is recomputed.
 
-    properties (SetAccess = private)
+    properties 
         
         trials
         prc_per_bin

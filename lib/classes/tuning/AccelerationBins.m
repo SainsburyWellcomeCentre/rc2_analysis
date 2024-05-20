@@ -1,6 +1,6 @@
 classdef AccelerationBins < handle
 % TODO
-    properties (SetAccess = private)
+    properties 
         
         trials
         prc_per_bin
@@ -8,7 +8,7 @@ classdef AccelerationBins < handle
         mode
     end
     
-    properties (Dependent = true)
+    properties 
         
         n_bins
         bin_centers

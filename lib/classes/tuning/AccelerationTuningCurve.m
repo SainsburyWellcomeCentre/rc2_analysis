@@ -1,6 +1,6 @@
 classdef AccelerationTuningCurve < handle
 % TODO
-    properties (SetAccess = private)
+    properties 
         
         trials
         bins
