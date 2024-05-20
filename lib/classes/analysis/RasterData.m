@@ -50,13 +50,13 @@ classdef RasterData < handle
     
     methods
         
-        function obj = RasterData(cluster)
+        function obj = RasterData(cluster, limits)
         % RasterData
         %
         %   RasterData(CLUSTER)
         %   collection of methods for handling raster data. Takes as
         %   argument CLUSTER an instance of class Cluster.
-        
+            obj.limits = limits;
             obj.cluster = cluster;
         end
         
