@@ -52,7 +52,7 @@ for probe_i = 1 : length(probe_ids)
     else
         animal_id = animal_id(1);
     end
-    starts = pd_times(animal_id, sparse_noise_session);
+    starts = pd_times(animal_id, sparse_noise_session, "sparse_noise");
        
     sta_white_store = [];
     sta_black_store = [];
