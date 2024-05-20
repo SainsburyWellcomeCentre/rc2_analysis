@@ -75,6 +75,15 @@ classdef FiringRate < handle
         
         
         
+        function [r, sr_t] = get_spiketrain(obj, T)
+            fs = 1/(T(2) - T(1));
+            spike_times = obj.restrict_times([T(1) - obj.prepad, T(end) + obj.postpad]); %#ok<*PROPLC>
+            [spike_train, sr_t] = obj.create_spike_train(spike_times, [T(1) - obj.prepad, T(end) + obj.postpad], fs);
+            r = interp1(sr_t, spike_train, T);
+        end
+
+
+        
         function r = get_count(obj, T)
         %%TODO: UNUSED, REMOVE
         
@@ -84,7 +93,7 @@ classdef FiringRate < handle
         end
         
         
-        
+
         function [fr, dt, n_spikes] = get_fr_in_window(obj, T)
         %%get_fr_in_window Return the firing rate of in a window
         %
