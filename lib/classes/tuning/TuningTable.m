@@ -102,13 +102,13 @@ classdef TuningTable < handle
         
             [tuning, timing, stat_rate, stat_time] = obj.vtc.fr_curve(cluster);
             
-            % Remove the last bin - hacky way
-            tuning = tuning(2:end-1, :);
-            timing = timing(2:end-1, :);
-            if length(obj.velocity_bins.bin_edges) == 21
-                obj.velocity_bins.bin_edges = obj.velocity_bins.bin_edges(2:end-1);
-            end
-            % end of hack
+%             % Remove the last bin - hacky way
+%             tuning = tuning(2:end-1, :);
+%             timing = timing(2:end-1, :);
+%             if length(obj.velocity_bins.bin_edges) == 21
+%                 obj.velocity_bins.bin_edges = obj.velocity_bins.bin_edges(2:end-1);
+%             end
+%             % end of hack
             
             shuff = ShuffleTuning(tuning, obj.velocity_bins.bin_centers);
             
