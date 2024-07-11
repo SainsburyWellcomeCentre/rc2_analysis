@@ -59,7 +59,13 @@ classdef AverageAnatomy < handle
                 
                 % make sure that none of the anatomies are 'strange' (i.e.
                 % have multiple of the same layers)
-                assert(isequal(b(ii).region, obj.VISp_layers'), 'anatomy likely has multiple versions of the same layer');
+%                 assert(isequal(b(ii).region, obj.VISp_layers'), 'anatomy likely has multiple versions of the same layer');
+            end
+            
+            for ii = 1 : length(obj.anatomy_array)
+                if size(b(ii).upper) < length(obj.VISp_layers)
+                    b(ii) = obj.correct_for_missing_layers(b(ii));
+                end
             end
             
             boundaries.region = obj.VISp_layers;
@@ -67,6 +73,7 @@ classdef AverageAnatomy < handle
             boundaries.lower = mean(cat(2, b(:).lower), 2);
         end
         
+            
         
         
         function boundary_position = average_VISp_boundaries_from_pia(obj)
@@ -121,5 +128,29 @@ classdef AverageAnatomy < handle
             
             boundary_position = [boundaries.upper(:); boundaries.lower(end)];
         end
+    end
+    
+    
+    methods (Static = true)
+        function boundary = correct_for_missing_layers(boundary)
+            dummy_layer_6a_length = 235;
+            dummy_layer_6b_length = 80;
+            
+            if size(boundary.region) == [4 1]
+                % add layer 6a info
+                boundary.region = [boundary.region; 'VISp6a'];
+                boundary.upper = [boundary.upper; boundary.lower(end)];
+                boundary.lower = [boundary.lower; boundary.lower(end) + dummy_layer_6a_length];
+                boundary.instance = [boundary.instance; 0];
+            end
+
+            if size(boundary.region) == [5 1]
+                % add layer 6b info
+                boundary.region = [boundary.region; 'VISp6b'];
+                boundary.upper = [boundary.upper; boundary.lower(end)];
+                boundary.lower = [boundary.lower; boundary.lower(end) + dummy_layer_6b_length];
+                boundary.instance = [boundary.instance; 0];
+            end
+        end 
     end
 end
