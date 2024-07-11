@@ -66,9 +66,13 @@
 % experiment_groups       = {'darkness','mismatch_darkness_oct21'};
 % 
 % trial_group_labels      = {{'T_bank', 'T_RT', 'T_R', 'T'}};
+% 
+experiment_groups           = {'passive_same_luminance'};
+trial_group_labels          = {'T_Vstatic', 'V', 'VT'};
+restricted                  = true;
 
-experiment_groups   = {'mismatch_nov20', 'mismatch_jul21'};
-trial_group_labels   = {'RVT_gain_up'};
+% experiment_groups    = {'visual_flow'};
+% trial_group_labels   = {'RV', 'RVT', {'V_RVT', 'V_RV'}, {'VT_RVT', 'VT_RV'}};
 
 %V_VT_idx                = [3, 4];
                        
@@ -99,6 +103,8 @@ cluster_id      = [];
 cluster_region  = {};
 cluster_in_V_or_VT = [];
 
+n_clusters = 0;
+
 % loop over experiments
 for ii = 1 : length(probe_ids)
     
@@ -108,6 +114,8 @@ for ii = 1 : length(probe_ids)
     % return array of Cluster objects containing info about the VISp
     % clusters
     clusters    = data.VISp_clusters();
+    
+    n_clusters = n_clusters + length(clusters);
     
     % creates tuning curves for all clusters (not just VISp) for each of
     % the trials specified in trial_group_labels
@@ -297,6 +305,12 @@ for ii = 1 : length(probe_ids)
                 continue
             end
             
+            if restricted
+                if (direction(ii, jj, 1) == 0) || (direction(ii, jj, 2) == 0)
+                    continue
+                end
+            end
+            
             % average tuning curve for this cluster
             avg_tuning = nanmean(tuning{ii}{jj}{kk}.tuning, 2);
             avg_stationary = mean(tuning{ii}{jj}{kk}.stationary_fr);
@@ -403,9 +417,32 @@ end
 FigureTitle(h_fig, 'Averaged tuning curves');
 
 % save to a new .pdf
-if restrict_to_V_VT_clusters
+% if restrict_to_V_VT_clusters
+%     ctl.figs.save_fig('average_tuning_each_condition_restrict_clusters.pdf');
+if restricted
     ctl.figs.save_fig('average_tuning_each_condition_restrict_clusters.pdf');
 else
     ctl.figs.save_fig('average_tuning_each_condition.pdf');
 end
+
+%%
+if experiment_groups{1} == 'passive_same_luminance'
+    % Anova calculations only V and VT
+    matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{3}.'];
+    anov2_V_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+
+    % Anova calculations only T and VT
+    matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{3}.'];
+    anov2_T_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    
+elseif experiment_groups{1} == 'visual_flow'
+    matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{2}.'];
+    anov2_RV_RVT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    
+    matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{4}.'];
+    anov2_RVT_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+end
+
+
+
 
