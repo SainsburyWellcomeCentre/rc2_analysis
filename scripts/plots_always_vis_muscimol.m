@@ -75,7 +75,7 @@ for trial_type_i = 1 : length(trial_types)
         end
     end
    
-    h_ax = subplot(3, 3, trial_type_i);
+    h_ax = subplot(4, 3, trial_type_i);
     hold on;
 
     fmt.xy_limits       = [0, 60];
@@ -88,7 +88,7 @@ for trial_type_i = 1 : length(trial_types)
 
     unity_plot_plot(h_ax, stationary_fr_median_rec1, motion_fr_median_rec1, direction_rec1, fmt);
 
-    h_ax = subplot(3, 3, trial_type_i + 3);
+    h_ax = subplot(4, 3, trial_type_i + 3);
     hold on;
 
     fmt.xy_limits       = [0, 60];
@@ -102,8 +102,8 @@ for trial_type_i = 1 : length(trial_types)
     unity_plot_plot(h_ax, stationary_fr_median_rec2, motion_fr_median_rec2, direction_rec2, fmt);
 
 
-
-    h_ax = subplot(3, 3, trial_type_i + 6);
+    % MI from significantly modulated cells
+    h_ax = subplot(4, 3, trial_type_i + 6);
     hold on;
     modulation_index_rec1 = [];
     modulation_index_rec2 = [];
@@ -144,6 +144,46 @@ for trial_type_i = 1 : length(trial_types)
     [p] = signrank(modulation_index_rec1(only_responsive_rec1), modulation_index_rec2(only_responsive_rec1));
     
     sprintf('Trial type: %s, before: %.2f + %.2f, after: %.2f + %.2f, p: %.5f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1, avg_mi_rec2, std_mi_rec2, p)
+    
+    % MI from significantly and positively modulated cells
+    h_ax = subplot(4, 3, trial_type_i + 9);
+    hold on;
+    modulation_index_rec1 = [];
+    modulation_index_rec2 = [];
 
+    for clust_i = 1 : 82
+        modulation_index_rec1(end+1) = (motion_fr_median_rec1(clust_i) - stationary_fr_median_rec1(clust_i))...
+            / (motion_fr_median_rec1(clust_i) + stationary_fr_median_rec1(clust_i));
+
+        modulation_index_rec2(end+1) = (motion_fr_median_rec2(clust_i) - stationary_fr_median_rec2(clust_i))...
+            / (motion_fr_median_rec2(clust_i) + stationary_fr_median_rec2(clust_i));
+
+        if direction_rec1(clust_i) > 0
+            if direction_rec2(clust_i) == 1
+                scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'red', 'o');
+            elseif direction_rec2(clust_i) == -1
+                scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'blue', 'o');
+            else 
+                scatter(2, modulation_index_rec2(clust_i), scatterball_size(3), 'black', 'o');
+            end
+
+            if direction_rec1(clust_i) == 1
+                scatter(1, modulation_index_rec1(clust_i), scatterball_size(3), 'red', 'o');  
+            end
+            plot([1 2], [modulation_index_rec1(clust_i), modulation_index_rec2(clust_i)], 'black');
+        end
+    end
+    xlim([0 3]);
+    ylim([-1.2 1.2]);
+        
+
+    only_responsive_and_positive_rec1 = direction_rec1 > 0;
+    avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_and_positive_rec1));
+    std_mi_rec1 = nanstd(modulation_index_rec1(only_responsive_and_positive_rec1));
+    avg_mi_rec2  = nanmean(modulation_index_rec2(only_responsive_and_positive_rec1));
+    std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_and_positive_rec1));
+    [p] = signrank(modulation_index_rec1(only_responsive_and_positive_rec1), modulation_index_rec2(only_responsive_and_positive_rec1));
+    
+    sprintf('(Positive modulation) Trial type: %s, before: %.2f + %.2f, after: %.2f + %.2f, p: %.5f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1, avg_mi_rec2, std_mi_rec2, p)
 end
 
