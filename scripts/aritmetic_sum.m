@@ -1,27 +1,41 @@
+% Fit a linear model on the passive same luminance dataset,
+% on the equation : VT = b_0 + b_1 * T_Vstatic + b_2 * V
+% Includes calculations of fold change:
+% 1. For every condition, the MEDIAN of the stationary and the motion firing rates are calculated, per cluster.
+% 2. We normalise all the values to stationary:
+%   - For every condition, we first calculate the MEAN stationary firing rate across clusters
+%   - We then DIVIDE both the median values of motion and stationary for every cluster. In this way we obtain normalised stationary and motion responses.
+% This approach allows us to have a overall mean stationary response of 1.
+
 close all;
 
+% initialization
 experiment_groups           = 'passive_same_luminance';
 trial_types                 = {'T_Vstatic', 'V', 'VT'};
-restricted                  = true;
+restricted                  = true; % If restricted true, select only for clusters that are positively or negatively modulated
 
 ctl                         = RC2Analysis();
-probe_ids                   = {'CAA-1121765_rec1_rec2', 'CAA-1121766_rec1'};
+probe_ids                   = ctl.get_probe_ids(experiment_groups);
 
+% load sequence of stimuli
 fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
 passive_protocol_sequence = load(fname);
 
+% initialize variables
 all_tables = cell(1,length(probe_ids));
 cluster_count = 0;
 
 for probe_i = 1 : length(probe_ids)
+    % load data
     data   = ctl.load_formatted_data(probe_ids{probe_i});
     clusters  = data.VISp_clusters();
     
     clusters_id = arrayfun(@(x) x.id, clusters)';
     
+    % get stationary vs motion table
     T_data = data.svm_table;
     
-    
+    % filter clusters
     if restricted
         direction_T = [];
         direction_V = [];
@@ -33,25 +47,36 @@ for probe_i = 1 : length(probe_ids)
         end
         clusters_id = clusters_id(~(direction_T == 0) & ~(direction_V == 0));
     end
-    
+
+    % apply filter for VISp and in case for restricted
     T_subset=T_data(ismember(T_data.cluster_id, clusters_id),:);
     
+    % join tables
     all_tables{probe_i} = T_subset;
     cluster_count = cluster_count + length(clusters_id);
 end
 
 cluster_count
 
+% concatenate the tables
 T = vertcat(all_tables{:});
 
+% Calculations for the fold change
+% get the median stationary and motion response for each combination of animal / cluster / trial type
+% the median is calculated across trials
 median_responses = groupsummary(T, {'probe_id', 'cluster_id', 'trial_group_label'}, 'median', {'stationary_fr', 'motion_fr'});
+
+% get the mean of the median stationary for each trial group label
 mean_stationary = groupsummary(median_responses, 'trial_group_label', 'mean', 'median_stationary_fr');
-    
+
 len = size(median_responses);
 median_responses.normalised_stationary = zeros(len(1), 1);
 median_responses.normalised_motion = zeros(len(1), 1);
 for trial_i = 1 : length(trial_types)
+    % find indices in table of a given trial type
     idxs = find(strcmp(median_responses{:, 'trial_group_label'}, trial_types(trial_i)));
+
+    % normalize to the mean stationary : get the fold change for each cluster
     median_responses{idxs, 'normalised_stationary'} = median_responses{idxs, 'median_stationary_fr'}./mean_stationary{trial_i, 'mean_median_stationary_fr'};
     median_responses{idxs, 'normalised_motion'} = median_responses{idxs, 'median_motion_fr'}./mean_stationary{trial_i, 'mean_median_stationary_fr'};
 end
@@ -60,6 +85,7 @@ median_responses.median_stationary_fr = [];
 median_responses.median_motion_fr = [];
 median_responses.normalised_stationary = [];
 
+% fit the clusters fold changes with a linear model
 T_pivot = unstack(median_responses, 'normalised_motion', 'trial_group_label');
 lreg = fitlm(T_pivot,'VT~V+T_Vstatic')
 plot(lreg, 'Marker', 'o')
