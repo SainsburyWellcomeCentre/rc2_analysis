@@ -75,11 +75,17 @@ classdef FiringRate < handle
         
         
         
-        function [r, sr_t] = get_spiketrain(obj, T)
+        function [spike_train, timebase] = get_spiketrain(obj, T)
+        %%get_spiketrain Get an array of spikes events aligned to the timebase
+        %
+        %   [SPIKE_TRAIN, TIMEBASE] = get_spiketrain(TIMEBASE) for a vector 
+        %   specifying a TIMEBASE (#samples x 1 vector), where the timebase is in
+        %   seconds, compute the aligned SPIKE_TRAIN.
+
             fs = 1/(T(2) - T(1));
             spike_times = obj.restrict_times([T(1) - obj.prepad, T(end) + obj.postpad]); %#ok<*PROPLC>
-            [spike_train, sr_t] = obj.create_spike_train(spike_times, [T(1) - obj.prepad, T(end) + obj.postpad], fs);
-            r = interp1(sr_t, spike_train, T);
+            [spike_train_, timebase] = obj.create_spike_train(spike_times, [T(1) - obj.prepad, T(end) + obj.postpad], fs);
+            spike_train = interp1(timebase, spike_train_, T);
         end
 
 
