@@ -1,4 +1,20 @@
-% Calculate receptive field size across cluster
+% Calculate receptive field (RF) size of each cluster
+% Receptive fields are calculated by analysing the responses to a sparse noise stimulus,
+% i.e. a matrix of flickering squares, black and white for off and on RFs.
+%
+% How are RFs calculated?
+% 1. The starting time of every new matrix presentation (stimulus) is found by reading
+% the photodiode signal
+% 2. We calculate the total amount of spikes R per cluster at every stimulus presentation
+% 3. The spike triggered average (STA) is calculated for white and black rectangles
+% 4. A mean shuffled STA (STA_shuffled_mean) matrix is generated for the black and white conditions
+% 5. Receptive fields are found where this condition is satisfied:
+%    RF_raw = (STA - STA_shuffled_mean) > t_matrix
+%    where t_matrix = STA_shuffled_mean * threshold; threshold is defined at the beginning of this script.
+%    We then retain only the connected squares with bwareaopen, obtaining RF.
+% 6. We finally measure the x and y dimensions of the RF.
+
+
 
 % How many degrees in each square in the stimulus
 degs_per_square = 5; % constant, from the setup
@@ -245,7 +261,7 @@ for probe_i = 1 : length(probe_ids)
         title('Black, proc')
         
         RF = imresize(RF, [h_pix + 1, w_pix + 1], 'nearest');
-        warped_rf = t2(I);
+        warped_rf = RF(I);
         
         subplot(2, 3, 6)
         imagesc(warped_rf)
