@@ -38,9 +38,9 @@ probe_ids  = ctl.get_probe_ids('visual_flow', ...
                                
 
 % initialize arrays                              
-mean_clusters_responses = [];
+mean_clusters_stimulus_interval = [];
 mean_clusters_baselines = [];
-median_clusters_responses = [];
+median_clusters_stimulus_interval = [];
 median_clusters_baselines = [];
 direction = [];
 
@@ -73,7 +73,7 @@ for probe_i = 1 : length(probe_ids)
     % for each cluster, calculate response and baseline firing rate for each sf/tf/dir combination
     clusters = data.VISp_clusters();
     for clust_i = 1 : length(clusters)
-        responses = [];
+        stimulus_interval = [];
         baselines = [];
 
         % Get the firing rate in the first four baseline intervals, before the first batch of stimuli starts
@@ -94,13 +94,13 @@ for probe_i = 1 : length(probe_ids)
                 % append currect delta 
                 deltas(end+1) = delta;
                 % store response
-                responses(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i) : starts(i+1))));
+                stimulus_interval(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i) : starts(i+1))));
             else
                 % If the interval is long, we have the last drifting grating stimulus and the baseline period.
                 % The threshold applied to the photodiode signal cannot pick up the end of the last drifting grating,
                 % therefore the mean_duration of the stimulus is used to estimate its end.
                 mean_duration = cast(mean(deltas), "uint32");
-                responses(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i): (starts(i) + mean_duration))));
+                stimulus_interval(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i): (starts(i) + mean_duration))));
                 
                 % store the four baseline chunks.
                 for bs_i = 1 : 4
@@ -112,32 +112,32 @@ for probe_i = 1 : length(probe_ids)
         end
         
         % get the response to the last drifting grating.
-        responses(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i + 1) : (starts(i + 1) + mean_duration))));
+        stimulus_interval(end+1) = mean(clusters(clust_i).fr.get_convolution(drifting_gratings_session.probe_t(starts(i + 1) : (starts(i + 1) + mean_duration))));
 
         % calculate mean firing rate in response and baseline intervals
-        mean_clusters_responses(end+1) = nanmean(responses);
+        mean_clusters_stimulus_interval(end+1) = nanmean(stimulus_interval);
         mean_clusters_baselines(end+1) = nanmean(baselines);
         
-        % add responses and stimulus information (which sf / tf / dir combination) to the table
-        T = horzcat(responses.', sf, tf, dir);
-        T = array2table(T, "VariableNames", ["responses" "sf" "tf" "dir"]);
+        % add stimulus_interval and stimulus information (which sf / tf / dir combination) to the table
+        T = horzcat(stimulus_interval.', sf, tf, dir);
+        T = array2table(T, "VariableNames", ["stimulus_interval" "sf" "tf" "dir"]);
         
-        % calculate median responses and sort
-        summary = groupsummary(T, {'sf', 'tf', 'dir'}, 'median', 'responses');
-        summary = sortrows(summary, 'median_responses', 'descend');
+        % calculate median stimulus_interval and sort
+        summary = groupsummary(T, {'sf', 'tf', 'dir'}, 'median', 'stimulus_interval');
+        summary = sortrows(summary, 'median_stimulus_interval', 'descend');
         
         % Take the top 4 stimulus combinations
         rows = (T.sf == summary{1, 1} & T.tf == summary{1, 2} & T.dir == summary{1, 3}) | ...
                (T.sf == summary{2, 1} & T.tf == summary{2, 2} & T.dir == summary{2, 3}) | ...
                (T.sf == summary{3, 1} & T.tf == summary{3, 2} & T.dir == summary{3, 3}) | ...
                (T.sf == summary{4, 1} & T.tf == summary{4, 2} & T.dir == summary{4, 3});
-        responses_to_preferred_stim = T{rows, 'responses'};
+        stimulus_interval_to_preferred_stim = T{rows, 'stimulus_interval'};
         
         % Measure responsiveness to drifting gratings. 
-        % Compare the four preferred responses and compare to baseline using signrank.
-        median_clusters_responses(end+1) = nanmedian(responses_to_preferred_stim);
+        % Compare the four preferred stimulus_interval and compare to baseline using signrank.
+        median_clusters_stimulus_interval(end+1) = nanmedian(stimulus_interval_to_preferred_stim);
         median_clusters_baselines(end+1) = nanmedian(baselines);
-        [~, ~, ~, direction(end+1)] = compare_groups_with_signrank(baselines, responses_to_preferred_stim);
+        [~, ~, ~, direction(end+1)] = compare_groups_with_signrank(baselines, stimulus_interval_to_preferred_stim);
         
         % store absolute preferred response
         preferred_sf_tf_dir = [preferred_sf_tf_dir; summary(1, columnNames)];
@@ -176,28 +176,28 @@ dir_counts = [unique_dir, count_dir_cat]
 
 
 % Display statistics
-mean(mean_clusters_responses)
-std(mean_clusters_responses)
+mean(mean_clusters_stimulus_interval)
+std(mean_clusters_stimulus_interval)
 
 mean(mean_clusters_baselines)
 std(mean_clusters_baselines)
 
 
-% Lineplot
+% Lineplot of mean stimulus_interval
 figure(1)
 hold on
-for clust_i = 1 : length(mean_clusters_responses)
+for clust_i = 1 : length(mean_clusters_stimulus_interval)
     scatter(1, mean_clusters_baselines(clust_i), scatterball_size(1), 'blue', 'o');
-    scatter(2, mean_clusters_responses(clust_i), scatterball_size(1), 'blue', 'o');
-    plot([1 2], [mean_clusters_baselines(clust_i), mean_clusters_responses(clust_i)], 'blue', 'LineWidth', 0.1);
+    scatter(2, mean_clusters_stimulus_interval(clust_i), scatterball_size(1), 'blue', 'o');
+    plot([1 2], [mean_clusters_baselines(clust_i), mean_clusters_stimulus_interval(clust_i)], 'blue', 'LineWidth', 0.1);
 end
 scatter(1, mean(mean_clusters_baselines), scatterball_size(3), 'black');
-scatter(2, mean(mean_clusters_responses), scatterball_size(3), 'black');
-plot([1 2], [mean(mean_clusters_baselines), mean(mean_clusters_responses)], 'black', 'LineWidth', 5);
+scatter(2, mean(mean_clusters_stimulus_interval), scatterball_size(3), 'black');
+plot([1 2], [mean(mean_clusters_baselines), mean(mean_clusters_stimulus_interval)], 'black', 'LineWidth', 5);
 xlim([0 3])
 ylim([-2 100])
 
-[p] = signrank(median_clusters_baselines, median_clusters_responses)
+[p] = signrank(median_clusters_baselines, median_clusters_stimulus_interval)
 
 
 % Unity plot
@@ -214,7 +214,7 @@ fmt.ylabel          = 'response';
 fmt.include_inset   = false;
 fmt.colour_by       = 'significance';
 
-unity_plot_plot(h_ax, median_clusters_baselines, median_clusters_responses, direction, fmt);
+unity_plot_plot(h_ax, median_clusters_baselines, median_clusters_stimulus_interval, direction, fmt);
 
 title('Original');
 
