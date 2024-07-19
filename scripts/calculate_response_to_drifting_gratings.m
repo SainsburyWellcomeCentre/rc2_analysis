@@ -1,8 +1,24 @@
+% Calculate responses to drifting gratings 
+%
+% On the stimuli and the way baslines are defined:
+% Drifting gratings are characterized by a given spatial frequency (sf),
+% temporal frequency (tf), and direction (dir). For every new drifting grating stimulus, starting times 
+% are found via the photodiode signal.
 % SF_TF stimuli are delivered in batches of 5. Every stimulus lasts 2.5s. 
 % Stimuli starting times are derived by changes in photodiode signal (starts).
 % If an interval is longer than 2.5s, then it means that there were no drifting gratings
 % and the interval can be taken to measure baseline response. Each baseline period is long ehough to 
 % be divided in four parts. This division helps us achieve enough statistical power. 
+%
+% How are responses to drifting gratings calculated?
+% 1. Stimuli sequence is loaded
+% 2. Starting times are found 
+% 3. The mean firing rates are stored for baseline and response intervals
+% 4. Response intervals are matched to stimulus type (which sf, tf, and dir) via the sequence information
+% 5. For each cluster, the median of these intervals is calculated for baseline and stimulus_interval
+% 6. The 4 stimuli which triggered the most response are used to measure responsivenes against the baseline
+% 7. Information about the most preferred stimulus is printed
+% 8. Plots of mean and median responses are made
 
 stim_sampled_points = 25000; % duration of one stimulus is assumed to be 2.5s
 
