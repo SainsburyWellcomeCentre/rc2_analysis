@@ -1,3 +1,6 @@
+% Statistics on the the motion and baseline durations
+
+% initialize controller and variables
 ctl = RC2Analysis();
 probe_ids  = ctl.get_probe_ids('visual_flow', ...
                                'mismatch_nov20', ...
@@ -8,18 +11,22 @@ probe_ids  = ctl.get_probe_ids('visual_flow', ...
                                'passive_same_luminance_muscimol');
 trial_types                 = {'RT', 'RT_gain_up', 'R', 'T_bank', 'T_RT', 'T_R', 'T', 'RVT', 'RVT_gain_up','RV', 'RV_gain_up', 'VT_RVT', 'VT_RV', 'V_RVT', 'V_RV', 'T_Vstatic', 'V', 'VT'};
 
-                           
 stationary_times = [];
 motion_times = [];
 
+% Collect stationary times for every probe
 for probe_i = 1 : length(probe_ids)
     data   = ctl.load_formatted_data(probe_ids{probe_i});
+
+    % for every condition
     for type_i = 1 : length(trial_types)
         trials = data.get_trials_with_trial_group_label(trial_types{type_i});
 
+        % for every trial
         for trial_i = 1 : length(trials)
             trial  = trials{trial_i}.to_aligned;
             
+            % Exclude artifacts coming from jittering
             if trial.stationary_time < 3
                 stationary_times(end+1) = 3;
             else
@@ -32,6 +39,7 @@ for probe_i = 1 : length(probe_ids)
 end
 
 
+% Calculate and print all relevant statistics
 stationary_times_mean = mean(stationary_times);
 stationary_times_median = median(stationary_times);
 stationary_times_std = std(stationary_times);
