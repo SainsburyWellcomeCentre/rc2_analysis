@@ -9,6 +9,7 @@ probe_ids                   = ctl.get_probe_ids(experiment_groups);
 
 figure(1);
 
+n_clusters = 0;
 for trial_type_i = 1 : length(trial_types)
     motion_fr_median_rec1 = [];
     stationary_fr_median_rec1 = [];
@@ -21,6 +22,9 @@ for trial_type_i = 1 : length(trial_types)
     for probe_i = 1 : length(probe_ids)
         data   = ctl.load_formatted_data(probe_ids{probe_i});
         clusters  = data.VISp_clusters();
+        if trial_type_i == 1
+            n_clusters = n_clusters + length(clusters);
+        end
         trials = data.get_trials_with_trial_group_label(trial_types{trial_type_i});
         
         motion_fr_rec1 = nan(length(trials), length(clusters));
@@ -70,8 +74,7 @@ for trial_type_i = 1 : length(trial_types)
             
             motion_fr_median_rec2(end+1) = nanmedian(motion_fr_rec2(:, clust_i));
             stationary_fr_median_rec2(end+1) = nanmedian(stationary_fr_rec2(:, clust_i));
-            [~, ~, ~, direction_rec2(end+1)] = compare_groups_with_signrank(stationary_fr_rec2(:, clust_i), motion_fr_rec2(:, clust_i));
-            
+            [~, ~, ~, direction_rec2(end+1)] = compare_groups_with_signrank(stationary_fr_rec2(:, clust_i), motion_fr_rec2(:, clust_i));            
         end
     end
    
@@ -108,7 +111,7 @@ for trial_type_i = 1 : length(trial_types)
     modulation_index_rec1 = [];
     modulation_index_rec2 = [];
 
-    for clust_i = 1 : 82
+    for clust_i = 1 : n_clusters
         modulation_index_rec1(end+1) = (motion_fr_median_rec1(clust_i) - stationary_fr_median_rec1(clust_i))...
             / (motion_fr_median_rec1(clust_i) + stationary_fr_median_rec1(clust_i));
 
@@ -136,14 +139,16 @@ for trial_type_i = 1 : length(trial_types)
     ylim([-1.2 1.2]);
         
 
-    only_responsive_rec1 = direction_rec1 ~= 0;
+    only_responsive_rec1 =  direction_rec1 ~= 0;
+    n = sum(only_responsive_rec1(~isnan(only_responsive_rec1)));
+    
     avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_rec1));
     std_mi_rec1 = nanstd(modulation_index_rec1(only_responsive_rec1));
     avg_mi_rec2  = nanmean(modulation_index_rec2(only_responsive_rec1));
     std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_rec1));
     [p] = signrank(modulation_index_rec1(only_responsive_rec1), modulation_index_rec2(only_responsive_rec1));
     
-    sprintf('Trial type: %s, before: %.2f + %.2f, after: %.2f + %.2f, p: %.5f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1, avg_mi_rec2, std_mi_rec2, p)
+    sprintf('(Responsive) Trial type: %s, before: %.2f + %.2f sem, after: %.2f + %.2f sem, p: %.5f, n: %.0f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1 / sqrt(n), avg_mi_rec2, std_mi_rec2 / sqrt(n), p, n)
     
     % MI from significantly and positively modulated cells
     h_ax = subplot(4, 3, trial_type_i + 9);
@@ -151,7 +156,7 @@ for trial_type_i = 1 : length(trial_types)
     modulation_index_rec1 = [];
     modulation_index_rec2 = [];
 
-    for clust_i = 1 : 82
+    for clust_i = 1 : n_clusters
         modulation_index_rec1(end+1) = (motion_fr_median_rec1(clust_i) - stationary_fr_median_rec1(clust_i))...
             / (motion_fr_median_rec1(clust_i) + stationary_fr_median_rec1(clust_i));
 
@@ -177,13 +182,15 @@ for trial_type_i = 1 : length(trial_types)
     ylim([-1.2 1.2]);
         
 
-    only_responsive_and_positive_rec1 = direction_rec1 > 0;
-    avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_and_positive_rec1));
-    std_mi_rec1 = nanstd(modulation_index_rec1(only_responsive_and_positive_rec1));
-    avg_mi_rec2  = nanmean(modulation_index_rec2(only_responsive_and_positive_rec1));
-    std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_and_positive_rec1));
-    [p] = signrank(modulation_index_rec1(only_responsive_and_positive_rec1), modulation_index_rec2(only_responsive_and_positive_rec1));
+    only_responsive_rec1 =  direction_rec1 ~= 0;
+    n = sum(only_responsive_rec1(~isnan(only_responsive_rec1)));
     
-    sprintf('(Positive modulation) Trial type: %s, before: %.2f + %.2f, after: %.2f + %.2f, p: %.5f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1, avg_mi_rec2, std_mi_rec2, p)
+    avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_rec1));
+    std_mi_rec1 = nanstd(modulation_index_rec1(only_responsive_rec1));
+    avg_mi_rec2  = nanmean(modulation_index_rec2(only_responsive_rec1));
+    std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_rec1));
+    [p] = signrank(modulation_index_rec1(only_responsive_rec1), modulation_index_rec2(only_responsive_rec1));
+    
+    sprintf('(Responsive) Trial type: %s, before: %.2f + %.2f sem, after: %.2f + %.2f sem, p: %.5f, n: %.0f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1 / sqrt(n), avg_mi_rec2, std_mi_rec2 / sqrt(n), p, n)
 end
 
