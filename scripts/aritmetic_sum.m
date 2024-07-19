@@ -1,11 +1,15 @@
 % Fit a linear model on the passive same luminance dataset,
 % on the equation : VT = b_0 + b_1 * T_Vstatic + b_2 * V
-% Includes calculations of fold change:
-% 1. For every condition, the MEDIAN of the stationary and the motion firing rates are calculated, per cluster.
-% 2. We normalise all the values to stationary:
-%   - For every condition, we first calculate the MEAN stationary firing rate across clusters
-%   - We then DIVIDE both the median values of motion and stationary for every cluster. In this way we obtain normalised stationary and motion responses.
-% This approach allows us to have a overall mean stationary response of 1.
+
+% How are fold changes calculated?
+% M is the 3D matrix of motion responses, with shape trial_types x clusters x trials
+% S is the 3D matrix of stationary responses, with shape n_trial_types x n_clusters x n_trials
+%
+% Example: mean(M, trials) means we are taking the mean of M across trials, obtaining a 
+% trial_types x clusters 2D matrix
+%
+% fold change per cluster: FC(M, S, cluster, trial_type) = median(M, trials) / mean(median(S, trials))
+% fold change per trial_type: FC(M, S, trial_type) = mean(median(M, trials) / mean(median(S, trials)), clusters)
 
 close all;
 
@@ -35,7 +39,8 @@ for probe_i = 1 : length(probe_ids)
     % get stationary vs motion table
     T_data = data.svm_table;
     
-    % filter clusters
+    % filter clusters: retain only those of witch there is a significant difference 
+    % between stationary and motion.
     if restricted
         direction_T = [];
         direction_V = [];
