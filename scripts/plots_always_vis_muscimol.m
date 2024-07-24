@@ -182,7 +182,7 @@ for trial_type_i = 1 : length(trial_types)
     ylim([-1.2 1.2]);
         
 
-    only_responsive_rec1 =  direction_rec1 ~= 0;
+    only_responsive_rec1 =  direction_rec1 > 0;
     n = sum(only_responsive_rec1(~isnan(only_responsive_rec1)));
     
     avg_mi_rec1 = nanmean(modulation_index_rec1(only_responsive_rec1));
@@ -191,6 +191,6 @@ for trial_type_i = 1 : length(trial_types)
     std_mi_rec2  = nanstd(modulation_index_rec2(only_responsive_rec1));
     [p] = signrank(modulation_index_rec1(only_responsive_rec1), modulation_index_rec2(only_responsive_rec1));
     
-    sprintf('(Responsive) Trial type: %s, before: %.2f + %.2f sem, after: %.2f + %.2f sem, p: %.5f, n: %.0f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1 / sqrt(n), avg_mi_rec2, std_mi_rec2 / sqrt(n), p, n)
+    sprintf('(Responsive and positive) Trial type: %s, before: %.2f + %.2f sem, after: %.2f + %.2f sem, p: %.5f, n: %.0f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1 / sqrt(n), avg_mi_rec2, std_mi_rec2 / sqrt(n), p, n)
 end
 
