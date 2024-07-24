@@ -284,8 +284,6 @@ end
 
 %% plot average across clusters
 
-restrict_to_V_VT_clusters = false;
-
 % get an average tuning curve for each trial type
 trial_type_tuning_store = cell(1, length(trial_group_labels));
 stationary_store = cell(1, length(trial_group_labels));
@@ -315,15 +313,10 @@ for ii = 1 : length(probe_ids)
             avg_tuning = nanmean(tuning{ii}{jj}{kk}.tuning, 2);
             avg_stationary = mean(tuning{ii}{jj}{kk}.stationary_fr);
             
-            if restrict_to_V_VT_clusters
-                if cluster_in_V_or_VT(ii, jj)
-                    trial_type_tuning_store{kk} = [trial_type_tuning_store{kk}, avg_tuning];
-                    stationary_store{kk} = [stationary_store{kk}, avg_stationary];
-                end
-            else
-                trial_type_tuning_store{kk} = [trial_type_tuning_store{kk}, avg_tuning];
-                stationary_store{kk} = [stationary_store{kk}, avg_stationary];
-            end
+            
+            trial_type_tuning_store{kk} = [trial_type_tuning_store{kk}, avg_tuning];
+            stationary_store{kk} = [stationary_store{kk}, avg_stationary];
+            
         end
     end
 end
@@ -346,11 +339,6 @@ for kk = 1 : length(trial_group_labels)
     h_ax{kk}    = axes('units', 'centimeters', 'position', pos);
     hold on;
     
-    if restrict_to_V_VT_clusters
-        if isempty(trial_type_tuning_store{kk})
-            continue
-        end
-    end
     
     % get mean and std across clusters for each speed bin (these don't
     % necessarily correspond to the same underlying speed across different
@@ -417,15 +405,16 @@ end
 FigureTitle(h_fig, 'Averaged tuning curves');
 
 % save to a new .pdf
-% if restrict_to_V_VT_clusters
-%     ctl.figs.save_fig('average_tuning_each_condition_restrict_clusters.pdf');
 if restricted
     ctl.figs.save_fig('average_tuning_each_condition_restrict_clusters.pdf');
 else
     ctl.figs.save_fig('average_tuning_each_condition.pdf');
 end
 
-%%
+% Calculate two way Anova
+% Selected groups change depending on the dataset
+
+% Anova for passive_same_luminance dataset
 if experiment_groups{1} == 'passive_same_luminance'
     % Anova calculations only V and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{3}.'];
@@ -434,11 +423,14 @@ if experiment_groups{1} == 'passive_same_luminance'
     % Anova calculations only T and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{3}.'];
     anov2_T_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
-    
+
+% Anova for visual_flow dataset
 elseif experiment_groups{1} == 'visual_flow'
+    % Anova calculations only RV and RVT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{2}.'];
     anov2_RV_RVT = anova2(matrix_trial_type_tuning_store, n_clusters)
-    
+
+    % Anova calculations only RVT and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{4}.'];
     anov2_RVT_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
 end
