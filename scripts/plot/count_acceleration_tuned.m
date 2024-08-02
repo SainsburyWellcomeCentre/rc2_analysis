@@ -1,154 +1,160 @@
+% Count how many clusters in the darkness datasets are tuned for speed
+% and exclude speed tuned clusters
+% Currently not counting here how many are tonically responsive 
 
-close all
-%%
+% Tuning filters explanation
+% tuning.shuffled.p = p-value calculated by ShuffleTuning
+%   comparing the shuffled distribution to the cluster tuning
+% tuning.shuffled.beta = polyfit result calculated by ShuffleTuning
+%   it is the slope of the line fitted to the cluster tuning  
+% filter: mean(nanmean(tuning.tuning)) > nanmean(tuning.stationary_fr)
+%   compare mean response in motion periods across bins to the mean stationary period
+
+
+
+% Initialize parameters
 experiment_groups       = {'darkness', 'mismatch_darkness_oct21'};
 trial_group_labels      = {{'T_bank', 'T_RT', 'T_R'}, 'T'};
-% experiment_groups = {'passive_same_luminance'};
-% trial_group_labels = {'T_Vstatic'};
+modalities              = ["all", "acc", "dec"];
 
-modalities = ["all", "acc", "dec"];
-% figure_dir  = {'tuning_curves', 'passive_same_luminance_acc'};
 
-max_number = 82; %151;
-%%
-ctl                     = RC2Analysis();
-% ctl.setup_figures(figure_dir, save_figs);
+% Instantiate controller
+ctl                 = RC2Analysis();
 
-classification      = {};
-c                   = 0;
-speed_tuned         = {};
-for ll = 1 : length(trial_group_labels)
-    tuning_acc      = {};
-    tuning_vel      = {};
-    p_svm           = [];
-    direction       = [];
-    probe_id        = {};
-    cluster_id      = [];
-    cluster_region  = {};
+% initialize cell arrays
+tuning_acc      = {};
+tuning_vel      = {};
 
+% initialize the table in which to save probe id, cluster id and all tuning
+% iformation
+columnNames = {'probe_id', 'cluster_id', 'tonic', 'speed_tuned', 'acc_exc_H', 'acc_exc_L', 'acc_supp_H', 'acc_supp_L', ...
+                                                                 'dec_exc_H', 'dec_exc_L', 'dec_supp_H', 'dec_supp_L'};
+variableTypes = {'string', 'int32', 'logical', 'logical', 'logical', 'logical', ...
+                 'logical', 'logical', 'logical', 'logical', 'logical', 'logical'};
+
+% Create the table with the specified sizes and types
+T = table('Size', [0, length(columnNames)], 'VariableTypes', variableTypes, 'VariableNames', columnNames);
+
+% loop through experimental groups
+for ll = 1 : length(experiment_groups)
     
+    % p_svm           = []; % p_svm and direction would be useful if we want to count also tonic responses
+    % direction       = [];
+
+    % get probe ids
     probe_ids           = ctl.get_probe_ids(experiment_groups{ll});
-
+    
+    % loop across probe_ids
     for ii = 1 : length(probe_ids)
-
+        % load data for this probe
         data        = ctl.load_formatted_data(probe_ids{ii});
         clusters    = data.VISp_clusters();
-
-        for jj = 1 : length(clusters)
-          [~, p_svm(ii, jj), direction(ii, jj)] = data.is_stationary_vs_motion_significant(clusters(jj).id, trial_group_labels{ll});
-          tuning_acc{ii}{jj} = data.load_tuning_curves_acceleration(clusters(jj).id, trial_group_labels{ll});
-          tuning_vel{ii}{jj} = data.load_tuning_curves(clusters(jj).id, trial_group_labels{ll});
-        end
-    end
-
         
-
-    %% plot
-
-    for ii = 1 : length(probe_ids)  
-        for kk = 1 : length(tuning_acc{ii})
-            c = c + 1;
+        % loop across clusters
+        for jj = 1 : length(clusters)
+            [~, p_svm, direction] = data.is_stationary_vs_motion_significant(clusters(jj).id, trial_group_labels{ll});
             
-            if p_svm(ii, kk) < 0.05 && direction(ii, kk) == 1
-                direction
-            elseif p_svm(ii, kk) < 0.05 && direction(ii, kk) == -1
-                direction
+            % load and store tuning curves    
+            tuning_acc = data.load_tuning_curves_acceleration(clusters(jj).id, trial_group_labels{ll});
+            tuning_vel = data.load_tuning_curves(clusters(jj).id, trial_group_labels{ll});
+            
+            % Tonic 
+            if p_svm < 0.05 && direction ~= 0
+                tonic_ = true;
+            else
+                tonic_ = false;
             end
-                
-            % Acceleration tuning
+            
+            % Initialize all acceleration tunings to false
+            acc_exc_H  = false;
+            acc_exc_L  = false;
+            acc_supp_H = false;
+            acc_supp_L = false;
+            dec_exc_H  = false;
+            dec_exc_L  = false;
+            dec_supp_H = false;
+            dec_supp_L = false;
+            
+            % Filter for all acceleration tuning combinations
             for acc_dec_i = 2 : 3
-
-                this_tuning = tuning_acc{ii}{kk}{acc_dec_i};
-                classification{acc_dec_i}{1}{max_number} = [];
-                classification{acc_dec_i}{2}{max_number} = [];
+                % copy tuning data to a variable to make filtering easier to read
+                this_tuning = tuning_acc{acc_dec_i};
                 
-                % exc
+                % filter for excited clusters 
                 if this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) >= 0 && mean(nanmean(this_tuning.tuning)) > nanmean(this_tuning.stationary_fr)
-                    classification{acc_dec_i}{1}{c} = 2; % high
+                    % high excited (positive trend)
+                    if acc_dec_i == 2 acc_exc_H = true, else dec_exc_H = true, end;
                 end
                 if this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) < 0 && mean(nanmean(this_tuning.tuning)) > nanmean(this_tuning.stationary_fr)
-                    classification{acc_dec_i}{1}{c} = 3; % low
+                    % low excited (negative trend)
+                    if acc_dec_i == 2 acc_exc_L = true, else dec_exc_L = true, end;
                 end
                 
-                % supp
+                % filter for suppressed clusters
                 if this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) >= 0 && mean(nanmean(this_tuning.tuning)) < nanmean(this_tuning.stationary_fr)
-                    classification{acc_dec_i}{2}{c} = 2;
+                    % high suppressed (positive trend)
+                    if acc_dec_i == 2 acc_supp_H = true, else dec_supp_H = true, end;
                 end
                 if this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) < 0 && mean(nanmean(this_tuning.tuning)) < nanmean(this_tuning.stationary_fr)
-                    classification{acc_dec_i}{2}{c} = 3;
+                    % low suppressed (negative trend)
+                    if acc_dec_i == 2 acc_supp_L = true, else dec_supp_L = true, end;
                 end
             end
             
             % Velocity tuning
-            this_tuning = tuning_vel{ii}{kk};
-            speed_tuned{82} = [];
+            % copy tuning data to a variable to make filtering easier to read
+            this_tuning = tuning_vel;
+            
+            % Save tuning for velocity in any combination
             if (this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) >= 0 && mean(nanmean(this_tuning.tuning)) > nanmean(this_tuning.stationary_fr)) || ...
                (this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) < 0 && mean(nanmean(this_tuning.tuning)) > nanmean(this_tuning.stationary_fr)) || ...
                (this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) >= 0 && mean(nanmean(this_tuning.tuning)) < nanmean(this_tuning.stationary_fr)) || ...
                (this_tuning.shuffled.p < 0.05 && this_tuning.shuffled.beta(1) < 0 && mean(nanmean(this_tuning.tuning)) < nanmean(this_tuning.stationary_fr))
                
-                speed_tuned{c} = 1;
+                speed_tuned_ = true;
+            else 
+                speed_tuned_ = false;
             end 
+            
+            % Save tuning information in a new row and add it to the table
+            newRow = {probe_ids{ii}, clusters(jj).id, tonic_, speed_tuned_, ...
+                                     acc_exc_H, acc_exc_L, acc_supp_H, acc_supp_L, ...
+                                     dec_exc_H, dec_exc_L, dec_supp_H, dec_supp_L};
+                                 
+            T = [T; cell2table(newRow, 'VariableNames', columnNames)];
         end
     end
 end
 
-%% All acceleration
 
-not_tuned_acc_exc = sum(cellfun('isempty', classification{2}{1}))
-high_acc_exc = sum(cell2mat(classification{2}{1}) == 2)
-low_acc_exc = sum(cell2mat(classification{2}{1}) == 3)
+% ACCELERATION TUNED
 
+% Extract the boolean columns
+booleanColumns = T{:, 3:end};
 
-not_tuned_acc_supp = sum(cellfun('isempty', classification{2}{2}))
-high_acc_supp = sum(cell2mat(classification{2}{2}) == 2)
-low_acc_supp = sum(cell2mat(classification{2}{2}) == 3)
+% Sum the true values (ones) for each boolean column
+trueCounts = sum(booleanColumns);
 
-
-not_tuned_dec_exc = sum(cellfun('isempty', classification{3}{1}))
-high_dec_exc = sum(cell2mat(classification{3}{1}) == 2)
-low_dec_exc = sum(cell2mat(classification{3}{1}) == 3)
+% Display the results
+for i = 1:length(trueCounts)
+    fprintf('Column %s has %d true values.\n', columnNames{i+2}, trueCounts(i));
+end
 
 
-not_tuned_dec_supp = sum(cellfun('isempty', classification{3}{2}))
-high_dec_supp = sum(cell2mat(classification{3}{2}) == 2)
-low_dec_supp = sum(cell2mat(classification{3}{2}) == 3)
+% ACCELERATION TUNED BUT NOT SPEED TUNED
+% Filter out rows where 'speed_tuned' is true
+filteredT = T(~T.speed_tuned, :);
 
+% Define the relevant column names
+relevantColumns = {'acc_exc_H', 'acc_exc_L', 'acc_supp_H', 'acc_supp_L', ...
+                   'dec_exc_H', 'dec_exc_L', 'dec_supp_H', 'dec_supp_L'};
 
-%% Not speed tuned
-% {acc / dec} {exc / supp} {cluster}
-
-tuned_to_speed =  sum(~cellfun('isempty', speed_tuned))
-                     
-tuned_to_acc_or_dec = sum((~cellfun('isempty', classification{2}{1}) | ~cellfun('isempty', classification{2}{2}) | ...
-                           ~cellfun('isempty', classification{3}{1}) | ~cellfun('isempty', classification{3}{2})) & ...
-                           cellfun('isempty', speed_tuned))
-
-                       
-tuned_exc_only_acc = sum((~cellfun('isempty', classification{2}{1}) | ~cellfun('isempty', classification{3}{1})) & cellfun('isempty', speed_tuned))
-tuned_supp_only_acc = sum((~cellfun('isempty', classification{2}{2}) | ~cellfun('isempty', classification{3}{2})) & cellfun('isempty', speed_tuned))
-
-tuned_only_acc = sum((~cellfun('isempty', classification{2}{1}) | ~cellfun('isempty', classification{2}{2})) & cellfun('isempty', speed_tuned))
-tuned_only_dec = sum((~cellfun('isempty', classification{3}{1}) | ~cellfun('isempty', classification{3}{2})) & cellfun('isempty', speed_tuned))
-tuned_only_acc_dec_both = sum(((~cellfun('isempty', classification{2}{1}) | ~cellfun('isempty', classification{2}{2})) & ...
-                           (~cellfun('isempty', classification{3}{1}) | ~cellfun('isempty', classification{3}{2}))) & ...
-                           cellfun('isempty', speed_tuned))
-
-acc_exc_not_speed_tuned = [classification{2}{1}{cellfun('isempty', speed_tuned)}];
-high_acc_exc = sum(acc_exc_not_speed_tuned == 2)
-low_acc_exc = sum(acc_exc_not_speed_tuned == 3)
-
-acc_supp_not_speed_tuned = [classification{2}{2}{cellfun('isempty', speed_tuned)}];
-high_acc_supp = sum(acc_supp_not_speed_tuned == 2)
-low_acc_supp = sum(acc_supp_not_speed_tuned == 3)
-
-dec_exc_not_speed_tuned = [classification{3}{1}{cellfun('isempty', speed_tuned)}];
-high_dec_exc = sum(dec_exc_not_speed_tuned == 2)
-low_dec_exc = sum(dec_exc_not_speed_tuned == 3)
-
-dec_supp_not_speed_tuned = [classification{3}{2}{cellfun('isempty', speed_tuned)}];
-high_dec_supp = sum(dec_supp_not_speed_tuned == 2)
-low_dec_supp = sum(dec_supp_not_speed_tuned == 3)
+% Iterate through each relevant column and count the true values
+for i = 1:length(relevantColumns)
+    columnName = relevantColumns{i};
+    trueCount = sum(filteredT{:, columnName});
+    fprintf('Column %s has %d true values (excluding speed_tuned).\n', columnName, trueCount);
+end
 
 
 
