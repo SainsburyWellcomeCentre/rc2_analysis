@@ -206,6 +206,14 @@ for trial_type_i = 1 : length(trial_types)
     
     sprintf('(Responsive) Trial type: %s, before: %.2f + %.2f sem, after: %.2f + %.2f sem, p: %.5f, n: %.0f', trial_types{trial_type_i}, avg_mi_rec1, std_mi_rec1 / sqrt(n), avg_mi_rec2, std_mi_rec2 / sqrt(n), p, n)
     
+    % Plot mean and sem as well in green
+    scatter(1, avg_mi_rec1, scatterball_size(5), 'green', 'o');
+    errorbar(1, avg_mi_rec1, std_mi_rec1 / sqrt(n), 'LineStyle', 'none', 'Color', 'g', 'LineWidth', 2);
+    scatter(2, avg_mi_rec2, scatterball_size(5), 'green', 'o');
+    errorbar(2, avg_mi_rec2, std_mi_rec2 / sqrt(n), 'LineStyle', 'none', 'Color', 'g', 'LineWidth', 2);
+    plot([1 2], [avg_mi_rec1,avg_mi_rec2], 'green');
+    
+    
     % MI from significantly and positively modulated cells
     % Same MI calculation and same plotting strategy as above
     h_ax = subplot(4, 3, trial_type_i + 9);
