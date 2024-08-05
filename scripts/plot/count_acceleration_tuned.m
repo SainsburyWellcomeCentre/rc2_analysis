@@ -37,9 +37,6 @@ T = table('Size', [0, length(columnNames)], 'VariableTypes', variableTypes, 'Var
 
 % loop through experimental groups
 for ll = 1 : length(experiment_groups)
-    
-    % p_svm           = []; % p_svm and direction would be useful if we want to count also tonic responses
-    % direction       = [];
 
     % get probe ids
     probe_ids           = ctl.get_probe_ids(experiment_groups{ll});
