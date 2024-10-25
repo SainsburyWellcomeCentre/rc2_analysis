@@ -1,9 +1,13 @@
+% For a given experimental group, load stationary vs motion 
+% data and compare the firing rate delta across two conditions.
+% Print result of signrank, median, 25th and 75th percentiles. 
+
 ctl                 = RC2Analysis();
 
 % trial_group_labels = {{'V_RVT', 'V_RV', 'V'}, {'VT_RVT', 'VT_RV', 'VT'}};
 trial_group_labels = {{'RVT'}, {'RV'}}; 
 
-probe_ids   = ctl.get_probe_ids('visual_flow');%, 'passive_same_luminance');
+probe_ids   = ctl.get_probe_ids('visual_flow');
 
 pop_fr_delta = {};
 for ll = 1 : length(trial_group_labels)
