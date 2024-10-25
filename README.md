@@ -2,6 +2,12 @@
 
 Preprocessing pipeline and analysis of data coming from the rollercoaster setup.
 
+> [!IMPORTANT]
+> This codebase is provided as a reference for the publication Velez-Fort 2024 and has been thoroughly documented. If you have any questions, please do not hesitate to contact us.
+
+> [!CAUTION]
+> This codebase will not be actively maintained. Installation may be complex and could potentially be unsuccessful.
+
 ## Installation
 
 This code has been developed on MATLAB 2021a on Windows 10. Prerequisite code must be installed on the system:
