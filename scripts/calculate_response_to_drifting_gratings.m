@@ -7,7 +7,7 @@
 % SF_TF stimuli are delivered in batches of 5. Every stimulus lasts 2.5s. 
 % Stimuli starting times are derived by changes in photodiode signal (starts).
 % If an interval is longer than 2.5s, then it means that there were no drifting gratings
-% and the interval can be taken to measure baseline response. Each baseline period is long ehough to 
+% and the interval can be taken to measure baseline response. Each baseline period is long enough to 
 % be divided in four parts. This division helps us achieve enough statistical power. 
 %
 % How are responses to drifting gratings calculated?
