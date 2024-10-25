@@ -1,3 +1,6 @@
+% Simplified trial structure plot to visualize acceleration and velocity
+% across all trials.
+
 close all
 
 experiment_groups       = {'darkness', 'mismatch_darkness_oct21'};
