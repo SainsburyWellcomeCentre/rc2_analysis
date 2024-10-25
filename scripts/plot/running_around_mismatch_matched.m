@@ -52,11 +52,11 @@ for ii = 1 : length(probe_ids)
     % for each cluster get the raster data
     for jj = 1 : length(clusters)
         
-        decrease_raster_data{end+1} = RasterData(clusters(jj));
+        decrease_raster_data{end+1} = RasterData(clusters(jj), limits);
         decrease_raster_data{end}.trigger_times = mismatch_times{ii}(running_decreases{ii});
         decrease_raster_data{end}.fs = fs;
         
-        no_change_raster_data{end+1} = RasterData(clusters(jj));
+        no_change_raster_data{end+1} = RasterData(clusters(jj), limits);
         no_change_raster_data{end}.trigger_times = mismatch_times{ii}(~running_decreases{ii});
         no_change_raster_data{end}.fs = fs;
     end
@@ -164,7 +164,7 @@ for ii = 1 : length(probe_ids)
     % for each cluster get the raster data
     for jj = 1 : length(clusters)
         
-        matched_raster_data{end+1} = RasterData(clusters(jj));
+        matched_raster_data{end+1} = RasterData(clusters(jj), limits);
         matched_raster_data{end}.trigger_times = matched_times{ii};
         matched_raster_data{end}.fs = fs;
     end
