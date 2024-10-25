@@ -127,7 +127,7 @@ end
 ctl.setup_figures(figure_dir, save_figs);
 
 for ii = 1 : length(probe_ids)
-    for jj = 1 : length(cluster_ids)
+    for jj = 1 : length(cluster_ids{ii})
         
         h_fig                   = ctl.figs.a4figure();
         plot_array              = PlotArray(3, 2);
