@@ -370,3 +370,18 @@ end
 FigureTitle(h_fig, 'pooled');
 
 ctl.figs.save_fig('pooled', overwrite);
+
+
+
+
+responsive_mi = [];
+for ii = 1 : length(mi_pooled)
+    this_mi =  mi_pooled{ii};
+    this_dir = (direction_pooled{ii} == 1) | (direction_pooled{ii} == -1);
+    responsive_mi = [responsive_mi this_mi(this_dir)];
+end
+
+
+
+
+
