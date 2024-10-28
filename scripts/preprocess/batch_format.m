@@ -1,3 +1,5 @@
+% Include anatomy information to formatted data
+
 experiment_groups    = {'visual_flow', 'darkness', 'mismatch_nov20', 'mismatch_jul21', 'mismatch_darkness_oct21'};
 
 format               = RC2Format();

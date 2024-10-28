@@ -1,3 +1,6 @@
+% Create tuning curve tables for velocity. 
+% These tables are required by any script calling `load_tuning_curves`.
+
 experiment_groups    = {'darkness', 'mismatch_darkness_oct21'};%, 'mismatch_nov20', 'mismatch_jul21', };
 trial_group_labels   = {{'RT', 'R', {'T_bank', 'T_RT', 'T_R'}}, {'R', 'T', 'RT_gain_up'}};
 
@@ -8,9 +11,6 @@ for jj = 1 : length(trial_group_labels)
 
     for ii = 1 : length(probe_ids)
         ii
-        % load formatted data
-    %     ctl.create_replay_offsets_table(probe_ids{ii});
-    %     ctl.create_svm_table(probe_ids{ii});
-        ctl.create_tuning_curves(probe_ids{ii}, trial_group_labels{jj});
+        ctl.create_tuning_curves(probe_ids{ii}, trial_group_labels);
     end
 end

@@ -1,3 +1,5 @@
+% Update selected clusters (as in the text file) by recalculating formatted data.
+
 ctl = RC2Analysis();
 preprocess = RC2Preprocess();
 format = RC2Format();
