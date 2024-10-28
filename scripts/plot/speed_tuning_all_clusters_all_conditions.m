@@ -418,21 +418,25 @@ end
 if experiment_groups{1} == 'passive_same_luminance'
     % Anova calculations only V and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{3}.'];
-    anov2_V_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    [anov2_V_VT_p, anov2_V_VT_tbl, anov2_V_VT_stats] = anova2(matrix_trial_type_tuning_store, n_clusters)
 
     % Anova calculations only T and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{3}.'];
-    anov2_T_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    [anov2_T_VT_p, anov2_T_VT_tbl, anov2_T_VT_stats] = anova2(matrix_trial_type_tuning_store, n_clusters)
+    
+    [anova_V_p, anova_V_tbl, anova_V_stats] = anova1(trial_type_tuning_store{2}.')
+    [anova_T_p, anova_T_tbl, anova_T_stats] = anova1(trial_type_tuning_store{1}.')
+    [anova_VT_p, anova_VT_tbl, anova_VT_stats] = anova1( trial_type_tuning_store{3}.')
 
 % Anova for visual_flow dataset
 elseif experiment_groups{1} == 'visual_flow'
     % Anova calculations only RV and RVT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{1}.'; trial_type_tuning_store{2}.'];
-    anov2_RV_RVT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    [anov2_RV_RVT_p, anov2_RV_RVT_tbl, anov2_RV_RVT_stats] = anova2(matrix_trial_type_tuning_store, n_clusters)
 
     % Anova calculations only RVT and VT
     matrix_trial_type_tuning_store = [trial_type_tuning_store{2}.'; trial_type_tuning_store{4}.'];
-    anov2_RVT_VT = anova2(matrix_trial_type_tuning_store, n_clusters)
+    [anov2_RVT_VT_p, anov2_RVT_VT_tbl, anov2_RVT_VT_stats] = anova2(matrix_trial_type_tuning_store, n_clusters)
 end
 
 
