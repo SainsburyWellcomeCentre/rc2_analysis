@@ -14,7 +14,8 @@ classdef FormattedData < handle
 %
 %   FormattedData Methods:
 %       list_trial_group_labels             - returns a list of the trial group labels available for this data
-%       load_tuning_curves                  - loads previously created .mat files with the tuning curve data
+%       load_tuning_curves                  - loads previously created .mat files with the tuning curve data for speed
+%       load_tuning_curves_acceleration     - loads previously created .mat files with the tuning curve data for acceleration
 %       apply_offsets                       - applies the offsets saved in the offsets .csv files to the trials
 %       get_session_with_id                 - returns a session object with a session ID
 %       motion_sessions                     - returns a cell array of Session objects which are part of an RVTSession
@@ -60,6 +61,8 @@ classdef FormattedData < handle
 %                                             (in sample points) to take so that taking from that sample point will 
 %                                             align it to the original trial
 %       create_tuning_curves                - creates cell array of structures with information about velocity tuning 
+%                                             of clusters to a set of trials.
+%       create_tuning_curves_acceleration   - creates cell array of structures with information about acceleration tuning 
 %                                             of clusters to a set of trials.
 %       get_traces_around_times             - return an array of velocity traces around a specified set of events
 %       get_fr_around_times                 - return convolved firing rate traces around a set of events
@@ -176,7 +179,7 @@ classdef FormattedData < handle
         
         function tuning_curve = load_tuning_curves(obj, cluster_id, trial_group)
         %%load_tuning_curves Loads previously created .mat files with the
-        %%tuning curve data
+        %%tuning curve data on speed
         %
         %   TUNING_CURVE_STRUCT = load_tuning_curve(CLUSTER_ID,
         %   TRIAL_GROUP) loads data from a previously saved .mat file.
@@ -201,7 +204,22 @@ classdef FormattedData < handle
         end
         
         function tuning_curve = load_tuning_curves_acceleration(obj, cluster_id, trial_group)
-        %%TODO
+        %%load_tuning_curves_acceleration Loads previously created .mat files with the
+        %%tuning curve data on acceleration
+        %
+        %   TUNING_CURVE_STRUCT = load_tuning_curve(CLUSTER_ID,
+        %   TRIAL_GROUP) loads data from a previously saved .mat file.
+        %   Loads the data for a single cluster with integer ID,
+        %   CLUSTER_ID, and run on trials with trial group, TRIAL_GROUP, a
+        %   cell array of trial group labels.
+        %
+        %   TRIAL_GROUP should be the same as the TRIAL_GROUP supplied to
+        %   `create_tuning_curves` during creation of the tuning curve
+        %   files.
+        %   
+        %   TUNING_CURVE_STRUCT is a structure with the tuning curve data
+        %   contained in the tuning curve file.
+
             tuning_curve = {};
             for i_table = 1 : 3
                 tbl = obj.ctl.load_tuning_curves_acceleration(obj.probe_id, i_table);
@@ -1287,7 +1305,29 @@ classdef FormattedData < handle
         end
         
         function tbl = create_tuning_curves_acceleration(obj, trial_types)
-        %%TODO
+        %%create_tuning_curves_acceleration  Creates cell array of structures with
+        %%information about acceleration tuning of clusters to a set of trials.
+        %
+        %   TUNING_INFO = create_tuning_curves_acceleration(TRIAL_TYPES)
+        %   takes a cell array of trial group labels. So TRIAL_TYPES is of
+        %   the form {TRIAL_GROUP_LABEL_1, TRIAL_GROUP_LABEL_2, ...}. Each
+        %   TRIAL_GROUP_LABEL_N is itself either a char vector indicating a
+        %   trial group label or a cell array of char vectors indicating a
+        %   set of trial group labels.
+        %
+        %   In either case, the code loops over entries of TRIAL_TYPES and
+        %   selects the trials specified by the TRIAL_GROUP_LABEL_N labels. 
+        %
+        %   These trials are then passed to the TuningTable object to
+        %   create the acceleration bins and extract the information about
+        %   tuning for each cluster. 
+        %
+        %   TUNING_INFO is thus a cell array of the same length as
+        %   TRIAL_TYPES, and each entry is a structure array (of length
+        %   equal to the number of selected clusters returned by
+        %   `selected_clusters`), with the tuning curve info returned by
+        %   TuningTable.tuning_curve.
+
             modalities = ["all", "acc", "dec"];
             
             tbl = cell(1, length(modalities), length(trial_types));

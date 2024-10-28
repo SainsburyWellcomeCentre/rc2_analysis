@@ -29,8 +29,9 @@ classdef RC2Session < handle
 %       camera_t            - timebase of the camera frames synced to the probe recording
 %
 %   RC2Session Methods:
-%       camera0_interp      - interpolate the motion energy data on camera0 so it has the same timebase as the other channel.
-%       camera1_interp      - interpolate the motion energy data on camera1 so it has the same timebase as the other channel.
+%       camera0_interp         - interpolate the motion energy data on camera0 so it has the same timebase as the other channel.
+%       camera1_interp         - interpolate the motion energy data on camera1 so it has the same timebase as the other channel.
+%       pupil_diameter_interp  - interpolate the pupil diameter data so it has the same timebase as the other channel.
 %
 %   See also: RVTSession
 
@@ -161,7 +162,13 @@ classdef RC2Session < handle
         end
         
         function val = pupil_diameter_interp(obj)
-        %%TODO
+        %%pupil_diameter_interp Interpolate the pupil diameter data so it has the same
+        %%timebase as the other channel.
+        %
+        %   DIAMETER = pupil_diameter_interp()
+        %   increases the resolution of the pre-computed pupuil diameter trace 
+        %   so it has the same resolution as the other NIDAQ
+        %   traces.
         
             val = [];
             if ~isempty(obj.pupil_diameter)

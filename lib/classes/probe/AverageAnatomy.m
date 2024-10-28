@@ -13,7 +13,10 @@ classdef AverageAnatomy < handle
 %                                                     layer when averaged across several anatomies (returns vector)
 %       from_pia_using_relative_position            - computes depth of a point from the pia in the averaged anatomy 
 %                                                     from its relative position of the point in its layer 
-%
+%       correct_for_missing_layers(boundary)        - Static method that ensures boundary structures include
+%                                                     all VISp layers by adding missing layers with default 
+%                                                     values if needed.
+%        
 %   See also: Anatomy, ProbeTrack
 
     properties
@@ -133,6 +136,27 @@ classdef AverageAnatomy < handle
     
     methods (Static = true)
         function boundary = correct_for_missing_layers(boundary)
+        %%correct_for_missing_layers Corrects for missing VISp layers in a boundary structure
+        %
+        %   BOUNDARY = correct_for_missing_layers(BOUNDARY) checks the given 
+        %   BOUNDARY structure for missing layers in the VISp region and adds 
+        %   default entries if needed. Specifically, if only four or five layers 
+        %   are present, it will add the missing VISp6a and/or VISp6b layers, with 
+        %   predefined lengths of 235 um for VISp6a and 80 um for VISp6b. This 
+        %   function ensures that all boundary structures contain a consistent set 
+        %   of VISp regions.
+        %
+        %   Input:
+        %       BOUNDARY - structure containing VISp region information, with fields 
+        %                  `region`, `upper`, `lower`, and `instance`.
+        %
+        %   Output:
+        %       BOUNDARY - structure with added VISp6a and/or VISp6b layers, if missing.
+        %
+        %   Note: This function is static and does not require an object instance.
+        %
+        %   See also: AverageAnatomy
+
             dummy_layer_6a_length = 235;
             dummy_layer_6b_length = 80;
             

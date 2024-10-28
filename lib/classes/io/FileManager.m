@@ -17,6 +17,7 @@ classdef FileManager < handle
 %       camera_csv_fast         - path to the .csv file for motion energy (using fast drive)
 %       camera_csv_slow         - path to the .csv file for motion energy (using slow drive)
 %       camera0_dlc_pupil_fast  - path to the .csv file containing tracking data of the pupil (using fast drive)
+%       pupil_diameter_slow     - path to the .csv file containing pre-computed pupul diameter (using slow drive)
 %       camera0_dlc_pupil_slow  - path to the .csv file containing tracking data of the pupil (using slow drive)
 %       camera0_saccades_fast   - path to the .csv file containing frame numbers of saccade onsets (using fast drive)
 %       camera0_saccades_slow   - path to the .csv file containing frame numbers of saccade onsets (using slow drive)
@@ -51,7 +52,8 @@ classdef FileManager < handle
 %       selected_mua_clusters_txt   - path to the 'selected_mua_clusters.txt' file
 %       svm_table                   - path to the "stationary/motion" .csv files
 %       offsets_table               - path to the "replay trial offsets" .csv files
-%       tuning_curves               - path to the "tuning curve" .mat files
+%       tuning_curves               - path to the "tuning curve" .mat files for speed
+%       tuning_curves_acceleration  - path to the "tuning curve" .mat files for acceleration
 %       hf_power_parameters         - path to the 'hf_power_<shank_id>.mat' files
 %       track_csv                   - path to the anatomy 'track_<shank_id>.csv' files
 %       track_offset                - path to the 'offset_<shank_id>.txt' files
@@ -250,7 +252,15 @@ classdef FileManager < handle
         
         
         function [fname, exists] = pupil_diameter_slow(obj, session_id)
-        %%TODO
+        %%pupil_diameter_slow Path to the .csv file containing pre-computed
+        %%diameter of the pupil (using slow drive) 
+        %
+        %   [FILENAME, EXISTS] = pupil_diameter_slow(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form: 
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_diameter.csv
+        
+        %   EXISTS is true if the file exists and false otherwise.
         
             dname = obj.camera_csv_dir_slow(session_id);
             fname = fullfile(dname, 'pupil_diameter.csv');
@@ -864,7 +874,12 @@ classdef FileManager < handle
         end
         
         function [fname, exists] = tuning_curves_acceleration(obj, probe_id, i_table)
-        %%TODO
+        %%tuning_curves_acceleration Path to the "tuning curve acceleration" .mat files
+        %
+        %   [FILENAME, EXISTS] = tuning_curves_acceleration(PROBE_ID)
+        %   for probe recording with ID string, PROBE_ID
+        %
+        %   EXISTS is true if the file exists and false otherwise.
             if i_table == 1
                 table = "all";
             elseif i_table == 2

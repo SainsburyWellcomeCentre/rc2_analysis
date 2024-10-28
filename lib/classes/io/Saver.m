@@ -9,7 +9,8 @@ classdef Saver < handle
 %  Saver Methods:
 %    svm_table                  - save MATLAB table of stationary and motion information to .csv
 %    offsets_table              - save MATLAB table of sample offsets for replay trials to .csv
-%    tuning_curves              - save tuning curve information for clusters to .mat
+%    tuning_curves              - save tuning curve information for clusters to .mat (speed)
+%    tuning_curves_acceleration - save tuning curve information for clusters to .mat (acceleration)
 %    formatted_data             - save formatted data structure to .mat
 %    append_to_formatted_data   - append specific variable of formatted data to a .mat file
 %    hf_power_figure            - save the HF power figure to .pdf
@@ -92,9 +93,9 @@ classdef Saver < handle
         end
         
         function tuning_curves_acceleration(obj, probe_id, tbl_struct, i_table)
-        %%tuning_curves Save tuning curve information for clusters to .mat
+        %%tuning_curves_acceleration Save tuning curve information for clusters to .mat
         %
-        %  tuning_curves(PROBE_ID, STRUCT) save the data in STRUCT for probe
+        %  tuning_curves_acceleration(PROBE_ID, STRUCT) save the data in STRUCT for probe
         %  recording with ID, PROBE_ID.
         
             fname = obj.file_manager.tuning_curves_acceleration(probe_id, i_table);

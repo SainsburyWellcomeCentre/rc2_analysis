@@ -14,6 +14,7 @@ classdef TrialStructure < handle
 %       plot_stage          - plots the stage velocity
 %       plot_camera         - plots the camera motion energy
 %       plot_general_trace  - shared function for plotting traces
+%       plot_pupil_diameter - plot the pupil diameter
 %       downsample_trace    - downsamples the traces
 %       x_limits            - set x-axis limits and plotboxaspectratio
 %       plot_fr             - plots the firing rate trace
@@ -91,7 +92,7 @@ classdef TrialStructure < handle
         
 
         function plot_pupil_diameter(obj, h_ax)
-        %%TODO
+        %%plot_pupil_diameter Plots the pupil diameter
             obj.plot_general_trace(h_ax, obj.trial.pupil_diameter, 'Pupil diameter (pixels)');            
 
         end
@@ -108,12 +109,6 @@ classdef TrialStructure < handle
         %%plot_camera Plots the motion energy from the camera
             obj.plot_general_trace(h_ax, obj.mask_scale * obj.trial.camera1/max(obj.trial.camera1), 'Camera 1 (a.u.)');
             
-%             lims = prctile(obj.trial.camera1, [0, 30]);
-%             m = median(obj.trial.camera1(obj.trial.camera1 > lims(1) & obj.trial.camera1 < lims(2)));
-%             new_cam = obj.mask_scale * (obj.trial.camera1 - m)/max(obj.trial.camera1 - m);
-%             plot(h_ax, obj.trial.camera_t, new_cam, 'color', 'k');
-%             ylabel(h_ax, 'Camera (a.u.)')
-%             obj.x_limits(h_ax);
         end
         
         

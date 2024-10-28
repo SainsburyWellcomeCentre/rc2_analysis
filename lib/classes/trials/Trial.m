@@ -51,6 +51,7 @@ classdef Trial < handle
 %       teensy_gain         - teensy_gain channel
 %       camera0             - motion energy for camera0
 %       camera1             - motion energy for camera1
+%       pupil_diameter      - pupil diameter
 %
 %   Trial Methods:
 %       find_original_trial - for replay trials, finds the original trial in the set of all trials
@@ -277,7 +278,7 @@ classdef Trial < handle
 
 
         function val = get.pupil_diameter_(obj)
-        %%TODO
+        %%pupil diameter, camera timebase
             val = [];
             if ~isempty(obj.session.pupil_diameter_)
                 val = obj.session.pupil_diameter_;
@@ -304,7 +305,7 @@ classdef Trial < handle
         
         
         function val = get.pupil_diameter(obj)
-        %%TODO
+        %%pupil diameter, interpolated to session
             val = [];
             if ~isempty(obj.session.pupil_diameter)
                 val = obj.session.pupil_diameter(obj.start_idx:obj.end_idx);

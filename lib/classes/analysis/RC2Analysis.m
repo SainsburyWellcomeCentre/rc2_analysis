@@ -9,29 +9,31 @@ classdef RC2Analysis < handle
 %       figs                - instance of class RC2Figures
 %
 %   RC2Analysis Methods:
-%       experiment_list         - return table with the "experiment list"
-%       get_probe_ids           - return probe recording IDs for experiment groups
-%       get_experiment_group_from_probe_id - return an experiment group for a probe recording ID
-%       get_shank_ids           - return integer IDs of shanks used in recording
-%       get_probe_type_from_experimentlist - return probe type used in probe recording using the experiment list
-%       get_probe_type_from_metadata - return probe type used in probe recording using the metadata file
-%       load_trigger            - return the probe recording trigger channel
-%       get_trigger_baseline_val - return the value of the trigger channel at baseline (low state)
-%       get_session_ids_list    - returns session IDs associated with a probe recording
-%       get_n_cameras_available - returns the number of cameras available for a session
-%       get_camera_ids          - returns the IDs of the camera files available for a session
-%       get_protocol_from_session_id - get the protocol which was run for a session
-%       get_probe_id_from_session_id - returns the probe recordiing ID associated with a session ID
-%       load_formatted_data     - return FormattedData object for a probe recording
-%       load_svm_table          - returns the MATLAB table with stationary and motion firing rates for 
-%                                 each selected cluster on each trial
-%       load_offsets_table      - returns the MATLAB table with sample offsets for replay trials
-%       create_tuning_curves    - create and xave information about cluster tuning for a set of trials
-%       load_tuning_curves      - loads the tuning curves for a probe recording
-%       setup_figures           - setup RC2Figures for saving
-%       animal_id_from_probe_id - return animal ID for a probe recording
-%       get_session_bounds      - return the boundaries of the sessions on the 
-%                                 probe recording (in probe time)
+%       experiment_list                     - return table with the "experiment list"
+%       get_probe_ids                       - return probe recording IDs for experiment groups
+%       get_experiment_group_from_probe_id  - return an experiment group for a probe recording ID
+%       get_shank_ids                       - return integer IDs of shanks used in recording
+%       get_probe_type_from_experimentlist  - return probe type used in probe recording using the experiment list
+%       get_probe_type_from_metadata        - return probe type used in probe recording using the metadata file
+%       load_trigger                        - return the probe recording trigger channel
+%       get_trigger_baseline_val            - return the value of the trigger channel at baseline (low state)
+%       get_session_ids_list                - returns session IDs associated with a probe recording
+%       get_n_cameras_available             - returns the number of cameras available for a session
+%       get_camera_ids                      - returns the IDs of the camera files available for a session
+%       get_protocol_from_session_id        - get the protocol which was run for a session
+%       get_probe_id_from_session_id        - returns the probe recordiing ID associated with a session ID
+%       load_formatted_data                 - return FormattedData object for a probe recording
+%       load_svm_table                      - returns the MATLAB table with stationary and motion firing rates for 
+%                                             each selected cluster on each trial
+%       load_offsets_table                  - returns the MATLAB table with sample offsets for replay trials
+%       create_tuning_curves                - create and save information about cluster speed tuning for a set of trials
+%       load_tuning_curves                  - loads the speed tuning curves for a probe recording
+%       create_tuning_curves_acceleration   - create and save information about cluster acceleration tuning for a set of trials
+%       load_tuning_curves_acceleration     - loads the acceleration tuning curves for a probe recording
+%       setup_figures                       - setup RC2Figures for saving
+%       animal_id_from_probe_id             - return animal ID for a probe recording
+%       get_session_bounds                  - return the boundaries of the sessions on the 
+%                                             probe recording (in probe time)
 %       
 %   
 %   See also: RC2Preprocess, RC2Format
@@ -390,7 +392,14 @@ classdef RC2Analysis < handle
         end
         
         function create_tuning_curves_acceleration(obj, probe_id, trial_types)
-        %%TODO
+        %%create_tuning_curves_acceleration Create and save information about cluster tuning for a
+        %%set of trials
+        %
+        %   create_tuning_curves_acceleration(PROBE_ID, TRIAL_TYPES)
+        %   loads the formatted data, creates tuning curves for each
+        %   cluster for a set of trials described by TRIAL_TYPES, and saves
+        %   the data to a .mat. See FormattedData.create_tuning_curves_acceleration for
+        %   a full description.
         
             data = obj.load_formatted_data(probe_id);
             
@@ -421,14 +430,11 @@ classdef RC2Analysis < handle
         end
         
         function tbl = load_tuning_curves_acceleration(obj, probe_id, i_table)
-        %%load_tuning_curves Loads the tuning curves for a probe recording
+        %%load_tuning_curves_acceleration Loads the tuning curves for a probe recording
         %
-        %   CURVES = load_tuning_curves(PROBE_ID)
+        %   CURVES = load_tuning_curves_acceleration(PROBE_ID)
         %   given a probe recording ID string, PROBE_ID, return the tuning
-        %   curves created by `create_tuning_curves`.
-        %
-        %   See also:   create_tuning_curves,
-        %   FormattedData.create_tuning_curves
+        %   curves created by `create_tuning_curves_acceleration`.
         
             tbl = obj.load.tuning_curves_acceleration(probe_id, i_table);
         end

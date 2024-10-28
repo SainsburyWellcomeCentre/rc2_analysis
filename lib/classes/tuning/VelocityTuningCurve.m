@@ -83,9 +83,7 @@ classdef VelocityTuningCurve < handle
                 for bin_i = 1 : obj.bins.n_bins
                     
                     mask = obj.bin_mask{ii}(:, bin_i);
-%                     if sum(mask) > 0
-                        tuning(bin_i, ii) = mean(fr_conv(mask));
-%                     end
+                    tuning(bin_i, ii) = mean(fr_conv(mask));
                     timing(bin_i, ii) = sum(mask) / obj.trials{ii}.fs;
                 end
                 

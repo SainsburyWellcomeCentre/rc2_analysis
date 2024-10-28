@@ -1,5 +1,32 @@
 classdef TrialStructureVelAcc < handle
-% 
+% TrialStructureVelAcc Class for plotting the structure of RVT trials.
+%
+%  TrialStructureVelAcc Properties:
+%       mask_scale       - where to plot the max mask value on y-axis
+%       solenoid_scale   - where to plot the solenoid on y-axis
+%       trig_shift       - how much to shift the masks above 0 on y-axis
+%       aw_scale         - where to plot the max analysis window value on y-axis
+%       n_axes           - number of axes (5)
+%
+%  TrialStructureVelAcc Methods:
+%       plot_velocity       - plots velocity of the stage
+%       plot_acceleration   - plots acceleration of the stage
+%       plot_general_trace  - shared function for plotting traces
+%       downsample_trace    - downsamples the traces
+%       x_limits            - set x-axis limits and plotboxaspectratio
+%       overlay_masks       - plots all the masks
+%       plot_on_axes        - plots specific trace on specific axes
+%       add_text            - adds time information about stationary and motion periods
+%       plot                - main plotting function
+%
+%   The TrialStructureVelAcc class takes information about a trial and plots the
+%   breakdown of the trial with a focus on speed and acceleration of the treadmill.
+%
+%   The main method is `plot`, which takes a Trial object and an array of
+%   Cluster objects. The other methods are largely for internal use.
+%   
+%
+%   See also: Trial, Cluster
     properties (SetAccess = private)
         
         h_fig
@@ -35,19 +62,19 @@ classdef TrialStructureVelAcc < handle
         
         
         function plot_velocity(obj, h_ax)
-        %%plot_stage Plots the speed of the stage  
-        % Velocity
+        %%plot_velocity Plots the speed of the stage  
+
             obj.plot_general_trace(h_ax, obj.trial.velocity, 'Velocity (cm/s)');
         end
         
         function plot_acceleration(obj, h_ax)
-        %%plot_stage Plots the speed of the stage  
-        % Velocity
+        %%plot_acceleration Plots the acceleration of the stage  
+
             obj.plot_general_trace(h_ax, obj.trial.acceleration, 'Acceleration (m/s^2)');
         end
         
-
         
+
         function plot_general_trace(obj, h_ax, trace, label)
         %%plot_general_trace Shared function for plotting the traces
         
@@ -70,7 +97,7 @@ classdef TrialStructureVelAcc < handle
         end
         
         
-        
+
         function [val, downsample_t] = downsample_trace(obj, trace)
         %%downsample_trace Downsamples trace to 60Hz
         
@@ -79,7 +106,7 @@ classdef TrialStructureVelAcc < handle
             val = interp1(obj.trial.probe_t, trace, downsample_t);
         end
         
-        
+
         
         function x_limits(obj, h_ax)
         %%x_limits Set x-axis limits and plotboxaspectratio

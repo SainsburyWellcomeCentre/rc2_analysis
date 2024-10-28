@@ -22,6 +22,7 @@ classdef AlignedTrial < handle
 %                                 this trial (loaded from .cfg file associated with session .bin file)
 %       probe_t                 - return timebase of the aligned trial synced to the probe recording
 %       velocity                - return the speed for the aligned trial
+%       acceleration            - return the acceleration for the aligned trial
 %       treadmill_speed         - return the treadmill speed for the aligned trial
 %       visual_speed            - return the command speed to the visual corridor during this trial
 %       filtered_teensy         - return the filtered_teensy channel for the aligned trial
@@ -30,6 +31,8 @@ classdef AlignedTrial < handle
 %       multiplexer_output      - return the multiplexer_output channel for the aligned trial
 %       teensy_gain             - return the teensy_gain channel for the aligned trial
 %       camera1                 - return the motion energy for camera1 channel for the aligned trial
+%       camera0                 - return the motion energy for camera0 channel for the aligned trial
+%       pupil_diameter          - return the pupil diameter for the aligned trial
 %       solenoid                - return the solenoid channel for the aligned trial
 %       analysis_window         - return the analysis window for the aligned trial
 %       treadmill_motion_mask   - return the motion mask of the treadmill for the aligned trial
@@ -207,9 +210,9 @@ classdef AlignedTrial < handle
         
         
         function val = acceleration(obj, idx)
-        %%velocity Return the speed for the aligned trial
+        %%acceleration Return the acceleration for the aligned trial
         %
-        %   SPEED = velocity(INDEX)
+        %   SPEED = acceleration(INDEX)
         %   If INDEX is supplied it should be a boolean vector of length
         %   `n_points` indicating which part of the trace to return. If not
         %   supplied or empty, the entire trace is returned.
@@ -387,9 +390,9 @@ classdef AlignedTrial < handle
         end
         
         function val = camera0(obj, idx)
-        %%camera1 Return the motion energy for camera1 channel for the aligned trial
+        %%camera0 Return the motion energy for camera0 channel for the aligned trial
         %
-        %   MOTION_ENERGY = camera1(INDEX)
+        %   MOTION_ENERGY = camera0(INDEX)
         %   If INDEX is supplied it should be a boolean vector of length
         %   `n_points` indicating which part of the trace to return. If not
         %   supplied or empty, the entire trace is returned.
@@ -407,7 +410,12 @@ classdef AlignedTrial < handle
         end
 
         function val = pupil_diameter(obj, idx)
-        %%TODO
+        %%pupil_diameter Return the pupil diameter for the aligned trial
+        %
+        %   DIAMETER = pupil_diameter(INDEX)
+        %   If INDEX is supplied it should be a boolean vector of length
+        %   `n_points` indicating which part of the trace to return. If not
+        %   supplied or empty, the entire trace is returned.
         
             VariableDefault('idx', []);
             

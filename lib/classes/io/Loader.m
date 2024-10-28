@@ -9,6 +9,7 @@ classdef Loader < handle
 %    rc2_bin                     - load .bin for a RC2 session
 %    camera_csv                  - load .csv containing camera motion energy for a session
 %    camera0_dlc_pupil           - load a .csv containing tracking data of the pupil
+%    pupil_diameter              - load a .csv containing pupil diameter
 %    camera0_saccades            - load a .csv containing frame numbers of saccade onsets
 %    formatted_data              - load .mat containing formatted data for a probe recording
 %    load_from_formatted_data    - load a specific variable(s) from the formatted data .mat file
@@ -16,7 +17,8 @@ classdef Loader < handle
 %    svm_table                   - load the .csv file containing summary information about the 
 %                                  stationary and motion periods for a probe recording
 %    offsets_table               - load the .csv file containing sample offsets for replay trials for a probe recording
-%    tuning_curves               - load the .mat file containing tuning curves for the clusters in a probe recording
+%    tuning_curves               - load the .mat file containing tuning curves for the clusters in a probe recording (speed)
+%    tuning_curves_acceleration  - load the .mat file containing tuning curves for the clusters in a probe recording (acceleration)
 %    track_csv                   - load the .csv containing information about the probe shanks and their placement in the brain
 %    track_offset                - load the .txt file containing the offset between electrophysiological and anatomical L5 for a shank
 %    ks2_npy                     - load one of the many .npy files in the Kilosort directory
@@ -145,7 +147,19 @@ classdef Loader < handle
         
         
         function diameter = pupil_diameter(obj, session_id)
-        %TODO
+        %%pupil_diameter Load a .csv containing computed diameter of the pupil for
+        %%a session
+        %
+        %   DIAMETER = pupil_diameter(SESSION_ID) 
+        %   loads the .csv containing computed diameter of the pupil from DeepLabCut
+        %   measurements for a session with ID, SESSION_ID.
+        %
+        %   Outputs:
+        %     DIAMETER - MATLAB vector with the pupil diameter
+        %
+        %   If a .csv file can't be found for SESSION_ID, DLC_TABLE is
+        %   empty. 
+        
             [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
             if ~exist
                 [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
@@ -284,20 +298,24 @@ classdef Loader < handle
         
         
         function tuning_curves = tuning_curves(obj, probe_id)
-        %%tuning_curves Load the .mat file containing tuning curves for the clusters in a probe recording
+        %%tuning_curves Load the .mat file containing speed tuning curves for 
+        %the clusters in a probe recording
         %
         %   STRUCT = tuning_curves(PROBE_ID)
         %   loads the .mat for probe recording with ID, PROBE_ID and
         %   returns it as a MATLAB structure, STRUCT.
-        %   
-        %   See XX for more information about tuning curve data.
         
             fname = obj.file_manager.tuning_curves(probe_id);
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         
         function tuning_curves = tuning_curves_acceleration(obj, probe_id, i_table)
-        %%TODO
+        %%tuning_curves_acceleration Load the .mat file containing acceleration tuning 
+        %curves for the clusters in a probe recording
+        %
+        %   STRUCT = tuning_curves_acceleration(PROBE_ID)
+        %   loads the .mat for probe recording with ID, PROBE_ID and
+        %   returns it as a MATLAB structure, STRUCT.
         
             fname = obj.file_manager.tuning_curves_acceleration(probe_id, i_table);
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
