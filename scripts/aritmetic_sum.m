@@ -1,5 +1,7 @@
 % Fit a linear model on the passive same luminance dataset,
-% on the equation : VT = b_0 + b_1 * T_Vstatic + b_2 * V
+% on the equation : FC_predicted(VF + T) = b_0 + b_1 * FC(T_VS) + b_2 * FC(V)
+% where FC(x) is the measured fold change per trial type (calculated as explained below)
+% and FC_predicted(x) is the fold change as predicted by the model for a given condition.
 
 % How are fold changes calculated?
 % M is the 3D matrix of motion responses, with shape trial_types x clusters x trials
@@ -15,7 +17,7 @@ close all;
 
 % initialization
 experiment_groups           = 'passive_same_luminance';
-trial_types                 = {'T_Vstatic', 'V', 'VT'};
+trial_types                 = {'T_Vstatic', 'V', 'VT'}; % T_Vstatic represents T_VS and VT is VF + T
 restricted                  = true; % If restricted true, select only for clusters that are positively or negatively modulated
 
 ctl                         = RC2Analysis();
