@@ -3,7 +3,7 @@
 Preprocessing pipeline and analysis of data coming from the rollercoaster setup.
 
 > [!IMPORTANT]
-> This codebase is provided as a reference for the publication Velez-Fort 2024 and has been thoroughly documented. If you have any questions, please open an issue.
+> This codebase is provided as a reference for the publication Velez-Fort 2025 and has been thoroughly documented. If you have any questions, please open an issue.
 
 > [!CAUTION]
 > This codebase will not be actively maintained. Installation may be complex and could potentially be unsuccessful.
