@@ -8,6 +8,7 @@ Preprocessing pipeline and analysis of data coming from the rollercoaster setup.
 > [!CAUTION]
 > This codebase will not be actively maintained. Installation may be complex and could potentially be unsuccessful.
 
+You can create an older version of the figures following the instructions on the [`rc2_figures`](https://github.com/SainsburyWellcomeCentre/rc2_figures/tree/master) repository.
 ## Installation
 
 This code has been developed on MATLAB 2021a on Windows 10. Prerequisite code must be installed on the system:
