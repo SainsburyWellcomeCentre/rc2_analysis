@@ -115,19 +115,7 @@ for i = 1 : length(keys)
         if strcmp(vals{i}, '---')
             vals{i} = nan;
         else
-            % deal with bug in generation of some config files
-            if strcmp(keys{i}, 'nidaq.ao.idle_offset')
-                dot_idx = regexp(vals{i}, '\.');
-                if length(dot_idx) == 2
-                    new_str = [vals{i}(1:dot_idx(2)-2), ',' vals{i}(dot_idx(2)-1:end)];
-                    vals{i} = eval(sprintf('[%s]', new_str));
-                else
-                    vals{i} = eval(sprintf('[%s]', vals{i}));
-                end
-            else
-                vals{i} = eval(sprintf('[%s]', vals{i}));
-            end
-            
+            vals{i} = eval(sprintf('[%s]', vals{i}));
         end
     end
     if any(strcmp(keys{i}, cell_array))
