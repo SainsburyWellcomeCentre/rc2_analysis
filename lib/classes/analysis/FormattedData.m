@@ -147,6 +147,8 @@ classdef FormattedData < handle
                         obj.sessions{ii} = SparseNoiseSession(obj.data.sessions(ii));
                     case 'passive_protocol_always_vis'
                         obj.sessions{ii} = PassiveProtocolAlwaysVisSession(obj.data.sessions(ii));
+                    case 'passive_protocol_motion_clouds'
+                        obj.sessions{ii} = PassiveProtocolAlwaysVisSession(obj.data.sessions(ii));
                 end
             end
             
