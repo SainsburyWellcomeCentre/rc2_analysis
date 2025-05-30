@@ -10,10 +10,14 @@ config.git_work_tree_dir        = 'C:\Users\lee\Documents\mvelez\rc2_analysis';
 
 config.experiment_list_csv      = 'D:\mvelez\experiment_list.csv';
 config.formatted_data_dir       = 'D:\mvelez\formatted_data';
-
-config.raw_probe_dir            = 'Z:\margrie\mvelez\mateoData_probe';
-config.raw_camera_dir           = 'Z:\margrie\mvelez\mateoData_cameras';
-config.raw_rc2_dir              = 'Z:\margrie\mvelez\mateoData_rc2';
+% 
+% config.raw_probe_dir            = 'Z:\margrie\mvelez\mateoData_probe';   %Z:/ is winstor
+% config.raw_camera_dir           = 'Z:\margrie\mvelez\mateoData_cameras';
+% config.raw_rc2_dir              = 'Z:\margrie\mvelez\mateoData_rc2';
+% 
+config.raw_probe_dir            = 'Y:\mvelez\mateoData_probe';     % Y:/ is ceph - data not saved in winstor anymore
+config.raw_camera_dir           = 'Y:\mvelez\mateoData_cameras';
+config.raw_rc2_dir              = 'Y:\mvelez\mateoData_rc2';
 
 config.processed_probe_fast_dir = 'D:\mvelez\mateoData_probe\janelia_pipeline';
 config.processed_probe_slow_dir = 'E:\mvelez\mateoData_probe\janelia_pipeline';
