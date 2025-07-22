@@ -263,6 +263,20 @@ classdef AlignedTrial < handle
             val = obj.get_aligned_data('visual_speed', idx);
         end
         
+        function val = position(obj, idx)
+        %%position Return the position during this trial
+        %
+        %   POSITION = position(INDEX)
+        %   If INDEX is supplied it should be a boolean vector of length
+        %   `n_points` indicating which part of the trace to return. If not
+        %   supplied or empty, the entire trace is returned.
+        %
+        %   See also: Trial
+        
+            VariableDefault('idx', []);
+            val = obj.get_aligned_data('position', idx);
+        end
+        
         
         
         function val = filtered_teensy(obj, idx)
@@ -578,9 +592,22 @@ classdef AlignedTrial < handle
         %   indicating which part of the trace to return.
         %
             val = [];
-            if ~isempty(obj.trial.(type))
-                val = obj.trial.(type)(obj.offset + (1:obj.n_points));
-                if ~isempty(idx), val = val(idx); end
+            if isprop(obj.trial, type) || ismethod(obj.trial, type)
+                full_trace = obj.trial.(type);
+
+                if ~isempty(full_trace)
+                    indices = obj.offset + (1:obj.n_points);
+
+                    if max(indices) <= numel(full_trace)
+                        val = full_trace(indices);
+
+                        if ~isempty(idx)
+                            val = val(idx);
+                        end
+                    else
+                        warning('AlignedTrial:get_aligned_data', 'Index exceeds the number of elements in trial.%s.', type);
+                    end
+                end
             end
         end
     end

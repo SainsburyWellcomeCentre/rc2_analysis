@@ -149,6 +149,8 @@ classdef FormattedData < handle
                         obj.sessions{ii} = PassiveProtocolAlwaysVisSession(obj.data.sessions(ii));
                     case 'passive_protocol_motion_clouds'
                         obj.sessions{ii} = PassiveProtocolAlwaysVisSession(obj.data.sessions(ii));
+                    case 'training'
+                        obj.sessions{ii} = TrainingRunningSession(obj.data.sessions(ii));
                 end
             end
             
@@ -284,6 +286,8 @@ classdef FormattedData < handle
             if strcmp(obj.probe_id, 'CAA-1112872_rec1_rec1b_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1121416_rec1_rec2')...
                     |  strcmp(obj.probe_id, 'CAA-1121763_rec1_rec2')
                 sessions = obj.sessions(1:2);
+            elseif strcmp(obj.probe_id, 'CAA-1123304_rec1_rec2_rec3_rec4')
+                sessions = obj.sessions(1:4);
             else
                 sessions = obj.sessions(1);
             end
