@@ -104,7 +104,7 @@ for pid = 1:length(probe_ids)
     % --- Prepare for cluster analysis as before, but using long_trials and short_trials ---
     trial_groups = struct('long', long_trials, 'short', short_trials);
     group_names = {'long', 'short'};
-    group_labels = {'Long (120 cm)', 'Short (60 cm)'};
+    group_labels = {'Long (0-120 cm)', 'Short (60-120 cm)'};
     all_rate_smooth_by_group = struct();
     all_rate_unsmooth_by_group = struct(); % NEW: Store unsmoothed rates
     all_bin_centers_by_group = struct();
@@ -148,9 +148,17 @@ for pid = 1:length(probe_ids)
             if strcmp(group, 'long')
                 edges = 0:bin_size_cm:120;
             else
-                edges = 0:bin_size_cm:60;
+                edges = 0:bin_size_cm:60; % Short trials have positions 0-60 cm
             end
             bin_centers = edges(1:end-1) + bin_size_cm/2;
+            
+            % For short trials, adjust bin centers for plotting to align with 60-120 cm
+            if strcmp(group, 'short')
+                plot_bin_centers = bin_centers + 60; % Shift to 60-120 cm for plotting
+            else
+                plot_bin_centers = bin_centers;
+            end
+            
             spike_count = histcounts(all_spike_positions, edges);
             dt_vec = [diff(all_times); 0];
             occupancy = zeros(1, length(edges)-1);
@@ -182,13 +190,13 @@ for pid = 1:length(probe_ids)
             if ~isfield(all_rate_smooth_by_group, group)
                 all_rate_smooth_by_group.(group) = nan(n_clusters, length(rate_smooth));
                 all_rate_unsmooth_by_group.(group) = nan(n_clusters, length(rate)); % NEW: Store unsmoothed rates
-                all_bin_centers_by_group.(group) = bin_centers;
+                all_bin_centers_by_group.(group) = plot_bin_centers; % Use plot_bin_centers for display
                 all_avg_velocity_by_group.(group) = nan(n_clusters, length(avg_velocity));
                 all_occ_by_group.(group) = nan(n_clusters, length(occupancy));
             end
             all_rate_smooth_by_group.(group)(c, :) = rate_smooth;
             all_rate_unsmooth_by_group.(group)(c, :) = rate; % NEW: Store unsmoothed rates
-            all_bin_centers_by_group.(group) = bin_centers;
+            all_bin_centers_by_group.(group) = plot_bin_centers; % Use plot_bin_centers for display
             all_avg_velocity_by_group.(group)(c, :) = avg_velocity;
             all_occ_by_group.(group)(c, :) = occupancy;
         end
@@ -232,27 +240,147 @@ for pid = 1:length(probe_ids)
     FigureTitle(fig_profiles, sprintf('Average Profiles - %s', probe_ids{pid}));
     ctl.figs.save_fig_to_join();
 
+    % Determine session types based on actual trial data
+    session_types = cell(length(sessions), 1);
+    session_max_positions = zeros(length(sessions), 1);
+    
+    for s = 1:length(sessions)
+        session = sessions{s};
+        trials_in_session = session.trials;
+        session_max_pos = 0;
+        
+        for t = 1:length(trials_in_session)
+            trial = trials_in_session{t}.to_aligned;
+            motion_mask = trial.motion_mask();
+            pos = trial.position(motion_mask);
+            if ~isempty(pos)
+                max_pos = max(pos);
+                session_max_pos = max(session_max_pos, max_pos);
+            end
+        end
+        
+        session_max_positions(s) = session_max_pos;
+        if session_max_pos > 90
+            session_types{s} = 'long';
+        else
+            session_types{s} = 'short';
+        end
+        
+        fprintf('  Session %d: max position = %.2f cm, type = %s\n', s, session_max_pos, session_types{s});
+    end
+    
+    % Define colors for different sessions
+    % Long sessions (120cm): cold colors (blue, cyan)
+    % Short sessions (60cm): warm colors (red, orange)
+    cold_colors = {[0 0 0.8], [0 0.8 0.8]}; % dark blue, cyan
+    warm_colors = {[0.8 0 0], [1 0.5 0]}; % dark red, orange
+    
+    session_colors = cell(length(sessions), 1);
+    session_labels = {};
+    long_count = 0;
+    short_count = 0;
+    
+    for s = 1:length(sessions)
+        if strcmp(session_types{s}, 'long')
+            long_count = long_count + 1;
+            session_colors{s} = cold_colors{mod(long_count-1, length(cold_colors)) + 1};
+            session_labels{s} = sprintf('120cm Session %d', s);
+        else
+            short_count = short_count + 1;
+            session_colors{s} = warm_colors{mod(short_count-1, length(warm_colors)) + 1};
+            session_labels{s} = sprintf('60cm Session %d', s);
+        end
+    end
+
     % For each cluster, create a single figure with both group firing rates overlaid
     fprintf('  Creating individual cluster plots...\n');
     for c = 1:n_clusters
         cluster = clusters(c);
         fig_cluster = ctl.figs.a4figure('landscape');
-        hold on;
-        for g = 1:2
-            group = group_names{g};
-            group_color = [0.2 0.4 1]; % blue for long
-            if strcmp(group, 'short')
-                group_color = [1 0.5 0]; % orange for short
-            end
-            bin_centers = all_bin_centers_by_group.(group);
-            rate_smooth = all_rate_smooth_by_group.(group)(c, :);
-            rate_unsmooth = all_rate_unsmooth_by_group.(group)(c, :); % NEW: Get unsmoothed rates
+        
+        % Process each session separately
+        for s = 1:length(sessions)
+            session = sessions{s};
+            trials_in_session = session.trials;
             
+            % Collect data for this session
+            all_spike_positions = [];
+            all_positions = [];
+            all_times = [];
+            all_velocities = [];
+            
+            for t = 1:length(trials_in_session)
+                trial = trials_in_session{t}.to_aligned;
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                tvec = trial.probe_t(motion_mask);
+                vel = trial.velocity(motion_mask);
+                all_positions = [all_positions; pos(:)];
+                all_times = [all_times; tvec(:)];
+                all_velocities = [all_velocities; vel(:)];
+                st = cluster.spike_times;
+                mask = st >= tvec(1) & st <= tvec(end);
+                st = st(mask);
+                if ~isempty(st)
+                    spike_pos = interp1(tvec, pos, st, 'linear', 'extrap');
+                    all_spike_positions = [all_spike_positions; spike_pos];
+                end
+            end
+            
+            if isempty(all_positions)
+                continue;
+            end
+            
+            % Set bin edges based on session type (long vs short)
+            if strcmp(session_types{s}, 'long')
+                edges = 0:bin_size_cm:120;
+            else  % Short sessions
+                edges = 0:bin_size_cm:60;
+            end
+            bin_centers = edges(1:end-1) + bin_size_cm/2;
+            
+            % For short trials, adjust bin centers for plotting to align with 60-120 cm
+            if strcmp(session_types{s}, 'short')
+                plot_bin_centers = bin_centers + 60; % Shift to 60-120 cm for plotting
+            else
+                plot_bin_centers = bin_centers;
+            end
+            
+            spike_count = histcounts(all_spike_positions, edges);
+            dt_vec = [diff(all_times); 0];
+            occupancy = zeros(1, length(edges)-1);
+            velocity_sum = zeros(1, length(edges)-1);
+            for i = 1:length(occupancy)
+                in_bin = all_positions >= edges(i) & all_positions < edges(i+1);
+                occupancy(i) = sum(dt_vec(in_bin));
+                velocity_sum(i) = sum(all_velocities(in_bin) .* dt_vec(in_bin));
+            end
+            avg_velocity = velocity_sum ./ occupancy;
+            avg_velocity(isnan(avg_velocity) | isinf(avg_velocity)) = 0;
+            rate = spike_count ./ occupancy;
+            rate(isnan(rate) | isinf(rate)) = 0;
+            
+            % Create proper spatial Gaussian kernel
+            kernel_size_cm = 8 * gauss_sigma_cm; % 64 cm total kernel size
+            kernel_samples = round(kernel_size_cm / bin_size_cm); 
+            x = linspace(-kernel_samples/2, kernel_samples/2, kernel_samples);
+            kernel = exp(-x.^2 / (2 * (gauss_sigma_cm/bin_size_cm)^2));
+            kernel = kernel / sum(kernel); % normalize
+            
+            % Pad the rate data to avoid edge effects using mirror padding
+            pad_size = floor(length(kernel) / 2);
+            rate_padded = [fliplr(rate(1:pad_size)), rate, fliplr(rate(end-pad_size+1:end))];
+            rate_smooth_padded = conv(rate_padded, kernel, 'same');
+            rate_smooth = rate_smooth_padded(pad_size + 1 : end - pad_size);
+            
+            % Plot this session
+            hold on;
             % Plot unsmoothed rate with 0.5 alpha (semi-transparent)
-            plot(bin_centers, rate_unsmooth, '-', 'LineWidth', 1, 'Color', [group_color, 0.5], 'DisplayName', sprintf('%s (unsmoothed)', group_labels{g}));
+            plot(plot_bin_centers, rate, '-', 'LineWidth', 1, 'Color', [session_colors{s}, 0.5], 'DisplayName', sprintf('%s (unsmoothed)', session_labels{s}));
             % Plot smoothed rate (solid line)
-            plot(bin_centers, rate_smooth, '-', 'LineWidth', 2, 'Color', group_color, 'DisplayName', group_labels{g});
+            plot(plot_bin_centers, rate_smooth, '-', 'LineWidth', 2, 'Color', session_colors{s}, 'DisplayName', session_labels{s});
         end
+        
         hold off;
         xlabel('Position (cm)');
         ylabel('Firing rate (Hz)');
@@ -299,6 +427,13 @@ for pid = 1:length(probe_ids)
         % Removed title to avoid overlap with FigureTitle
         set(gca, 'YTick', 1:n_clusters, 'YTickLabel', sorted_cluster_ids);
         
+        % Set x-axis limits to make short trials visually half width
+        if strcmp(group, 'short')
+            xlim([60, 120]); % Short trials span 60-120 cm
+        else
+            xlim([0, 120]); % Long trials span 0-120 cm
+        end
+        
         % Normalized heatmap
         norm_rate_mat = sorted_rate_mat ./ max(sorted_rate_mat, [], 2);
         norm_rate_mat(isnan(norm_rate_mat)) = 0;
@@ -310,6 +445,13 @@ for pid = 1:length(probe_ids)
         ylabel('Cluster (sorted by maximum peak position)');
         % Removed title to avoid overlap with FigureTitle
         set(gca, 'YTick', 1:n_clusters, 'YTickLabel', sorted_cluster_ids);
+        
+        % Set x-axis limits to make short trials visually half width
+        if strcmp(group, 'short')
+            xlim([60, 120]); % Short trials span 60-120 cm
+        else
+            xlim([0, 120]); % Long trials span 0-120 cm
+        end
     end
     % Removed sgtitle to avoid overlap with FigureTitle
     
