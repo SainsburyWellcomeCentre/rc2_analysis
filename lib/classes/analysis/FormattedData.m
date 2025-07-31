@@ -286,7 +286,7 @@ classdef FormattedData < handle
             if strcmp(obj.probe_id, 'CAA-1112872_rec1_rec1b_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1121416_rec1_rec2')...
                     |  strcmp(obj.probe_id, 'CAA-1121763_rec1_rec2')
                 sessions = obj.sessions(1:2);
-            elseif strcmp(obj.probe_id, 'CAA-1123304_rec1_rec2_rec3_rec4')
+            elseif contains(obj.probe_id, 'rec1_rec2_rec3_rec4')
                 sessions = obj.sessions(1:4);
             else
                 sessions = obj.sessions(1);
