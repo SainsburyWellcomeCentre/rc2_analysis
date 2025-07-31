@@ -162,7 +162,7 @@ classdef RC2Analysis < handle
             if sum(idx) == 0
                 error('probe ID, %s, not found in experiment list', probe_id);
             end
-            probe_type = exp_list.np_probe_type{idx};
+            probe_type = exp_list.np_probe_type(idx);
         end
         
         
