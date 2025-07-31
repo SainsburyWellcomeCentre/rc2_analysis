@@ -31,7 +31,7 @@ classdef RasterData < handle
     
     properties
         
-        limits = [-1, 1]
+        limits = [-1, 4]
         trigger_times
     end
     
@@ -53,9 +53,11 @@ classdef RasterData < handle
         function obj = RasterData(cluster, limits)
         % RasterData
         %
-        %   RasterData(CLUSTER)
+        %   RasterData(CLUSTER, LIMITS)
         %   collection of methods for handling raster data. Takes as
-        %   argument CLUSTER an instance of class Cluster.
+        %   argument CLUSTER an instance of class Cluster and LIMITS a 1x2
+        %   vector specifying the time limits around events.
+            VariableDefault('limits', [-1, 4]);
             obj.limits = limits;
             obj.cluster = cluster;
         end
