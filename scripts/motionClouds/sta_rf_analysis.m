@@ -18,7 +18,7 @@ output_subdirs_csv   = {'motionClouds','passive_same_luminance_mc','sta_rf'};
 candidate_exts       = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'};
 lags_ms              = 40:10:120;     % must match exporter
 snr_method           = 'zmax';        % 'zmax' only for now
-whitening            = 'none';        % 'none' | 'ridge'
+whitening            = 'ridge';        % 'none' | 'ridge'
 lambda_ridge         = 0.05;          % regularization weight
 n_permutations       = 20;            % for null SNR
 restricted_to_region = {'VISp1','VISp2/3','VISp4','VISp5','VISp6a','VISp6b'};
@@ -35,15 +35,7 @@ out_csvdir = fullfile(cfg.figure_dir, output_subdirs_csv{:});
 if ~isfolder(out_imgdir), mkdir(out_imgdir); end
 if ~isfolder(out_csvdir), mkdir(out_csvdir); end
 
-% --- Build and save motion cloud index -> folder map ---
-dir_info = dir(images_root);
-names = {dir_info([dir_info.isdir]).name};
-names = names(~ismember(names,{'.','..'}));
-names = sort(names);
-mc_tbl = table((1:numel(names))', names', ...
-    'VariableNames', {'motion_cloud_id','folder_name'});
-writetable(mc_tbl, fullfile(out_csvdir,'motion_cloud_index_map.csv'));
-fprintf('Saved motion cloud index map with %d entries.\n', numel(names));
+% (No directory map; folders will be obtained from CSV image_rel_path)
 
 fprintf('STA/RF analysis for %d probe(s) in %s\n', length(probe_ids), strjoin(experiment_groups, ', '));
 
@@ -82,6 +74,33 @@ for pid = 1:length(probe_ids)
         continue;
     end
 
+    % Build motion_cloud_id -> folder map from CSV (verify consistency)
+    if ~all(ismember({'motion_cloud_id','image_rel_path'}, T.Properties.VariableNames))
+        warning('Required columns motion_cloud_id/image_rel_path missing in %s. Skipping.', csv_path);
+        continue;
+    end
+    id_vals = double(T.motion_cloud_id(:));
+    dir_vals = string(T.image_rel_path(:));
+    valid_map = ~isnan(id_vals) & dir_vals ~= "";
+    map_tbl = table(id_vals(valid_map), dir_vals(valid_map), 'VariableNames', {'id','dir'});
+    map_tbl = unique(map_tbl, 'rows');
+    % Ensure one folder per id
+    [G, gids] = findgroups(map_tbl.id);
+    id_to_dir = containers.Map('KeyType','double','ValueType','char');
+    for gi = 1:numel(gids)
+        rows = map_tbl(G == gi, :);
+        udirs = unique(rows.dir);
+        if numel(udirs) ~= 1
+            warning('Inconsistent image_rel_path for motion_cloud_id=%d in %s. Skipping probe.', gids(gi), csv_path);
+            id_to_dir = containers.Map('KeyType','double','ValueType','char');
+            break;
+        end
+        id_to_dir(gids(gi)) = char(udirs);
+    end
+    if isempty(id_to_dir)
+        continue;
+    end
+
     % Loop over clusters (no parallelization to save memory)
     for ci = 1:numel(clusters_here)
         cl_id = clusters_here(ci);
@@ -92,7 +111,7 @@ for pid = 1:length(probe_ids)
         if isempty(Tc), continue; end
 
         % Check required columns
-        needed = [{'motion_cloud_id'},{'image_index'}, ...
+        needed = [{'motion_cloud_id'},{'image_rel_path'}, ...
                   arrayfun(@(L)sprintf('image_index_lag%dms',L), lags_ms, 'UniformOutput', false)];
         if ~all(ismember(needed, Tc.Properties.VariableNames))
             warning('Missing required columns for cluster %d in %s. Skipping.', cl_id, csv_path);
@@ -106,7 +125,7 @@ for pid = 1:length(probe_ids)
             mc_ids   = double(Tc.motion_cloud_id);
             img_idxs = double(Tc.(img_idx_col));
 
-            valid = ~isnan(mc_ids) & ~isnan(img_idxs) & mc_ids>=1 & mc_ids<=numel(names);
+            valid = ~isnan(mc_ids) & ~isnan(img_idxs) & arrayfun(@(v)isKey(id_to_dir, v), mc_ids);
             if ~any(valid), continue; end
 
             pairs = [mc_ids(valid), img_idxs(valid)];
@@ -119,7 +138,7 @@ for pid = 1:length(probe_ids)
             for k = 1:size(uniq_pairs,1)
                 mc_id   = uniq_pairs(k,1);
                 img_idx = uniq_pairs(k,2);
-                mc_dir = names{mc_id};
+                mc_dir = id_to_dir(mc_id);
                 frame_base = sprintf('frame%06d', img_idx);
                 I = local_read_frame_single(images_root, mc_dir, frame_base, candidate_exts);
                 if isempty(I), continue; end
@@ -135,7 +154,7 @@ for pid = 1:length(probe_ids)
 
             % Null std via permutations
             if n_permutations > 0
-                null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, names, candidate_exts, size(sum_img), n_permutations);
+                null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, id_to_dir, candidate_exts, size(sum_img), n_permutations);
             else
                 null_std = std(sta(:));
             end
@@ -167,9 +186,9 @@ for pid = 1:length(probe_ids)
                 img_idx_col = sprintf('image_index_lag%dms', best_lag);
                 mc_ids_p   = Tc.motion_cloud_id;
                 img_idxs_p = Tc.(img_idx_col);
-                [uniq_pairs_p, counts_p] = local_unique_pairs_and_counts(mc_ids_p, img_idxs_p, names);
+                [uniq_pairs_p, counts_p] = local_unique_pairs_and_counts(mc_ids_p, img_idxs_p, id_to_dir);
                 if ~isempty(uniq_pairs_p)
-                    p_value = local_perm_p_value(uniq_pairs_p, counts_p, images_root, names, candidate_exts, size(best_sta), n_permutations, whitening, lambda_ridge);
+                    p_value = local_perm_p_value(uniq_pairs_p, counts_p, images_root, id_to_dir, candidate_exts, size(best_sta), n_permutations, whitening, lambda_ridge);
                 end
             catch
                 p_value = NaN;
@@ -191,7 +210,7 @@ for pid = 1:length(probe_ids)
     end
 end
 
-function null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, names, exts, imsz, n_perm)
+function null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, n_perm)
 % Memory-efficient null: sample frames directly, never stack all into memory
     K = size(uniq_pairs,1);
     if K == 0
@@ -225,8 +244,8 @@ function null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root,
             if nk == 0, continue; end
             mc_id   = uniq_pairs(k,1);
             img_idx = uniq_pairs(k,2);
-            if mc_id < 1 || mc_id > numel(names), continue; end
-            dirn = names{mc_id};
+            if ~isKey(id_to_dir, mc_id), continue; end
+            dirn = id_to_dir(mc_id);
             base = sprintf('frame%06d', img_idx);
             I = local_read_frame_single(images_root, dirn, base, exts);
             if isempty(I) || ~isequal(size(I), imsz)
@@ -345,11 +364,11 @@ function [cx, cy, sx, sy, ang_deg] = local_rf_metrics(sta)
     ang_deg = rad2deg(ang);
 end
 
-function [uniq_pairs, counts] = local_unique_pairs_and_counts(mc_ids, img_idxs, names, max_images_per_lag)
+function [uniq_pairs, counts] = local_unique_pairs_and_counts(mc_ids, img_idxs, id_to_dir, max_images_per_lag)
 % Return unique (mc_id, img_idx) pairs and their counts with optional cap
 	mc_ids = double(mc_ids(:));
 	img_idxs = double(img_idxs(:));
-	valid = ~isnan(mc_ids) & ~isnan(img_idxs) & mc_ids>=1 & mc_ids<=numel(names);
+	valid = ~isnan(mc_ids) & ~isnan(img_idxs) & arrayfun(@(v)isKey(id_to_dir, v), mc_ids);
 	mc_ids = mc_ids(valid);
 	img_idxs = img_idxs(valid);
 	if isempty(mc_ids)
@@ -369,7 +388,7 @@ function [uniq_pairs, counts] = local_unique_pairs_and_counts(mc_ids, img_idxs, 
 	end
 end
 
-function p_value = local_perm_p_value(uniq_pairs, counts, images_root, names, exts, imsz, n_perm, whitening_mode, lambda)
+function p_value = local_perm_p_value(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, n_perm, whitening_mode, lambda)
 % Permutation p-value using the same SNR statistic as selection (no whitening)
 	if nargin < 8, whitening_mode = 'none'; end %#ok<DEFNU>
 	if nargin < 9, lambda = 0.0; end %#ok<DEFNU>
@@ -381,8 +400,8 @@ function p_value = local_perm_p_value(uniq_pairs, counts, images_root, names, ex
 	for k = 1:K
 		mc_id   = uniq_pairs(k,1);
 		img_idx = uniq_pairs(k,2);
-		if mc_id < 1 || mc_id > numel(names), continue; end
-		dirn = names{mc_id}; base = sprintf('frame%06d', img_idx);
+		if ~isKey(id_to_dir, mc_id), continue; end
+		dirn = id_to_dir(mc_id); base = sprintf('frame%06d', img_idx);
 		I = local_read_frame_single(images_root, dirn, base, exts);
 		if isempty(I), continue; end
 		if isempty(X)
@@ -397,7 +416,7 @@ function p_value = local_perm_p_value(uniq_pairs, counts, images_root, names, ex
 		p_value = NaN; return;
 	end
 	% Observed statistic uses the same null_std scaling as selection
-	null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, names, exts, imsz, max(10, min(50, n_perm)));
+	null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, max(10, min(50, n_perm)));
 	obs_mu = (X * (double(kept_counts)/sum(kept_counts)));
 	obs_zmax = max(abs(obs_mu)) / null_std;
 	% Build permutation distribution using weights
