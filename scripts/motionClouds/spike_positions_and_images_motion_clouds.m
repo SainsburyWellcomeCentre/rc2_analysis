@@ -33,44 +33,54 @@ probe_ids = ctl.get_probe_ids(experiment_groups{:});
 % CSV Manager
 cm = CSVManager();
 cm.save_on = save_csv;
-script_dir = fileparts(mfilename('fullpath'));
-cm.set_csv_fulldir(script_dir);
+out_dir_base = cfg.figure_dir;
+cm.set_csv_fulldir(out_dir_base);
 cm.set_csv_subdir(save_subdirs{:});
 
 fprintf('Found %d probe(s) for experiment group(s): %s\n', length(probe_ids), strjoin(experiment_groups, ', '));
 
-% Build Motion Cloud directory map and verify order vs image_folders.mat
+% Build Motion Cloud directory map (alphabetical order)
 dir_info = dir(images_root);
 names = {dir_info([dir_info.isdir]).name};
 names = names(~ismember(names,{'.','..'}));
 names = sort(names);
-try
-    folders_mat_path = fullfile(cfg.motion_clouds_root, 'image_folders.mat');
-    if exist(folders_mat_path,'file')
-        Simg = load(folders_mat_path);
-        folders_mat = [];
-        flds = fieldnames(Simg);
-        for ii = 1:numel(flds)
-            v = Simg.(flds{ii});
-            if iscellstr(v) || (iscell(v) && all(cellfun(@ischar,v)))
-                folders_mat = v; break;
-            end
-        end
-        if ~isempty(folders_mat)
-            if numel(folders_mat) ~= numel(names) || ~all(strcmp(folders_mat(:), names(:)))
-                warning('Order mismatch between motion cloud directories and image_folders.mat; proceeding with directory alphabetical order.');
-            else
-                fprintf('Verified motion cloud folder order matches image_folders.mat.\n');
-            end
-        else
-            warning('image_folders.mat present but no string cell array of folder names found.');
-        end
-    else
-        warning('image_folders.mat not found at %s; skipping order check.', folders_mat_path);
-    end
-catch ME
-    warning('Failed to verify image folder order: %s', ME.message);
+
+% Load image_folders.mat and REQUIRE exact match to alphabetical directory list
+cloud_names = names; % initialize; will be replaced by saved order after validation
+saved_file = fullfile(cfg.motion_clouds_root, 'image_folders.mat');
+if ~exist(saved_file, 'file')
+    error('image_folders.mat not found at %s', saved_file);
 end
+
+Ssaved = load(saved_file);
+if isstruct(Ssaved) && isfield(Ssaved, 'image_folders') && isstruct(Ssaved.image_folders) && isfield(Ssaved.image_folders, 'name')
+    names_struct = Ssaved.image_folders;
+    saved_names = {names_struct.name};
+else
+    saved_names = extract_string_list_from_struct(Ssaved);
+end
+
+if isempty(saved_names)
+    error('image_folders.mat present but no folder name list could be extracted.');
+end
+
+saved_names = saved_names(:)';
+if numel(saved_names) ~= numel(names)
+    error('Mismatch in count: %d folders under %s vs %d names in image_folders.mat', numel(names), images_root, numel(saved_names));
+end
+
+first_mismatch = find(~strcmp(saved_names, names), 1);
+if ~isempty(first_mismatch)
+    error('Order/name mismatch at index %d: dir="%s" vs mat="%s"', first_mismatch, names{first_mismatch}, saved_names{first_mismatch});
+end
+
+% If we reach here, alphabetical directory order matches saved order; use saved order explicitly
+cloud_names = saved_names;
+fprintf('Verified: alphabetical folders under %s match image_folders.mat order (field "name").\n', images_root);
+
+% Validate that each cloud_names entry exists under images_root when used
+
+% (Removed verification against image_folders.mat; using alphabetical directory order)
 
 % Load Motion Cloud sequence (trial -> motion_cloud_id)
 mc_seq_path = fullfile(cfg.motion_clouds_root, 'motion_cloud_sequence_250414.mat');
@@ -157,25 +167,7 @@ for pid = 1:length(probe_ids)
     selected_clusters = data.selected_clusters();
     sessions          = data.motion_sessions();
 
-    % Build id -> region_str map once per probe
-    id_to_region_map = containers.Map('KeyType','double','ValueType','char');
-    try
-        meta = data.clusters;
-        if isstruct(meta) && isfield(meta, 'id') && isfield(meta, 'region_str')
-            ids_meta = double([meta.id]);
-            regs_meta = {meta.region_str};
-            for kk = 1:numel(ids_meta)
-                id_to_region_map(ids_meta(kk)) = char(string(regs_meta{kk}));
-            end
-        elseif istable(meta) && all(ismember({'id','region_str'}, meta.Properties.VariableNames))
-            ids_meta = double(meta.id(:)');
-            regs_meta = cellstr(string(meta.region_str(:)'));
-            for kk = 1:numel(ids_meta)
-                id_to_region_map(ids_meta(kk)) = regs_meta{kk};
-            end
-        end
-    catch
-    end
+    % (Removed unused id_to_region_map construction)
 
     % Outputs
     out_probe_id        = {};
@@ -332,8 +324,15 @@ for pid = 1:length(probe_ids)
                 out_motion_cloud_id = [out_motion_cloud_id; repmat(mc_id, n_new, 1)]; %#ok<AGROW>
                 % image_rel_path: cloud directory name (relative)
                 cloud_rel = '';
-                if ~isnan(mc_id) && mc_id>=1 && mc_id<=numel(names)
-                    cloud_rel = names{mc_id};
+                if ~isnan(mc_id) && mc_id>=1 && mc_id<=numel(cloud_names)
+                    candidate = cloud_names{mc_id};
+                    % Ensure the directory exists under images_root
+                    full_candidate = fullfile(images_root, candidate);
+                    if exist(full_candidate, 'dir')
+                        cloud_rel = candidate;
+                    else
+                        error('Expected folder for motion_cloud_id=%d not found: %s', mc_id, full_candidate);
+                    end
                 end
                 out_image_rel_path  = [out_image_rel_path;  repmat({cloud_rel}, n_new, 1)]; %#ok<AGROW>
                 
@@ -387,3 +386,28 @@ for pid = 1:length(probe_ids)
 end
 
 fprintf('\nCompleted consolidated export for %d probe(s).\n', length(probe_ids));
+
+function names_cell = extract_string_list_from_struct(S)
+% Return a cell array of char row vector(s) from a struct containing
+% either a cellstr, a cell of char, a string array, or a char vector.
+% If nothing matches, return [].
+    names_cell = [];
+    try
+        fns = fieldnames(S);
+        for ii = 1:numel(fns)
+            v = S.(fns{ii});
+            if iscellstr(v) || (iscell(v) && all(cellfun(@ischar, v)))
+                names_cell = v; break;
+            elseif isstring(v)
+                names_cell = cellstr(v(:)); break;
+            elseif ischar(v)
+                names_cell = cellstr(v); break;
+            end
+        end
+        if ~isempty(names_cell)
+            names_cell = names_cell(:)';
+        end
+    catch
+        names_cell = [];
+    end
+end
