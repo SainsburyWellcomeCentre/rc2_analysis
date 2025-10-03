@@ -44,3 +44,6 @@ config.ecephys_np2_python_exe   = 'C:\Users\lee\Documents\jcolonell\ecephys_spik
 
 config.runningmouse_python_exe  = 'C:\Users\lee\Documents\mvelez\atyson\runningmouse\Scripts\python.exe';
 config.runningmouse_main_script = 'C:\Users\lee\Documents\mvelez\atyson\runningmouse\difference_video_2\main.py';
+
+% Motion Clouds root (data moved from Y: to D:)
+config.motion_clouds_root       = 'D:\mvelez\mateoData_mc';
