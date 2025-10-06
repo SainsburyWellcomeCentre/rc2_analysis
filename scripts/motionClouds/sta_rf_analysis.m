@@ -22,6 +22,7 @@ whitening            = 'ridge';        % 'none' | 'ridge'
 lambda_ridge         = 0.05;          % regularization weight
 n_permutations       = 20;            % for null SNR
 restricted_to_region = {'VISp1','VISp2/3','VISp4','VISp5','VISp6a','VISp6b'};
+restricted_to_protocol_ids = [1 2];            % protocol_id 1 is VF + T, 2 is VF, 3 is Tvs
 
 % Init controller to get probe ids
 ctl       = RC2Analysis();
@@ -60,6 +61,21 @@ for pid = 1:length(probe_ids)
         if isempty(T)
             warning('No rows after region filter for probe %s. Skipping.', probe_id);
             continue;
+        end
+    end
+
+    % --- Optional protocol_id restriction ---
+    if ~isempty(restricted_to_protocol_ids)
+        if any(strcmp(T.Properties.VariableNames,'protocol_id'))
+            T = T(ismember(T.protocol_id, restricted_to_protocol_ids), :);
+            if isempty(T)
+                warning('No rows after protocol_id filter for probe %s. Skipping.', probe_id);
+                continue;
+            else
+                fprintf('Filtered to protocol_id in %s: %d rows remain.\n', mat2str(restricted_to_protocol_ids), height(T));
+            end
+        else
+            warning('Protocol filter requested but protocol_id column missing for probe %s. Skipping filter.', probe_id);
         end
     end
 
@@ -388,10 +404,9 @@ function [uniq_pairs, counts] = local_unique_pairs_and_counts(mc_ids, img_idxs, 
 	end
 end
 
-function p_value = local_perm_p_value(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, n_perm, whitening_mode, lambda)
+function p_value = local_perm_p_value(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, n_perm, ~, ~)
 % Permutation p-value using the same SNR statistic as selection (no whitening)
-	if nargin < 8, whitening_mode = 'none'; end %#ok<DEFNU>
-	if nargin < 9, lambda = 0.0; end %#ok<DEFNU>
+	% whitening parameters unused in this implementation
 	% Preload frames
 	K = size(uniq_pairs,1);
 	if K == 0, p_value = NaN; return; end
