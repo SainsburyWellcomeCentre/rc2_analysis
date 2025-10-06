@@ -226,6 +226,36 @@ for pid = 1:length(probe_ids)
     end
 end
 
+% --- Concatenate all per-cluster summaries into a single CSV ---
+try
+    summary_files = dir(fullfile(out_csvdir, '*_sta_rf.csv'));
+    if isempty(summary_files)
+        fprintf('No per-cluster summary CSVs found in %s to concatenate.\n', out_csvdir);
+    else
+        all_tbl = table();
+        for i = 1:numel(summary_files)
+            fp = fullfile(out_csvdir, summary_files(i).name);
+            try
+                Ti = readtable(fp);
+                if ~isempty(Ti)
+                    all_tbl = [all_tbl; Ti]; %#ok<AGROW>
+                end
+            catch ME
+                warning('Failed to read %s: %s', fp, ME.message);
+            end
+        end
+        if ~isempty(all_tbl)
+            out_all = fullfile(out_csvdir, 'sta_rf_summary_all_clusters.csv');
+            writetable(all_tbl, out_all);
+            fprintf('Wrote concatenated summary: %s (%d rows)\n', out_all, height(all_tbl));
+        else
+            fprintf('No rows found across per-cluster summaries to concatenate.\n');
+        end
+    end
+catch ME
+    warning('Failed concatenation of summaries: %s', ME.message);
+end
+
 function null_std = local_compute_null_std_fast(uniq_pairs, counts, images_root, id_to_dir, exts, imsz, n_perm)
 % Memory-efficient null: sample frames directly, never stack all into memory
     K = size(uniq_pairs,1);
