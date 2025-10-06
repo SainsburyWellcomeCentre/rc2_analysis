@@ -21,15 +21,15 @@ input_dir_override = '';
 gauss_sigma_small = 1.0;   % pixels (center)
 gauss_sigma_large = 5.0;   % pixels (surround)
 gauss_sigma_post  = 0.8;   % additional smoothing
-z_clip            = 3.0;   % clip range [-z_clip, z_clip]
+z_clip            = 0.5;   % clip range [-z_clip, z_clip] (lower to reveal weaker signals)
 color_mode        = 'bwr'; % 'gray' or 'bwr' (blue-negative, white-zero, red-positive)
-contour_levels    = [2, 3, 4]; % z-levels for contour overlays
+contour_levels    = [0.5, 1, 2]; % lower thresholds to show more structure
 write_contours    = true;
 
-% Resolve paths
-script_dir = fileparts(mfilename('fullpath'));
+% Resolve paths (align with sta_rf_analysis output structure under cfg.figure_dir)
+cfg = path_config();
 if isempty(input_dir_override)
-	input_dir = fullfile(script_dir, output_subdirs_img{:});
+	input_dir = fullfile(cfg.figure_dir, output_subdirs_img{:});
 else
 	input_dir = input_dir_override;
 end
@@ -37,12 +37,12 @@ if ~isfolder(input_dir)
 	error('Input directory not found: %s', input_dir);
 end
 
-out_dir_enhanced = fullfile(input_dir, '..', 'images_enhanced');
+out_dir_enhanced = fullfile(cfg.figure_dir, 'motionClouds','passive_same_luminance_mc','sta_rf','images_enhanced');
 out_dir_enhanced = char(java.io.File(out_dir_enhanced).getCanonicalPath()); %#ok<J2F>
 if ~isfolder(out_dir_enhanced), mkdir(out_dir_enhanced); end
 
 if write_contours
-	out_dir_contours = fullfile(input_dir, '..', 'images_contours');
+	out_dir_contours = fullfile(cfg.figure_dir, 'motionClouds','passive_same_luminance_mc','sta_rf','images_contours');
 	out_dir_contours = char(java.io.File(out_dir_contours).getCanonicalPath()); %#ok<J2F>
 	if ~isfolder(out_dir_contours), mkdir(out_dir_contours); end
 end
