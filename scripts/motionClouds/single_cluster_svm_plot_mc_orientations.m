@@ -416,81 +416,101 @@ for ii = 1 : length(probe_ids)
             
             if ~isempty(xb1) && ~isempty(yr1)
                 xb = xb1(:); yr = yr1(:);
-                scatter(h_ax, ones(numel(xb),1), xb, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, ones(numel(xb),1), xb, 20, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
                 hold(h_ax, 'on');
-                scatter(h_ax, 2*ones(numel(yr),1), yr, 50, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 2*ones(numel(yr),1), yr, 20, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
                 n_pairs = min(numel(xb), numel(yr));
                 for i = 1:n_pairs
                     plot(h_ax, [1 2], [xb(i) yr(i)], 'k-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 end
+                % Medians
+                med_b = median(xb);
+                med_r = median(yr);
+                scatter(h_ax, 1, med_b, 60, [0 0 0], 'filled');
+                scatter(h_ax, 2, med_r, 60, [0 0 0], 'filled');
                 if p_val1{ii}{jj}(kk) < 0.05
                     if direction1{ii}{jj}(kk) > 0
-                        scatter(h_ax, 2*ones(numel(yr),1), yr, 80, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 2*ones(numel(yr),1), yr, 20, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
                     else
-                        scatter(h_ax, 2*ones(numel(yr),1), yr, 80, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 2*ones(numel(yr),1), yr, 20, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
                     end
                 else
-                    scatter(h_ax, 2*ones(numel(yr),1), yr, 80, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
+                    scatter(h_ax, 2*ones(numel(yr),1), yr, 20, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
                 end
             end
 
             if ~isempty(xb2) && ~isempty(yr2)
                 xb = xb2(:); yr = yr2(:);
-                scatter(h_ax, 3*ones(numel(xb),1), xb, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 3*ones(numel(xb),1), xb, 20, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
                 hold(h_ax, 'on');
-                scatter(h_ax, 4*ones(numel(yr),1), yr, 50, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 4*ones(numel(yr),1), yr, 20, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
             n_pairs = min(numel(xb), numel(yr));
                 for i = 1:n_pairs
                     plot(h_ax, [3 4], [xb(i) yr(i)], 'k-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 end
+                % Medians
+                med_b = median(xb);
+                med_r = median(yr);
+                scatter(h_ax, 3, med_b, 60, [0 0 0], 'filled');
+                scatter(h_ax, 4, med_r, 60, [0 0 0], 'filled');
                 if p_val2{ii}{jj}(kk) < 0.05
                     if direction2{ii}{jj}(kk) > 0
-                        scatter(h_ax, 4*ones(numel(yr),1), yr, 80, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 4*ones(numel(yr),1), yr, 20, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
                     else
-                        scatter(h_ax, 4*ones(numel(yr),1), yr, 80, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 4*ones(numel(yr),1), yr, 20, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
                     end
                 else
-                    scatter(h_ax, 4*ones(numel(yr),1), yr, 80, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
+                    scatter(h_ax, 4*ones(numel(yr),1), yr, 20, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
                 end
             end
 
             if ~isempty(xb3p) && ~isempty(yr3p)
                 xb = xb3p(:); yr = yr3p(:);
-                scatter(h_ax, 5*ones(numel(xb),1), xb, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 5*ones(numel(xb),1), xb, 20, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
                 hold(h_ax, 'on');
-                scatter(h_ax, 6*ones(numel(yr),1), yr, 50, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 6*ones(numel(yr),1), yr, 20, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
                 n_pairs = min(numel(xb), numel(yr));
                 for i = 1:n_pairs
                     plot(h_ax, [5 6], [xb(i) yr(i)], 'k-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 end
+                % Medians
+                med_b = median(xb);
+                med_r = median(yr);
+                scatter(h_ax, 5, med_b, 60, [0 0 0], 'filled');
+                scatter(h_ax, 6, med_r, 60, [0 0 0], 'filled');
                 if p_val3{ii}{jj}(kk) < 0.05
                     if direction3{ii}{jj}(kk) > 0
-                        scatter(h_ax, 6*ones(numel(yr),1), yr, 80, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 6*ones(numel(yr),1), yr, 20, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
                     else
-                        scatter(h_ax, 6*ones(numel(yr),1), yr, 80, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 6*ones(numel(yr),1), yr, 20, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
                     end
                 else
-                    scatter(h_ax, 6*ones(numel(yr),1), yr, 80, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
+                    scatter(h_ax, 6*ones(numel(yr),1), yr, 20, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
                 end
             end
 
             if ~isempty(xb4p) && ~isempty(yr4p)
                 xb = xb4p(:); yr = yr4p(:);
-                scatter(h_ax, 7*ones(numel(xb),1), xb, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 7*ones(numel(xb),1), xb, 20, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
                 hold(h_ax, 'on');
-                scatter(h_ax, 8*ones(numel(yr),1), yr, 50, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                scatter(h_ax, 8*ones(numel(yr),1), yr, 20, [0.3 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
                 n_pairs = min(numel(xb), numel(yr));
                 for i = 1:n_pairs
                     plot(h_ax, [7 8], [xb(i) yr(i)], 'k-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 end
+                % Medians
+                med_b = median(xb);
+                med_r = median(yr);
+                scatter(h_ax, 7, med_b, 60, [0 0 0], 'filled');
+                scatter(h_ax, 8, med_r, 60, [0 0 0], 'filled');
                 if p_val4{ii}{jj}(kk) < 0.05
                     if direction4{ii}{jj}(kk) > 0
-                        scatter(h_ax, 8*ones(numel(yr),1), yr, 80, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 8*ones(numel(yr),1), yr, 20, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
                     else
-                        scatter(h_ax, 8*ones(numel(yr),1), yr, 80, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
+                        scatter(h_ax, 8*ones(numel(yr),1), yr, 20, 'b', 'filled', 'MarkerFaceAlpha', 0.8);
                     end
                 else
-                    scatter(h_ax, 8*ones(numel(yr),1), yr, 80, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
+                    scatter(h_ax, 8*ones(numel(yr),1), yr, 20, [0.5 0.5 0.5], 'filled', 'MarkerFaceAlpha', 0.8);
                 end
             end
 
