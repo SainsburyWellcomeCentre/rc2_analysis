@@ -386,6 +386,71 @@ end
 %%
 ctl.setup_figures(figure_dir, save_figs);
 
+% Prepare CSV summary data
+probe_id_list = {};
+cluster_id_list = [];
+trial_group_list = {};
+prefix_list = {};
+trial_number_list = [];
+baseline_fr_list = [];
+response_fr_list = [];
+difference_list = [];
+p_value_list = [];
+direction_list = [];
+
+for ii = 1 : length(probe_ids)
+    for jj = 1 : length(cluster_ids{ii})
+        for kk = 1 : length(trial_group_labels)
+            % Get data for this combination
+            xb1 = x_all1{ii}{jj}{kk};
+            yr1 = y_all1{ii}{jj}{kk};
+            xb2 = x_all2{ii}{jj}{kk};
+            yr2 = y_all2{ii}{jj}{kk};
+            xb3 = x_all3{ii}{jj}{kk};
+            yr3 = y_all3{ii}{jj}{kk};
+            xb4 = x_all4{ii}{jj}{kk};
+            yr4 = y_all4{ii}{jj}{kk};
+            
+            % Add data for each prefix
+            prefixes = {name_prefix1, name_prefix2, name_prefix3, name_prefix4};
+            baseline_data = {xb1, xb2, xb3, xb4};
+            response_data = {yr1, yr2, yr3, yr4};
+            
+            for p = 1:4
+                baseline = baseline_data{p};
+                response = response_data{p};
+                
+                if ~isempty(baseline) && ~isempty(response)
+                    n_trials = min(length(baseline), length(response));
+                    for t = 1:n_trials
+                        probe_id_list{end+1} = probe_ids{ii};
+                        cluster_id_list(end+1) = cluster_ids{ii}(jj);
+                        trial_group_list{end+1} = trial_group_labels{kk};
+                        prefix_list{end+1} = prefixes{p};
+                        trial_number_list(end+1) = t;
+                        baseline_fr_list(end+1) = baseline(t);
+                        response_fr_list(end+1) = response(t);
+                        difference_list(end+1) = response(t) - baseline(t);
+                        p_value_list(end+1) = p_val1{ii}{jj}(kk);
+                        direction_list(end+1) = direction1{ii}{jj}(kk);
+                    end
+                end
+            end
+        end
+    end
+end
+
+% Convert to table and save CSV
+if ~isempty(probe_id_list)
+    csv_table = table(probe_id_list', cluster_id_list', trial_group_list', prefix_list', ...
+                     trial_number_list', baseline_fr_list', response_fr_list', difference_list', ...
+                     p_value_list', direction_list');
+    
+    csv_filename = fullfile(ctl.figs.curr_dir, 'motion_cloud_orientations_analysis_summary.csv');
+    writetable(csv_table, csv_filename);
+    fprintf('Saved analysis summary to: %s\n', csv_filename);
+end
+
 for ii = 1 : length(probe_ids)
     for jj = 1 : length(cluster_ids{ii})
         fprintf('Probe %s: plotting cluster_id=%d\n', probe_ids{ii}, cluster_ids{ii}(jj));
