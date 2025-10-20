@@ -6,7 +6,7 @@ experiment_groups       = {'passive_same_luminance_mc'};
 trial_group_labels      = {'VT', 'V', 'T_Vstatic'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion', 'single_cluster'};
+figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion_orientations', 'single_cluster'};
 
 % -------------------------------------------------------------------------
 % Parameters: Motion cloud trial filters
@@ -398,6 +398,7 @@ for ii = 1 : length(probe_ids)
 
         for kk = 1 : length(trial_group_labels)
             
+            % Left column: baseline vs response plots
             pos         = plot_array.get_position(kk);
             h_ax        = axes('units', 'centimeters', 'position', pos);
             axs(end+1)  = h_ax;
@@ -539,6 +540,78 @@ for ii = 1 : length(probe_ids)
             if ~isempty(local_vals)
                 panel_mins(end+1) = min(local_vals);
                 panel_maxs(end+1) = max(local_vals);
+            else
+                panel_mins(end+1) = 0;
+                panel_maxs(end+1) = 1;
+            end
+            
+            % Right column: response-baseline difference plots
+            pos2        = plot_array.get_position(kk + 3); % Right column
+            h_ax2       = axes('units', 'centimeters', 'position', pos2);
+            axs(end+1)  = h_ax2;
+            
+            % Plot differences for each prefix
+            if ~isempty(xb1) && ~isempty(yr1)
+                diff1 = yr1(:) - xb1(:);
+                scatter(h_ax2, 1*ones(numel(diff1),1), diff1, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                hold(h_ax2, 'on');
+                % Median difference
+                med_diff1 = median(diff1);
+                scatter(h_ax2, 1, med_diff1, 70, [0 0 0], 'filled');
+            end
+            
+            if ~isempty(xb2) && ~isempty(yr2)
+                diff2 = yr2(:) - xb2(:);
+                scatter(h_ax2, 2*ones(numel(diff2),1), diff2, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                hold(h_ax2, 'on');
+                % Median difference
+                med_diff2 = median(diff2);
+                scatter(h_ax2, 2, med_diff2, 70, [0 0 0], 'filled');
+            end
+            
+            if ~isempty(xb3p) && ~isempty(yr3p)
+                diff3 = yr3p(:) - xb3p(:);
+                scatter(h_ax2, 3*ones(numel(diff3),1), diff3, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                hold(h_ax2, 'on');
+                % Median difference
+                med_diff3 = median(diff3);
+                scatter(h_ax2, 3, med_diff3, 70, [0 0 0], 'filled');
+            end
+            
+            if ~isempty(xb4p) && ~isempty(yr4p)
+                diff4 = yr4p(:) - xb4p(:);
+                scatter(h_ax2, 4*ones(numel(diff4),1), diff4, 50, [0.7 0.7 0.7], 'filled', 'MarkerFaceAlpha', 0.6);
+                hold(h_ax2, 'on');
+                % Median difference
+                med_diff4 = median(diff4);
+                scatter(h_ax2, 4, med_diff4, 70, [0 0 0], 'filled');
+            end
+            
+            xlim(h_ax2, [0.5 4.5]);
+            xlabel(h_ax2, 'Motion Cloud Group');
+            ylabel(h_ax2, 'Response - Baseline (Hz)');
+            title(h_ax2, [trial_group_labels{kk} ' (Differences)']);
+            
+            % Set x-axis labels for differences
+            set(h_ax2, 'XTick', [1 2 3 4], 'XTickLabel', {'P1','P2','P3','P4'});
+            
+            % Store min/max for difference plot
+            diff_vals = [];
+            if exist('diff1','var') && ~isempty(diff1)
+                diff_vals = [diff_vals; diff1(:)];
+            end
+            if exist('diff2','var') && ~isempty(diff2)
+                diff_vals = [diff_vals; diff2(:)];
+            end
+            if exist('diff3','var') && ~isempty(diff3)
+                diff_vals = [diff_vals; diff3(:)];
+            end
+            if exist('diff4','var') && ~isempty(diff4)
+                diff_vals = [diff_vals; diff4(:)];
+            end
+            if ~isempty(diff_vals)
+                panel_mins(end+1) = min(diff_vals);
+                panel_maxs(end+1) = max(diff_vals);
             else
                 panel_mins(end+1) = 0;
                 panel_maxs(end+1) = 1;
