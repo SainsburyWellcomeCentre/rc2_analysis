@@ -8,15 +8,9 @@ save_figs               = true;
 overwrite               = true;
 figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion_orientations', 'single_cluster'};
 
-% -------------------------------------------------------------------------
+
 % Parameters: Motion cloud trial filters
-% - name_prefix1: motion cloud names starting with this prefix will be plotted
-%                  at x=1 (baseline) and x=2 (response)
-% - name_prefix2: motion cloud names starting with this prefix will be plotted
-%                  at x=3 (baseline) and x=4 (response)
-% - exclude_substrings_prefix2: any names containing ANY of these substrings
-%                  will be excluded from the name_prefix2 group
-% -------------------------------------------------------------------------
+
 name_prefix1 = 'theta-0p785';
 name_prefix2 = 'theta0p000';
 exclude_substrings_prefix2 = {'VX0p000'}; % e.g. exclude zero-velocity variants
