@@ -151,6 +151,8 @@ classdef FormattedData < handle
                         obj.sessions{ii} = PassiveProtocolAlwaysVisSession(obj.data.sessions(ii));
                     case 'training'
                         obj.sessions{ii} = TrainingRunningSession(obj.data.sessions(ii));
+                    case 'locovest_variable_distance'
+                        obj.sessions{ii} = LocoVestVariableDistanceSession(obj.data.sessions(ii));
                 end
             end
             
