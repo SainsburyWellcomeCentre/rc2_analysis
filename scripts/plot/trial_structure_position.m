@@ -38,10 +38,10 @@
 %   Solenoid state
 %   Mismatch window
 
-experiment_groups       = {'training_running'};
+experiment_groups       = {'ambient_light'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'trial_structure', 'training_running'};
+figure_dir              = {'trial_structure_position', 'ambient_light'};
 
 
 %%
