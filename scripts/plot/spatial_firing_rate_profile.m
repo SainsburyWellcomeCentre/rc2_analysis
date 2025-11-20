@@ -33,10 +33,10 @@
 % and contain spatial firing rate profiles for all clusters in that probe.
 
 % Configuration
-experiment_groups       = {'training_running'};
+experiment_groups       = {'ambient_light'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'spatial_firing_rate', 'training_running'};
+figure_dir              = {'spatial_firing_rate', 'ambient_light'};
 
 % Analysis parameters
 bin_size_cm = 2;
@@ -294,91 +294,34 @@ for pid = 1:length(probe_ids)
 
     % For each cluster, create a single figure with both group firing rates overlaid
     fprintf('  Creating individual cluster plots...\n');
+    
+    % Define colors for the two groups
+    group_colors = struct('long', [0 0 0.8], 'short', [0.8 0 0]); % Blue for long, red for short
+    
     for c = 1:n_clusters
         cluster = clusters(c);
         fig_cluster = ctl.figs.a4figure('landscape');
         
-        % Process each session separately
-        for s = 1:length(sessions)
-            session = sessions{s};
-            trials_in_session = session.trials;
+        hold on;
+        
+        % Plot each group (long and short)
+        for g = 1:2
+            group = group_names{g};
             
-            % Collect data for this session
-            all_spike_positions = [];
-            all_positions = [];
-            all_times = [];
-            all_velocities = [];
+            % Get the precomputed data for this cluster and group
+            bin_centers = all_bin_centers_by_group.(group);
+            rate_smooth = all_rate_smooth_by_group.(group)(c, :);
+            rate_unsmooth = all_rate_unsmooth_by_group.(group)(c, :);
             
-            for t = 1:length(trials_in_session)
-                trial = trials_in_session{t}.to_aligned;
-                motion_mask = trial.motion_mask();
-                pos = trial.position(motion_mask);
-                tvec = trial.probe_t(motion_mask);
-                vel = trial.velocity(motion_mask);
-                all_positions = [all_positions; pos(:)];
-                all_times = [all_times; tvec(:)];
-                all_velocities = [all_velocities; vel(:)];
-                st = cluster.spike_times;
-                mask = st >= tvec(1) & st <= tvec(end);
-                st = st(mask);
-                if ~isempty(st)
-                    spike_pos = interp1(tvec, pos, st, 'linear', 'extrap');
-                    all_spike_positions = [all_spike_positions; spike_pos];
-                end
-            end
-            
-            if isempty(all_positions)
+            % Skip if all NaN
+            if all(isnan(rate_smooth))
                 continue;
             end
             
-            % Set bin edges based on session type (long vs short)
-            if strcmp(session_types{s}, 'long')
-                edges = 0:bin_size_cm:120;
-            else  % Short sessions
-                edges = 0:bin_size_cm:60;
-            end
-            bin_centers = edges(1:end-1) + bin_size_cm/2;
-            
-            % For short trials, adjust bin centers for plotting to align with 60-120 cm
-            if strcmp(session_types{s}, 'short')
-                plot_bin_centers = bin_centers + 60; % Shift to 60-120 cm for plotting
-            else
-                plot_bin_centers = bin_centers;
-            end
-            
-            spike_count = histcounts(all_spike_positions, edges);
-            dt_vec = [diff(all_times); 0];
-            occupancy = zeros(1, length(edges)-1);
-            velocity_sum = zeros(1, length(edges)-1);
-            for i = 1:length(occupancy)
-                in_bin = all_positions >= edges(i) & all_positions < edges(i+1);
-                occupancy(i) = sum(dt_vec(in_bin));
-                velocity_sum(i) = sum(all_velocities(in_bin) .* dt_vec(in_bin));
-            end
-            avg_velocity = velocity_sum ./ occupancy;
-            avg_velocity(isnan(avg_velocity) | isinf(avg_velocity)) = 0;
-            rate = spike_count ./ occupancy;
-            rate(isnan(rate) | isinf(rate)) = 0;
-            
-            % Create proper spatial Gaussian kernel
-            kernel_size_cm = 8 * gauss_sigma_cm; % 64 cm total kernel size
-            kernel_samples = round(kernel_size_cm / bin_size_cm); 
-            x = linspace(-kernel_samples/2, kernel_samples/2, kernel_samples);
-            kernel = exp(-x.^2 / (2 * (gauss_sigma_cm/bin_size_cm)^2));
-            kernel = kernel / sum(kernel); % normalize
-            
-            % Pad the rate data to avoid edge effects using mirror padding
-            pad_size = floor(length(kernel) / 2);
-            rate_padded = [fliplr(rate(1:pad_size)), rate, fliplr(rate(end-pad_size+1:end))];
-            rate_smooth_padded = conv(rate_padded, kernel, 'same');
-            rate_smooth = rate_smooth_padded(pad_size + 1 : end - pad_size);
-            
-            % Plot this session
-            hold on;
             % Plot unsmoothed rate with 0.5 alpha (semi-transparent)
-            plot(plot_bin_centers, rate, '-', 'LineWidth', 1, 'Color', [session_colors{s}, 0.5], 'DisplayName', sprintf('%s (unsmoothed)', session_labels{s}));
+            plot(bin_centers, rate_unsmooth, '-', 'LineWidth', 1, 'Color', [group_colors.(group), 0.5], 'DisplayName', sprintf('%s (unsmoothed)', group_labels{g}));
             % Plot smoothed rate (solid line)
-            plot(plot_bin_centers, rate_smooth, '-', 'LineWidth', 2, 'Color', session_colors{s}, 'DisplayName', session_labels{s});
+            plot(bin_centers, rate_smooth, '-', 'LineWidth', 2, 'Color', group_colors.(group), 'DisplayName', group_labels{g});
         end
         
         hold off;
