@@ -86,6 +86,15 @@ p_val3                  = cell(1, length(probe_ids));
 direction3              = cell(1, length(probe_ids));
 cluster_ids             = cell(1, length(probe_ids));
 region_str              = cell(1, length(probe_ids));
+% Results and metadata for non-parametric pipeline (parallel to spatial file)
+wilcoxon_p_bsl_vs_resp = cell(1, length(probe_ids));
+kruskal_p_orientation  = cell(1, length(probe_ids));
+n_paired_trials        = cell(1, length(probe_ids));
+n_sig_orients_tukey    = cell(1, length(probe_ids));
+tukey_pairs            = cell(1, length(probe_ids));
+% Store tukey pairwise p-values as a 3-element vector per probe/cluster/trial_group
+% ordering: [1v2, 1v3, 2v3]
+tukey_pairwise_pvals   = cell(1, length(probe_ids));
 
 for ii = 1 : length(probe_ids)
     
@@ -156,6 +165,102 @@ for ii = 1 : length(probe_ids)
             y_all2{ii}{kk}{jj} = response_fr(keep2);
             x_all3{ii}{kk}{jj} = baseline_fr(keep3);
             y_all3{ii}{kk}{jj} = response_fr(keep3);
+            % --- Non-parametric pipeline (combined) ---
+            % Build group labels for the filtered trials (3 batches)
+            group_idx = nan(size(common_ids));
+            group_idx(keep1) = 1;
+            group_idx(isnan(group_idx) & keep2) = 2;
+            group_idx(isnan(group_idx) & keep3) = 3;
+
+            sel_mask = ~isnan(group_idx);
+            baseline_sel = baseline_fr(sel_mask);
+            response_sel = response_fr(sel_mask);
+            grp_sel = group_idx(sel_mask);
+
+            % initialize
+            pCondition = NaN; pGroup = NaN; tukey_n_sig = 0; n_total = numel(baseline_sel);
+            if n_total >= 2
+                try
+                    if exist('signrank','file') == 2
+                        try
+                            pCondition = signrank(baseline_sel, response_sel);
+                        catch
+                            pCondition = NaN;
+                        end
+                    else
+                        pCondition = NaN;
+                    end
+
+                    if numel(unique(grp_sel)) >= 2
+                        try
+                            [pGroup, ~, stats] = kruskalwallis(response_sel, grp_sel, 'off');
+                            try
+                                c = multcompare(stats, 'CType', 'tukey-kramer', 'Display', 'off');
+                                pvals3 = nan(1,3);
+                                if ~isempty(c)
+                                    for r = 1:size(c,1)
+                                        g1 = c(r,1); g2 = c(r,2);
+                                        if g1 > g2, tmp = g1; g1 = g2; g2 = tmp; end
+                                        if g1==1 && g2==2, idx = 1; end
+                                        if g1==1 && g2==3, idx = 2; end
+                                        if g1==2 && g2==3, idx = 3; end
+                                        if exist('idx','var') && ~isempty(idx)
+                                            pvals3(idx) = c(r,6);
+                                        end
+                                        clear idx
+                                    end
+                                    sig_pairs = c(:,6) < 0.05;
+                                    if any(sig_pairs)
+                                        pair_idx = find(sig_pairs);
+                                        pair_strs = arrayfun(@(r) sprintf('%dv%d', c(r,1), c(r,2)), pair_idx, 'UniformOutput', false);
+                                        tukey_sig_pairs = strjoin(pair_strs, ';');
+                                        sig_groups = unique([c(sig_pairs,1); c(sig_pairs,2)]);
+                                        tukey_n_sig = numel(sig_groups);
+                                    else
+                                        tukey_sig_pairs = ''; tukey_n_sig = 0;
+                                    end
+                                else
+                                    tukey_sig_pairs = ''; tukey_n_sig = 0;
+                                end
+
+                                % store string and numeric summaries
+                                if numel(tukey_pairs) < ii || isempty(tukey_pairs{ii})
+                                    tukey_pairs{ii} = cell(1, length(cluster_ids{ii}));
+                                end
+                                if numel(tukey_pairs{ii}) < kk || isempty(tukey_pairs{ii}{kk})
+                                    tukey_pairs{ii}{kk} = cell(1, numel(trial_group_labels));
+                                end
+                                tukey_pairs{ii}{kk}{jj} = tukey_sig_pairs;
+
+                                if numel(tukey_pairwise_pvals) < ii || isempty(tukey_pairwise_pvals{ii})
+                                    tukey_pairwise_pvals{ii} = cell(1, length(cluster_ids{ii}));
+                                end
+                                if numel(tukey_pairwise_pvals{ii}) < kk || isempty(tukey_pairwise_pvals{ii}{kk})
+                                    tukey_pairwise_pvals{ii}{kk} = cell(1, numel(trial_group_labels));
+                                end
+                                tukey_pairwise_pvals{ii}{kk}{jj} = pvals3;
+                            catch
+                                tukey_n_sig = 0; tukey_sig_pairs = '';
+                            end
+                        catch
+                            pGroup = NaN; tukey_n_sig = 0;
+                        end
+                    else
+                        pGroup = NaN; tukey_n_sig = 0;
+                    end
+                catch
+                    pCondition = NaN; pGroup = NaN; tukey_n_sig = 0;
+                end
+            end
+
+            % Store combined-summary metadata (probe->cluster->group)
+            % Ensure containers exist before assignment
+            if numel(wilcoxon_p_bsl_vs_resp) < ii || isempty(wilcoxon_p_bsl_vs_resp{ii}), wilcoxon_p_bsl_vs_resp{ii} = cell(1, length(cluster_ids{ii})); end
+            if numel(kruskal_p_orientation) < ii || isempty(kruskal_p_orientation{ii}), kruskal_p_orientation{ii} = cell(1, length(cluster_ids{ii})); end
+            if numel(n_paired_trials) < ii || isempty(n_paired_trials{ii}), n_paired_trials{ii} = cell(1, length(cluster_ids{ii})); end
+            wilcoxon_p_bsl_vs_resp{ii}{kk}(jj) = pCondition;
+            kruskal_p_orientation{ii}{kk}(jj) = pGroup;
+            n_paired_trials{ii}{kk}(jj) = n_total;
             
             % Calculate significance on filtered pairs (batch1)
             xb2 = x_all1{ii}{kk}{jj}(:);
@@ -264,6 +369,20 @@ for ii = 1 : length(probe_ids)
             end
             p_val3{ii}{kk}(jj) = pv;
             direction3{ii}{kk}(jj) = dirn;
+            % Apply Bonferroni correction across the three batch-specific paired tests
+            try
+                p_unc = [p_val1{ii}{kk}(jj), p_val2{ii}{kk}(jj), p_val3{ii}{kk}(jj)];
+                p_corr = min(1, p_unc * 3); % 3 tests -> Bonferroni
+                p_val1{ii}{kk}(jj) = p_corr(1);
+                p_val2{ii}{kk}(jj) = p_corr(2);
+                p_val3{ii}{kk}(jj) = p_corr(3);
+                % zero-out directions that are not significant after correction
+                if ~isnan(p_corr(1)) && p_corr(1) >= 0.05, direction1{ii}{kk}(jj) = 0; end
+                if ~isnan(p_corr(2)) && p_corr(2) >= 0.05, direction2{ii}{kk}(jj) = 0; end
+                if ~isnan(p_corr(3)) && p_corr(3) >= 0.05, direction3{ii}{kk}(jj) = 0; end
+            catch
+                % ignore if any missing
+            end
         end
     end
 end
@@ -330,8 +449,16 @@ trial_number_list = [];
 baseline_fr_list = [];
 response_fr_list = [];
 difference_list = [];
-p_value_list = [];
-direction_list = [];
+% per-prefix Bonferroni-corrected paired p-values (to match spatial csv)
+paired_p_bonferroni_list = [];
+response_direction_list = [];
+% Summary columns for the non-parametric pipeline
+wilcoxon_p_bsl_vs_resp_list = [];
+kruskal_p_orientation_list = [];
+% Tukey pairwise p-values for 3 groups: 1v2,1v3,2v3
+tukey_p_1v2_list = [];
+tukey_p_1v3_list = [];
+tukey_p_2v3_list = [];
 
 for ii = 1 : length(probe_ids)
     for jj = 1 : length(cluster_ids{ii})
@@ -364,16 +491,50 @@ for ii = 1 : length(probe_ids)
                         baseline_fr_list(end+1) = baseline(t);
                         response_fr_list(end+1) = response(t);
                         difference_list(end+1) = response(t) - baseline(t);
+                        % pick corrected p-value and direction for this batch (canonical {ii}{jj}(kk))
+                        pv = NaN; dn = 0;
                         if p == 1
-                            p_value_list(end+1) = p_val1{ii}{jj}(kk);
-                            direction_list(end+1) = direction1{ii}{jj}(kk);
+                            if numel(p_val1) >= ii && ~isempty(p_val1{ii}) && numel(p_val1{ii}) >= jj && ~isempty(p_val1{ii}{jj}) && numel(p_val1{ii}{jj}) >= kk
+                                pv = p_val1{ii}{jj}(kk);
+                            end
+                            if numel(direction1) >= ii && ~isempty(direction1{ii}) && numel(direction1{ii}) >= jj && ~isempty(direction1{ii}{jj}) && numel(direction1{ii}{jj}) >= kk
+                                dn = direction1{ii}{jj}(kk);
+                            end
                         elseif p == 2
-                            p_value_list(end+1) = p_val2{ii}{jj}(kk);
-                            direction_list(end+1) = direction2{ii}{jj}(kk);
+                            if numel(p_val2) >= ii && ~isempty(p_val2{ii}) && numel(p_val2{ii}) >= jj && ~isempty(p_val2{ii}{jj}) && numel(p_val2{ii}{jj}) >= kk
+                                pv = p_val2{ii}{jj}(kk);
+                            end
+                            if numel(direction2) >= ii && ~isempty(direction2{ii}) && numel(direction2{ii}) >= jj && ~isempty(direction2{ii}{jj}) && numel(direction2{ii}{jj}) >= kk
+                                dn = direction2{ii}{jj}(kk);
+                            end
                         elseif p == 3
-                            p_value_list(end+1) = p_val3{ii}{jj}(kk);
-                            direction_list(end+1) = direction3{ii}{jj}(kk);
+                            if numel(p_val3) >= ii && ~isempty(p_val3{ii}) && numel(p_val3{ii}) >= jj && ~isempty(p_val3{ii}{jj}) && numel(p_val3{ii}{jj}) >= kk
+                                pv = p_val3{ii}{jj}(kk);
+                            end
+                            if numel(direction3) >= ii && ~isempty(direction3{ii}) && numel(direction3{ii}) >= jj && ~isempty(direction3{ii}{jj}) && numel(direction3{ii}{jj}) >= kk
+                                dn = direction3{ii}{jj}(kk);
+                            end
                         end
+                        paired_p_bonferroni_list(end+1) = pv;
+                        response_direction_list(end+1) = dn;
+                        % Summary-level non-parametric values (same for all batches within this cluster/trial-group)
+                        if exist('wilcoxon_p_bsl_vs_resp','var') && numel(wilcoxon_p_bsl_vs_resp) >= ii && ~isempty(wilcoxon_p_bsl_vs_resp{ii}) && numel(wilcoxon_p_bsl_vs_resp{ii}) >= jj && numel(wilcoxon_p_bsl_vs_resp{ii}{jj}) >= kk
+                            wilcoxon_p_bsl_vs_resp_list(end+1) = wilcoxon_p_bsl_vs_resp{ii}{jj}(kk);
+                        else
+                            wilcoxon_p_bsl_vs_resp_list(end+1) = NaN;
+                        end
+                        if exist('kruskal_p_orientation','var') && numel(kruskal_p_orientation) >= ii && ~isempty(kruskal_p_orientation{ii}) && numel(kruskal_p_orientation{ii}) >= jj && numel(kruskal_p_orientation{ii}{jj}) >= kk
+                            kruskal_p_orientation_list(end+1) = kruskal_p_orientation{ii}{jj}(kk);
+                        else
+                            kruskal_p_orientation_list(end+1) = NaN;
+                        end
+                        pvals3 = nan(1,3);
+                        if exist('tukey_pairwise_pvals','var') && numel(tukey_pairwise_pvals) >= ii && ~isempty(tukey_pairwise_pvals{ii}) && numel(tukey_pairwise_pvals{ii}) >= jj && ~isempty(tukey_pairwise_pvals{ii}{jj}) && numel(tukey_pairwise_pvals{ii}{jj}) >= kk
+                            pvals3 = tukey_pairwise_pvals{ii}{jj}{kk};
+                        end
+                        tukey_p_1v2_list(end+1) = pvals3(1);
+                        tukey_p_1v3_list(end+1) = pvals3(2);
+                        tukey_p_2v3_list(end+1) = pvals3(3);
                     end
                 end
             end
@@ -385,8 +546,10 @@ end
 if ~isempty(probe_id_list)
     csv_table = table(probe_id_list', cluster_id_list', trial_group_list', prefix_list', ...
                      trial_number_list', baseline_fr_list', response_fr_list', difference_list', ...
-                     p_value_list', direction_list');
-    
+                     wilcoxon_p_bsl_vs_resp_list', kruskal_p_orientation_list', paired_p_bonferroni_list', response_direction_list', ...
+                     tukey_p_1v2_list', tukey_p_1v3_list', tukey_p_2v3_list', ...
+                     'VariableNames', {'probe_id','cluster_id','trial_group','prefix','trial_number','baseline_fr','response_fr','difference','wilcoxon_p_bsl_vs_resp','kruskal_p_orientation','paired_p_bonferroni','response_direction','tukey_p_1v2','tukey_p_1v3','tukey_p_2v3'});
+
     csv_filename = fullfile(ctl.figs.curr_dir, 'motion_cloud_temporal_frequencies_analysis_summary.csv');
     writetable(csv_table, csv_filename);
     fprintf('Saved analysis summary to: %s\n', csv_filename);
