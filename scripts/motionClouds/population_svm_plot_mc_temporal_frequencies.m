@@ -38,6 +38,7 @@ for i = 1:nClusters
         clusters(i).(grp).medians = nan(1,numel(prefixes_all));
         clusters(i).(grp).direction = nan(1,numel(prefixes_all));
         clusters(i).(grp).wilcoxon = NaN;
+        clusters(i).(grp).kruskal = NaN;
         for p = 1:numel(prefixes_all)
             pref = prefixes_all{p};
             sel = strcmp(T.probe_id, pid) & (T.cluster_id == cid) & strcmp(T.trial_group, grp) & strcmp(T.prefix, pref);
@@ -52,12 +53,19 @@ for i = 1:nClusters
                 clusters(i).(grp).direction(p) = NaN;
             end
         end
-        % wilcoxon per cluster/group (take first non-NaN if present)
+        % wilcoxon and kruskal per cluster/group (take first non-NaN if present)
         sel_all = strcmp(T.probe_id, pid) & (T.cluster_id == cid) & strcmp(T.trial_group, grp);
-        if any(sel_all) && ismember('wilcoxon_p_bsl_vs_resp', T.Properties.VariableNames)
-            wvals = unique(T.wilcoxon_p_bsl_vs_resp(sel_all));
-            wvals = wvals(~isnan(wvals));
-            if ~isempty(wvals), clusters(i).(grp).wilcoxon = wvals(1); end
+        if any(sel_all)
+            if ismember('wilcoxon_p_bsl_vs_resp', T.Properties.VariableNames)
+                wvals = unique(T.wilcoxon_p_bsl_vs_resp(sel_all));
+                wvals = wvals(~isnan(wvals));
+                if ~isempty(wvals), clusters(i).(grp).wilcoxon = wvals(1); end
+            end
+            if ismember('kruskal_p_orientation', T.Properties.VariableNames)
+                kvals = unique(T.kruskal_p_orientation(sel_all));
+                kvals = kvals(~isnan(kvals));
+                if ~isempty(kvals), clusters(i).(grp).kruskal = kvals(1); end
+            end
         end
     end
 end
@@ -65,14 +73,21 @@ end
 % small helper: rotate order so that preferred index ends up at position 2
 rotate_to_pos2 = @(arr,k) circshift(arr, 2-k);
 
-out_dir = fileparts(input_csv);
+out_dir = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds','passive_same_luminance_mc','stationary_vs_motion_temporal_frequencies','population');
+if ~exist(out_dir,'dir')
+    mkdir(out_dir);
+end
 
 % Part 1: clusters with in 'V' at least one temporal-frequency with response_direction == 1
 part1_idx = false(1,nClusters);
 for i=1:nClusters
-    % check V directions
     dV = clusters(i).V.direction;
-    if any(dV == 1)
+    kV = clusters(i).V.kruskal;
+    % count how many prefixes have response_direction == 1 (ignore NaNs)
+    nOnesV = sum(~isnan(dV) & dV == 1);
+    allOnesV = all(dV == 1);
+    % Part1: one-to-three response_direction==1 OR all response_direction==1 AND kruskal_p_orientation<0.05
+    if (nOnesV >= 1 && nOnesV <= (numel(prefixes_all)-1)) || (allOnesV && ~isnan(kV) && kV < 0.05)
         part1_idx(i) = true;
     end
 end
@@ -85,6 +100,8 @@ part1_clusters = find(part1_idx);
     medV_all = nan(numel(part1_clusters), numel(prefixes_all));
     medVT_all = nan(numel(part1_clusters), numel(prefixes_all));
     row_ctr = 0;
+    lightV = [0.6 0.85 1.0]; darkV = [0 0.2 0.6];
+    lightVT = [1.0 0.7 0.7]; darkVT = [0.6 0 0];
     for ii = 1:numel(part1_clusters)
         i = part1_clusters(ii);
         medV = clusters(i).V.medians;
@@ -97,11 +114,7 @@ part1_clusters = find(part1_idx);
         medV_ord = medV(order_idx);
         medVT_ord = clusters(i).VT.medians(order_idx);
         x = 1:numel(prefixes_all);
-        % plot individual clusters in light colors, hide from legend
-        lightV = [0.6 0.85 1.0]; darkV = [0 0.2 0.6];
-        lightVT = [1.0 0.7 0.7]; darkVT = [0.6 0 0];
-        plot(x, medV_ord, '-o', 'Color', lightV, 'MarkerFaceColor', lightV, 'LineWidth',0.8, 'HandleVisibility','off');
-        plot(x, medVT_ord, '-o', 'Color', lightVT, 'MarkerFaceColor', lightVT, 'LineWidth',0.8, 'HandleVisibility','off');
+        % collect per-cluster medians (we'll plot Q1/Q3 across clusters instead of individual traces)
         row_ctr = row_ctr + 1;
         medV_all(row_ctr, :) = medV_ord;
         medVT_all(row_ctr, :) = medVT_ord;
@@ -121,13 +134,22 @@ part1_clusters = find(part1_idx);
         medV_all = medV_all(1:row_ctr,:);
         medVT_all = medVT_all(1:row_ctr,:);
     end
-    % compute across-cluster medians (omit NaNs)
+    % compute across-cluster medians (omit NaNs) and Q1/Q3
     if ~isempty(medV_all)
+        nx = numel(prefixes_all);
+        q1V = nan(1,nx); q3V = nan(1,nx); q1VT = nan(1,nx); q3VT = nan(1,nx);
+        for xi = 1:nx
+            v = medV_all(:,xi); v = v(~isnan(v)); if ~isempty(v), qq = quantile(v,[0.25 0.75]); q1V(xi)=qq(1); q3V(xi)=qq(2); end
+            vt = medVT_all(:,xi); vt = vt(~isnan(vt)); if ~isempty(vt), qq = quantile(vt,[0.25 0.75]); q1VT(xi)=qq(1); q3VT(xi)=qq(2); end
+        end
+        x = 1:nx;
+        if any(~isnan(q1V)), fill([x fliplr(x)], [q1V fliplr(q3V)], lightV, 'FaceAlpha',0.25, 'EdgeColor','none'); end
+        if any(~isnan(q1VT)), fill([x fliplr(x)], [q1VT fliplr(q3VT)], lightVT, 'FaceAlpha',0.25, 'EdgeColor','none'); end
         medianV = median(medV_all, 1, 'omitnan');
         medianVT = median(medVT_all, 1, 'omitnan');
         % plot medians in dark colors and include in legend
-        hV = plot(1:numel(prefixes_all), medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
-        hVT = plot(1:numel(prefixes_all), medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
+        hV = plot(x, medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
+        hVT = plot(x, medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
     end
     title(sprintf('Part1: clusters responsive in V with tuning (n=%d out of %d)', row_ctr, nClusters));
     xticks(1:numel(prefixes_all));
@@ -158,10 +180,12 @@ part2_idx = false(1,nClusters);
 for i=1:nClusters
     dV = clusters(i).V.direction;
     wV = clusters(i).V.wilcoxon;
-    % require V non-tuned (all directions 0), significant responsiveness (wilcoxon<0.05)
-    % and positive median difference across V prefixes
+    kV = clusters(i).V.kruskal;
     medV_overall = median(clusters(i).V.medians, 'omitnan');
-    if all(dV == 0) && ~isnan(wV) && wV < 0.05 && ~isnan(medV_overall) && medV_overall > 0
+    allZerosV = all(dV == 0);
+    allOnesV = all(dV == 1);
+    % Part2: (all V directions == 0 AND wilcoxon<0.05) OR (all V directions == 1 AND kruskal>0.05)
+    if (allZerosV && ~isnan(wV) && wV < 0.05 && ~isnan(medV_overall) && medV_overall > 0) || (allOnesV && ~isnan(kV) && kV > 0.05)
         part2_idx(i) = true;
     end
 end
@@ -180,8 +204,6 @@ part2_clusters = find(part2_idx);
         medV = clusters(i).V.medians;
         medVT = clusters(i).VT.medians;
         x = 1:numel(prefixes_all);
-        plot(x, medV, '-o', 'Color', lightV, 'MarkerFaceColor', lightV, 'LineWidth',0.8, 'HandleVisibility','off');
-        plot(x, medVT, '-o', 'Color', lightVT, 'MarkerFaceColor', lightVT, 'LineWidth',0.8, 'HandleVisibility','off');
         row_ctr = row_ctr + 1;
         medV_all(row_ctr,:) = medV;
         medVT_all(row_ctr,:) = medVT;
@@ -198,10 +220,19 @@ part2_clusters = find(part2_idx);
         medV_all = medV_all(1:row_ctr,:);
         medVT_all = medVT_all(1:row_ctr,:);
     end
+    nx = numel(prefixes_all);
+    q1V = nan(1,nx); q3V = nan(1,nx); q1VT = nan(1,nx); q3VT = nan(1,nx);
+    for xi = 1:nx
+        v = medV_all(:,xi); v = v(~isnan(v)); if ~isempty(v), qq = quantile(v,[0.25 0.75]); q1V(xi)=qq(1); q3V(xi)=qq(2); end
+        vt = medVT_all(:,xi); vt = vt(~isnan(vt)); if ~isempty(vt), qq = quantile(vt,[0.25 0.75]); q1VT(xi)=qq(1); q3VT(xi)=qq(2); end
+    end
+    x = 1:nx;
+    if any(~isnan(q1V)), fill([x fliplr(x)], [q1V fliplr(q3V)], lightV, 'FaceAlpha',0.25, 'EdgeColor','none'); end
+    if any(~isnan(q1VT)), fill([x fliplr(x)], [q1VT fliplr(q3VT)], lightVT, 'FaceAlpha',0.25, 'EdgeColor','none'); end
     medianV = median(medV_all,1,'omitnan');
     medianVT = median(medVT_all,1,'omitnan');
-    hV = plot(1:numel(prefixes_all), medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
-    hVT = plot(1:numel(prefixes_all), medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
+    hV = plot(x, medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
+    hVT = plot(x, medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
     title(sprintf('Part2: V responsive but no temporal-frequency tuning (n=%d out of %d)', row_ctr, nClusters));
     xticks(1:numel(prefixes_all)); xticklabels(prefixes_all);
     xlabel('Temporal frequency'); ylabel('Median(Response - Baseline) (Hz)'); legend([hV,hVT],{'V (median)','VT (median)'});
@@ -221,8 +252,17 @@ for i=1:nClusters
     dV = clusters(i).V.direction;
     wV = clusters(i).V.wilcoxon;
     dVT = clusters(i).VT.direction;
-    if all(dV == 0) && (~isnan(wV) && wV > 0.05) && any(dVT == 1)
-        part3_idx(i) = true;
+    wVT = clusters(i).VT.wilcoxon;
+    kVT = clusters(i).VT.kruskal;
+    allZerosV = all(dV == 0);
+    % VT tuned count
+    nOnesVT = sum(~isnan(dVT) & dVT == 1);
+    allOnesVT = all(dVT == 1);
+    % Part3: V all zeros & wilcoxon>0.05 AND (VT has 1-3 ones OR all VT ones & kruskal<0.05)
+    if allZerosV && (~isnan(wV) && wV > 0.05)
+        if (nOnesVT >= 1 && nOnesVT <= (numel(prefixes_all)-1)) || (allOnesVT && ~isnan(kVT) && kVT < 0.05)
+            part3_idx(i) = true;
+        end
     end
 end
 part3_clusters = find(part3_idx);
@@ -244,8 +284,6 @@ part3_clusters = find(part3_idx);
         medVT_ord = medVT(order_idx);
         medV_ord = clusters(i).V.medians(order_idx);
         x = 1:numel(prefixes_all);
-        plot(x, medVT_ord, '-o', 'Color', lightVT, 'MarkerFaceColor', lightVT, 'LineWidth',0.8, 'HandleVisibility','off');
-        plot(x, medV_ord, '-o', 'Color', lightV, 'MarkerFaceColor', lightV, 'LineWidth',0.8, 'HandleVisibility','off');
         row_ctr = row_ctr + 1;
         medVT_all(row_ctr,:) = medVT_ord;
         medV_all(row_ctr,:) = medV_ord;
@@ -262,10 +300,19 @@ part3_clusters = find(part3_idx);
         medVT_all = medVT_all(1:row_ctr,:);
         medV_all = medV_all(1:row_ctr,:);
     end
+    nx = numel(prefixes_all);
+    q1V = nan(1,nx); q3V = nan(1,nx); q1VT = nan(1,nx); q3VT = nan(1,nx);
+    for xi = 1:nx
+        vt = medVT_all(:,xi); vt = vt(~isnan(vt)); if ~isempty(vt), qq = quantile(vt,[0.25 0.75]); q1VT(xi)=qq(1); q3VT(xi)=qq(2); end
+        v = medV_all(:,xi); v = v(~isnan(v)); if ~isempty(v), qq = quantile(v,[0.25 0.75]); q1V(xi)=qq(1); q3V(xi)=qq(2); end
+    end
+    x = 1:nx;
+    if any(~isnan(q1V)), fill([x fliplr(x)], [q1V fliplr(q3V)], lightV, 'FaceAlpha',0.25, 'EdgeColor','none'); end
+    if any(~isnan(q1VT)), fill([x fliplr(x)], [q1VT fliplr(q3VT)], lightVT, 'FaceAlpha',0.25, 'EdgeColor','none'); end
     medianVT = median(medVT_all,1,'omitnan');
     medianV = median(medV_all,1,'omitnan');
-    hVT = plot(1:numel(prefixes_all), medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
-    hV = plot(1:numel(prefixes_all), medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
+    hVT = plot(x, medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
+    hV = plot(x, medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
     title(sprintf('Part3: VT tuned but V not responsive (n=%d out of %d)', row_ctr, nClusters));
     xticks(1:numel(prefixes_all));
     % Label only the preferred-temporal-frequency position (x=2) as VT_pref_ori
@@ -290,10 +337,16 @@ for i=1:nClusters
     wV = clusters(i).V.wilcoxon;
     dVT = clusters(i).VT.direction;
     wVT = clusters(i).VT.wilcoxon;
-    % require V not responsive, VT responsive without tuning, and positive median in VT
+    kVT = clusters(i).VT.kruskal;
     medVT_overall = median(clusters(i).VT.medians, 'omitnan');
-    if all(dV == 0) && (~isnan(wV) && wV > 0.05) && all(dVT == 0) && (~isnan(wVT) && wVT < 0.05) && ~isnan(medVT_overall) && medVT_overall > 0
-        part4_idx(i) = true;
+    allZerosV = all(dV == 0);
+    allZerosVT = all(dVT == 0);
+    allOnesVT = all(dVT == 1);
+    % Part4: (V all zeros & wV>0.05) AND ((VT all zeros & wWT<0.05 && medVT_overall>0) OR (all VT ones & kruskal>0.05))
+    if allZerosV && (~isnan(wV) && wV > 0.05)
+        if (allZerosVT && ~isnan(wVT) && wVT < 0.05 && ~isnan(medVT_overall) && medVT_overall > 0) || (allOnesVT && ~isnan(kVT) && kVT > 0.05)
+            part4_idx(i) = true;
+        end
     end
 end
 part4_clusters = find(part4_idx);
@@ -311,8 +364,6 @@ part4_clusters = find(part4_idx);
         medVT = clusters(i).VT.medians;
         medV = clusters(i).V.medians;
         x = 1:numel(prefixes_all);
-        plot(x, medVT, '-o', 'Color', lightVT, 'MarkerFaceColor', lightVT, 'LineWidth',0.8, 'HandleVisibility','off');
-        plot(x, medV, '-o', 'Color', lightV, 'MarkerFaceColor', lightV, 'LineWidth',0.8, 'HandleVisibility','off');
         row_ctr = row_ctr + 1;
         medVT_all(row_ctr,:) = medVT;
         medV_all(row_ctr,:) = medV;
@@ -328,10 +379,19 @@ part4_clusters = find(part4_idx);
         medVT_all = medVT_all(1:row_ctr,:);
         medV_all = medV_all(1:row_ctr,:);
     end
+    nx = numel(prefixes_all);
+    q1V = nan(1,nx); q3V = nan(1,nx); q1VT = nan(1,nx); q3VT = nan(1,nx);
+    for xi = 1:nx
+        vt = medVT_all(:,xi); vt = vt(~isnan(vt)); if ~isempty(vt), qq = quantile(vt,[0.25 0.75]); q1VT(xi)=qq(1); q3VT(xi)=qq(2); end
+        v = medV_all(:,xi); v = v(~isnan(v)); if ~isempty(v), qq = quantile(v,[0.25 0.75]); q1V(xi)=qq(1); q3V(xi)=qq(2); end
+    end
+    x = 1:nx;
+    if any(~isnan(q1V)), fill([x fliplr(x)], [q1V fliplr(q3V)], lightV, 'FaceAlpha',0.25, 'EdgeColor','none'); end
+    if any(~isnan(q1VT)), fill([x fliplr(x)], [q1VT fliplr(q3VT)], lightVT, 'FaceAlpha',0.25, 'EdgeColor','none'); end
     medianVT = median(medVT_all,1,'omitnan');
     medianV = median(medV_all,1,'omitnan');
-    hVT = plot(1:numel(prefixes_all), medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
-    hV = plot(1:numel(prefixes_all), medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
+    hVT = plot(x, medianVT, '-o', 'Color', darkVT, 'MarkerFaceColor', darkVT, 'LineWidth',1.5);
+    hV = plot(x, medianV, '-o', 'Color', darkV, 'MarkerFaceColor', darkV, 'LineWidth',1.5);
     title(sprintf('Part4: VT responsive no tuning, V not responsive (n=%d out of %d)', row_ctr, nClusters));
     xticks(1:numel(prefixes_all)); xticklabels(prefixes_all);
     xlabel('Temporal frequency'); ylabel('Median(Response - Baseline) (Hz)'); legend([hVT,hV],{'VT (median)','V (median)'});
@@ -346,3 +406,33 @@ else
 end
 
 fprintf('Population plots and CSVs written to: %s\n', out_dir);
+
+% Diagnostic: report clusters that were included in more than one Part
+cluster_parts = cell(nClusters,1);
+for i=1:nClusters
+    if exist('part1_idx','var') && part1_idx(i), cluster_parts{i} = [cluster_parts{i}, 1]; end
+    if exist('part2_idx','var') && part2_idx(i), cluster_parts{i} = [cluster_parts{i}, 2]; end
+    if exist('part3_idx','var') && part3_idx(i), cluster_parts{i} = [cluster_parts{i}, 3]; end
+    if exist('part4_idx','var') && part4_idx(i), cluster_parts{i} = [cluster_parts{i}, 4]; end
+end
+multi_idx = find(cellfun(@numel, cluster_parts) > 1);
+if ~isempty(multi_idx)
+    fprintf('Diagnostic: %d clusters assigned to multiple parts\n', numel(multi_idx));
+    diag_rows = struct(); diag_rows = repmat(diag_rows, numel(multi_idx), 1);
+    for k = 1:numel(multi_idx)
+        ii = multi_idx(k);
+        parts_str = sprintf('%d,', cluster_parts{ii}); parts_str = parts_str(1:end-1);
+        fprintf('  probe %s cluster %d -> parts: %s\n', clusters(ii).probe_id, clusters(ii).cluster_id, parts_str);
+        diag_rows(k).probe_id = clusters(ii).probe_id;
+        diag_rows(k).cluster_id = clusters(ii).cluster_id;
+        diag_rows(k).parts = parts_str;
+    end
+    try
+        Tdiag = struct2table(diag_rows);
+        writetable(Tdiag, fullfile(out_dir,'cluster_parts_diagnostic_temporal.csv'));
+    catch
+        warning('Could not write diagnostic CSV for temporal');
+    end
+else
+    fprintf('Diagnostic: no clusters assigned to multiple parts\n');
+end
