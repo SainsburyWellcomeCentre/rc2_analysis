@@ -117,10 +117,12 @@ for pid = 1:length(probe_ids)
     all_bin_centers_by_group = struct();
     all_avg_velocity_by_group = struct();
 
-    all_Q3_rate_unsmooth_by_group = struct();
-    all_Q3_rate_smooth_by_group = struct();
     all_Q1_rate_unsmooth_by_group = struct();
     all_Q1_rate_smooth_by_group = struct();
+    all_Q2_rate_unsmooth_by_group = struct();  % Median
+    all_Q2_rate_smooth_by_group = struct();
+    all_Q3_rate_unsmooth_by_group = struct();
+    all_Q3_rate_smooth_by_group = struct();
 
     all_occ_by_group = struct();
     cluster_ids = [clusters.id];
@@ -133,44 +135,7 @@ for pid = 1:length(probe_ids)
         for g = 1:2
             group = group_names{g};
             trials_struct = trial_groups.(group);
-            all_spike_positions = [];
-            all_positions = [];
-            all_times = [];
-            all_velocities = [];
-
-            spike_positions_per_trial = [];
-            time_per_trial = [];
-            velocities_per_trial = [];
-            positions_per_trial = [];
-
-            for k = 1:length(trials_struct)
-                trial = trials_struct(k).trial;
-                motion_mask = trial.motion_mask();
-                pos = trial.position(motion_mask);
-                tvec = trial.probe_t(motion_mask);
-                vel = trial.velocity(motion_mask);
-
-                all_positions = [all_positions; pos(:)];
-                all_times = [all_times; tvec(:)];
-                all_velocities = [all_velocities; vel(:)];
-
-                positions_per_trial = [positions_per_trial, pos];
-                time_per_trial = [time_per_trial,tvec];
-                velocities_per_trial = [velocities_per_trial, vel];
-           
-
-                st = cluster.spike_times;
-                mask = st >= tvec(1) & st <= tvec(end);
-                st = st(mask);
-                if ~isempty(st)
-                    spike_pos = interp1(tvec, pos, st, 'linear', 'extrap');
-                    all_spike_positions = [all_spike_positions; spike_pos];
-                    % add the other quantity
-                end
-            end
-            if isempty(all_positions)
-                continue;
-            end
+            
             % Set bin edges explicitly for each group
             if strcmp(group, 'long')
                 edges = 0:bin_size_cm:120;
@@ -178,6 +143,7 @@ for pid = 1:length(probe_ids)
                 edges = 0:bin_size_cm:60; % Short trials have positions 0-60 cm
             end
             bin_centers = edges(1:end-1) + bin_size_cm/2;
+            n_bins = length(bin_centers);
             
             % For short trials, adjust bin centers for plotting to align with 60-120 cm
             if strcmp(group, 'short')
@@ -186,54 +152,158 @@ for pid = 1:length(probe_ids)
                 plot_bin_centers = bin_centers;
             end
             
-            spike_count = histcounts(all_spike_positions, edges);
-            %  find a way to get hist counts per trial so that they are
-            %  computer across columns
-            dt_vec = [diff(all_times); 0];
-            occupancy = zeros(1, length(edges)-1);
-            velocity_sum = zeros(1, length(edges)-1);
-            for i = 1:length(occupancy)
-                in_bin = all_positions >= edges(i) & all_positions < edges(i+1);
-                occupancy(i) = sum(dt_vec(in_bin));
-                velocity_sum(i) = sum(all_velocities(in_bin) .* dt_vec(in_bin));
-            end
-            avg_velocity = velocity_sum ./ occupancy;
-            avg_velocity(isnan(avg_velocity) | isinf(avg_velocity)) = 0;
-            rate = spike_count ./ occupancy;
-            rate(isnan(rate) | isinf(rate)) = 0;
+            % --- Trial-by-trial firing rate computation ---
+            n_trials = length(trials_struct);
+            rate_per_trial = nan(n_trials, n_bins);  % Each row is one trial
+            occ_per_trial = nan(n_trials, n_bins);
+            vel_per_trial = nan(n_trials, n_bins);
             
-            % Create proper spatial Gaussian kernel
+            for k = 1:n_trials
+                trial = trials_struct(k).trial;
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                tvec = trial.probe_t(motion_mask);
+                vel = trial.velocity(motion_mask);
+                
+                if isempty(pos)
+                    continue;
+                end
+                
+                % Get spike times for this trial
+                st = cluster.spike_times;
+                mask = st >= tvec(1) & st <= tvec(end);
+                st = st(mask);
+                
+                % Interpolate spike positions
+                if ~isempty(st)
+                    spike_pos = interp1(tvec, pos, st, 'linear', 'extrap');
+                else
+                    spike_pos = [];
+                end
+                
+                % Compute spike count per bin for this trial
+                spike_count = histcounts(spike_pos, edges);
+                
+                % Compute occupancy per bin for this trial
+                dt_vec = [diff(tvec); 0];
+                occupancy = zeros(1, n_bins);
+                velocity_sum = zeros(1, n_bins);
+                for i = 1:n_bins
+                    in_bin = pos >= edges(i) & pos < edges(i+1);
+                    occupancy(i) = sum(dt_vec(in_bin));
+                    velocity_sum(i) = sum(vel(in_bin) .* dt_vec(in_bin));
+                end
+                
+                % Compute firing rate for this trial
+                rate = spike_count ./ occupancy;
+                rate(isnan(rate) | isinf(rate)) = NaN;  % Keep NaN for bins with no occupancy
+                
+                avg_velocity = velocity_sum ./ occupancy;
+                avg_velocity(isnan(avg_velocity) | isinf(avg_velocity)) = NaN;
+                
+                rate_per_trial(k, :) = rate;
+                occ_per_trial(k, :) = occupancy;
+                vel_per_trial(k, :) = avg_velocity;
+            end
+            
+            % --- Compute quartiles across trials ---
+            % Q1 (25th percentile), Q2 (median, 50th percentile), Q3 (75th percentile)
+            Q1_rate = prctile(rate_per_trial, 25, 1);
+            Q2_rate = prctile(rate_per_trial, 50, 1);  % Median
+            Q3_rate = prctile(rate_per_trial, 75, 1);
+            
+            % Also compute mean for comparison
+            mean_rate = nanmean(rate_per_trial, 1);
+            
+            % Compute mean occupancy and velocity across trials
+            mean_occupancy = nanmean(occ_per_trial, 1);
+            mean_velocity = nanmean(vel_per_trial, 1);
+            
+            % Replace NaN with 0 for smoothing
+            Q1_rate(isnan(Q1_rate)) = 0;
+            Q2_rate(isnan(Q2_rate)) = 0;
+            Q3_rate(isnan(Q3_rate)) = 0;
+            mean_rate(isnan(mean_rate)) = 0;
+            
+            % --- Print statistics for this cluster and group ---
+            fprintf('\n    Cluster %d, %s trials (n=%d):\n', cluster.id, group, n_trials);
+            fprintf('      Firing rate Q1 (25%%): mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q1_rate), min(Q1_rate), max(Q1_rate));
+            fprintf('      Firing rate Q2 (50%%, median): mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q2_rate), min(Q2_rate), max(Q2_rate));
+            fprintf('      Firing rate Q3 (75%%): mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q3_rate), min(Q3_rate), max(Q3_rate));
+            fprintf('      Mean firing rate: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(mean_rate), min(mean_rate), max(mean_rate));
+            
+            % --- Create proper spatial Gaussian kernel for smoothing ---
             kernel_size_cm = 8 * gauss_sigma_cm; % 64 cm total kernel size
             kernel_samples = round(kernel_size_cm / bin_size_cm); 
             x = linspace(-kernel_samples/2, kernel_samples/2, kernel_samples);
             kernel = exp(-x.^2 / (2 * (gauss_sigma_cm/bin_size_cm)^2));
             kernel = kernel / sum(kernel); % normalize
             
-            % Pad the rate data to avoid edge effects using mirror padding
+            % Pad and smooth each quartile
             pad_size = floor(length(kernel) / 2);
-            rate_padded = [fliplr(rate(1:pad_size)), rate, fliplr(rate(end-pad_size+1:end))];
-            rate_smooth_padded = conv(rate_padded, kernel, 'same');
-            rate_smooth = rate_smooth_padded(pad_size + 1 : end - pad_size);
             
-            % Store for heatmap and group plots
+            % Smooth Q1
+            Q1_padded = [fliplr(Q1_rate(1:pad_size)), Q1_rate, fliplr(Q1_rate(end-pad_size+1:end))];
+            Q1_smooth_padded = conv(Q1_padded, kernel, 'same');
+            Q1_rate_smooth = Q1_smooth_padded(pad_size + 1 : end - pad_size);
+            
+            % Smooth Q2 (median)
+            Q2_padded = [fliplr(Q2_rate(1:pad_size)), Q2_rate, fliplr(Q2_rate(end-pad_size+1:end))];
+            Q2_smooth_padded = conv(Q2_padded, kernel, 'same');
+            Q2_rate_smooth = Q2_smooth_padded(pad_size + 1 : end - pad_size);
+            
+            % Smooth Q3
+            Q3_padded = [fliplr(Q3_rate(1:pad_size)), Q3_rate, fliplr(Q3_rate(end-pad_size+1:end))];
+            Q3_smooth_padded = conv(Q3_padded, kernel, 'same');
+            Q3_rate_smooth = Q3_smooth_padded(pad_size + 1 : end - pad_size);
+            
+            % Smooth mean rate (for backward compatibility)
+            mean_padded = [fliplr(mean_rate(1:pad_size)), mean_rate, fliplr(mean_rate(end-pad_size+1:end))];
+            mean_smooth_padded = conv(mean_padded, kernel, 'same');
+            rate_smooth = mean_smooth_padded(pad_size + 1 : end - pad_size);
+            
+            % --- Print smoothed statistics ---
+            fprintf('      After smoothing (sigma=%.1f cm):\n', gauss_sigma_cm);
+            fprintf('        Smoothed Q1: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q1_rate_smooth), min(Q1_rate_smooth), max(Q1_rate_smooth));
+            fprintf('        Smoothed Q2 (median): mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q2_rate_smooth), min(Q2_rate_smooth), max(Q2_rate_smooth));
+            fprintf('        Smoothed Q3: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q3_rate_smooth), min(Q3_rate_smooth), max(Q3_rate_smooth));
+            fprintf('        Smoothed mean: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(rate_smooth), min(rate_smooth), max(rate_smooth));
+            
+            % --- Initialize storage structures if not already done ---
             if ~isfield(all_rate_smooth_by_group, group)
-                all_rate_smooth_by_group.(group) = nan(n_clusters, length(rate_smooth));
-                all_rate_unsmooth_by_group.(group) = nan(n_clusters, length(rate)); % NEW: Store unsmoothed rates
-
-                % all_Q3_rate_unsmooth_by_group.(group) = nan(n_clusters, length(rate));
-                % all_Q3_rate_smooth_by_group.(group) = nan(n_clusters, length(rate_smooth));
-                % all_Q1_rate_unsmooth_by_group.(group) = nan(n_clusters, length(rate));
-                % all_Q1_rate_smooth_by_group.(group) = nan(n_clusters, length(rate));
-
-                all_bin_centers_by_group.(group) = plot_bin_centers; % Use plot_bin_centers for display
-                all_avg_velocity_by_group.(group) = nan(n_clusters, length(avg_velocity));
-                all_occ_by_group.(group) = nan(n_clusters, length(occupancy));
+                all_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q1_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q1_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q2_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q2_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q3_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_Q3_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
+                all_bin_centers_by_group.(group) = plot_bin_centers;
+                all_avg_velocity_by_group.(group) = nan(n_clusters, n_bins);
+                all_occ_by_group.(group) = nan(n_clusters, n_bins);
             end
+            
+            % --- Store results ---
             all_rate_smooth_by_group.(group)(c, :) = rate_smooth;
-            all_rate_unsmooth_by_group.(group)(c, :) = rate; % NEW: Store unsmoothed rates
-            all_bin_centers_by_group.(group) = plot_bin_centers; % Use plot_bin_centers for display
-            all_avg_velocity_by_group.(group)(c, :) = avg_velocity;
-            all_occ_by_group.(group)(c, :) = occupancy;
+            all_rate_unsmooth_by_group.(group)(c, :) = mean_rate;
+            all_Q1_rate_unsmooth_by_group.(group)(c, :) = Q1_rate;
+            all_Q1_rate_smooth_by_group.(group)(c, :) = Q1_rate_smooth;
+            all_Q2_rate_unsmooth_by_group.(group)(c, :) = Q2_rate;
+            all_Q2_rate_smooth_by_group.(group)(c, :) = Q2_rate_smooth;
+            all_Q3_rate_unsmooth_by_group.(group)(c, :) = Q3_rate;
+            all_Q3_rate_smooth_by_group.(group)(c, :) = Q3_rate_smooth;
+            all_bin_centers_by_group.(group) = plot_bin_centers;
+            all_avg_velocity_by_group.(group)(c, :) = mean_velocity;
+            all_occ_by_group.(group)(c, :) = mean_occupancy;
         end
     end
 
@@ -331,7 +401,7 @@ for pid = 1:length(probe_ids)
 
     % For each cluster, create a single figure with both group firing rates overlaid
     if plot_single_cluster_fig
-        fprintf('  Creating individual cluster plots...\n');
+        fprintf('  Creating individual cluster plots with quartile distributions...\n');
         
         % Define colors for the two groups
         group_colors = struct('long', [0 0 0.8], 'short', [0.8 0 0]); % Blue for long, red for short
@@ -343,37 +413,45 @@ for pid = 1:length(probe_ids)
             hold on;
             
             % Plot each group (long and short)
-            if plot_single_cluster_fig 
-                for g = 1:2
-                    group = group_names{g};
-                    
-                    % Get the precomputed data for this cluster and group
-                    bin_centers = all_bin_centers_by_group.(group);
-                    rate_smooth = all_rate_smooth_by_group.(group)(c, :);
-                    rate_unsmooth = all_rate_unsmooth_by_group.(group)(c, :);
-                    
-                    % Skip if all NaN
-                    if all(isnan(rate_smooth))
-                        continue;
-                    end
-                    
-                    % Plot unsmoothed rate with 0.5 alpha (semi-transparent)
-                    plot(bin_centers, rate_unsmooth, '-', 'LineWidth', 1, 'Color', [group_colors.(group), 0.5], 'DisplayName', sprintf('%s (unsmoothed)', group_labels{g}));
-                    % Plot smoothed rate (solid line)
-                    plot(bin_centers, rate_smooth, '-', 'LineWidth', 2, 'Color', group_colors.(group), 'DisplayName', group_labels{g});
+            for g = 1:2
+                group = group_names{g};
+                
+                % Get the precomputed data for this cluster and group
+                bin_centers = all_bin_centers_by_group.(group);
+                rate_smooth = all_rate_smooth_by_group.(group)(c, :);  % Mean (smoothed)
+                Q1_smooth = all_Q1_rate_smooth_by_group.(group)(c, :);
+                Q2_smooth = all_Q2_rate_smooth_by_group.(group)(c, :);  % Median (smoothed)
+                Q3_smooth = all_Q3_rate_smooth_by_group.(group)(c, :);
+                
+                % Skip if all NaN
+                if all(isnan(rate_smooth))
+                    continue;
                 end
                 
-                hold off;
-                xlabel('Position (cm)');
-                ylabel('Firing rate (Hz)');
-                legend('show');
-                % Removed title to avoid overlap with FigureTitle
-                grid on;
+                % Plot Q1-Q3 shaded area (interquartile range)
+                fill_x = [bin_centers, fliplr(bin_centers)];
+                fill_y = [Q1_smooth, fliplr(Q3_smooth)];
+                fill(fill_x, fill_y, group_colors.(group), 'FaceAlpha', 0.2, 'EdgeColor', 'none', ...
+                     'HandleVisibility', 'off');
                 
-                % Add figure title
-                FigureTitle(fig_cluster, sprintf('Cluster %d - %s', cluster.id, probe_ids{pid}));
-                ctl.figs.save_fig_to_join();
+                % Plot median (Q2) as main line
+                plot(bin_centers, Q2_smooth, '-', 'LineWidth', 2, 'Color', group_colors.(group), ...
+                     'DisplayName', sprintf('%s median', group_labels{g}));
+                
+                % Plot mean as dashed line for comparison
+                plot(bin_centers, rate_smooth, '--', 'LineWidth', 1.5, 'Color', group_colors.(group), ...
+                     'DisplayName', sprintf('%s mean', group_labels{g}));
             end
+            
+            hold off;
+            xlabel('Position (cm)');
+            ylabel('Firing rate (Hz)');
+            legend('show', 'Location', 'best');
+            grid on;
+            
+            % Add figure title
+            FigureTitle(fig_cluster, sprintf('Cluster %d - %s (shaded: IQR)', cluster.id, probe_ids{pid}));
+            ctl.figs.save_fig_to_join();
         end
     end
     
