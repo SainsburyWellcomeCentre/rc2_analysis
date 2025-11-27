@@ -571,6 +571,98 @@ for pid = 1:length(probe_ids)
     save(save_fname, 'place_cell_results');
     
     fprintf('  Completed probe %d/%d\n', pid, length(probe_ids));
+      % === X-normalized comparison (fraction of path) for this probe ===
+    % This should be placed INSIDE the probe loop, AFTER you have computed:
+    %   all_rate_smooth_by_group.long / .short
+    %   all_bin_centers_by_group.long / .short
+    %   cluster_ids, clusters
+
+    % Make output directory for these PDFs
+    xnorm_dir = fullfile(output_base_dir, 'xnorm_shape_comparison');
+    if ~exist(xnorm_dir, 'dir')
+        mkdir(xnorm_dir);
+    end
+
+    % Number of clusters (rows of the long rate matrix)
+    n_clusters = size(all_rate_smooth_by_group.long, 1);
+
+    % Output file name for this probe
+    out_pdf = fullfile(xnorm_dir, sprintf('%s_shape_comparison_xnorm.pdf', probe_ids{pid}));
+
+    % If file already exists, delete so we can recreate it
+    if exist(out_pdf, 'file')
+        delete(out_pdf);
+    end
+
+    fprintf('Saving x-normalized shape comparison for %d clusters to %s\n', ...
+            n_clusters, out_pdf);
+
+    % Loop over clusters
+    for c = 1:n_clusters
+        cluster_id = cluster_ids(c);
+
+        % Extract x and y for this cluster
+        pos_long   = all_bin_centers_by_group.long(:);          % 0–120 (physical)
+        rate_long  = all_rate_smooth_by_group.long(c,:).';      % row -> column
+
+        pos_short  = all_bin_centers_by_group.short(:);         % 60–120 (shifted)
+        rate_short = all_rate_smooth_by_group.short(c,:).';     % row -> column
+
+        % Skip if this cluster has no data in one of the groups
+        if all(isnan(rate_long)) || all(isnan(rate_short))
+            fprintf('Cluster %d: skipped (no data in one group)\n', cluster_id);
+            continue;
+        end
+
+        % Normalized position (0 = start, 1 = goal) for each condition
+        pos_long_norm  = (pos_long  - min(pos_long))  / (max(pos_long)  - min(pos_long));
+        pos_short_norm = (pos_short - min(pos_short)) / (max(pos_short) - min(pos_short));
+
+        % Keep only finite points
+        idxL = isfinite(pos_long_norm)  & isfinite(rate_long);
+        idxS = isfinite(pos_short_norm) & isfinite(rate_short);
+
+        pos_long_n  = pos_long_norm(idxL);
+        rate_long_n = rate_long(idxL);
+
+        pos_short_n  = pos_short_norm(idxS);
+        rate_short_n = rate_short(idxS);
+
+        % Need at least two points in each group for interpolation
+        if numel(pos_long_n) < 2 || numel(pos_short_n) < 2
+            fprintf('Cluster %d: skipped (not enough data after filtering)\n', cluster_id);
+            continue;
+        end
+
+        % Common normalized grid
+        x_norm = linspace(0,1,100);
+
+        % Interpolate both curves onto the same normalized grid
+        rate_long_i  = interp1(pos_long_n,  rate_long_n,  x_norm, 'linear', 'extrap');
+        rate_short_i = interp1(pos_short_n, rate_short_n, x_norm, 'linear', 'extrap');
+
+        % Correlation of raw firing rates across normalized position
+        r = corr(rate_long_i(:), rate_short_i(:), 'rows', 'complete');
+
+        % Plot and append to PDF
+        fig = figure('Visible','off');
+        hold on;
+        plot(x_norm, rate_long_i,  'b', 'LineWidth', 2);
+        plot(x_norm, rate_short_i, 'r', 'LineWidth', 2);
+        hold off;
+
+        xlabel('Normalized track position (start \rightarrow goal)');
+        ylabel('Firing rate (Hz)');   % raw firing rate
+        legend({'Long (0–120 cm)','Short (60–120 cm)'}, 'Location', 'best');
+        title(sprintf('Cluster %d – x-normalized comparison (r = %.2f)', cluster_id, r));
+        grid on;
+
+        exportgraphics(fig, out_pdf, 'Append', true);
+        close(fig);
+
+        fprintf('Cluster %d: added to PDF (r = %.2f)\n', cluster_id, r);
+    end
+
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Helper functions (defined after main script)
