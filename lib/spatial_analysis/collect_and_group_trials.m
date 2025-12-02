@@ -32,9 +32,10 @@ function [trial_groups, group_names, group_labels] = collect_and_group_trials(se
     end
     
     % Initialize structure to collect all trials
-    all_trials_info = struct('trial', {}, 'session_idx', {}, 'trial_idx', {}, 'max_pos', {});
+    all_trials_info = struct('trial', {}, 'session_idx', {}, 'trial_idx', {}, 'max_pos', {}, 'global_trial_idx', {});
     
     % Collect all trials with their metadata
+    global_trial_counter = 0;
     for s = 1:length(sessions)
         session = sessions{s};
         trials_in_session = session.trials;
@@ -45,12 +46,14 @@ function [trial_groups, group_names, group_labels] = collect_and_group_trials(se
             pos = trial.position(motion_mask);
             
             if ~isempty(pos)
+                global_trial_counter = global_trial_counter + 1;
                 max_pos = max(pos);
                 all_trials_info(end+1) = struct(...
                     'trial', trial, ...
                     'session_idx', s, ...
                     'trial_idx', t, ...
-                    'max_pos', max_pos); %#ok<AGROW>
+                    'max_pos', max_pos, ...
+                    'global_trial_idx', global_trial_counter); %#ok<AGROW>
             end
         end
     end

@@ -1,10 +1,11 @@
-function [rate, occupancy, avg_velocity] = compute_trial_firing_rate(trial, cluster, edges)
+function [rate, occupancy, avg_velocity, spike_count] = compute_trial_firing_rate(trial, cluster, edges)
 % COMPUTE_TRIAL_FIRING_RATE Compute spatial firing rate for a single trial
 %
-%   [rate, occupancy, avg_velocity] = compute_trial_firing_rate(trial, cluster, edges)
+%   [rate, occupancy, avg_velocity, spike_count] = compute_trial_firing_rate(trial, cluster, edges)
 %
 %   Computes the firing rate per spatial bin for a single trial by dividing
-%   spike counts by occupancy time in each bin.
+%   spike counts by occupancy time in each bin. Also returns raw spike counts
+%   for alternative smoothing approaches.
 %
 %   Inputs:
 %       trial   - Trial object with motion_mask, position, probe_t, velocity methods
@@ -15,10 +16,11 @@ function [rate, occupancy, avg_velocity] = compute_trial_firing_rate(trial, clus
 %       rate         - Firing rate per spatial bin (Hz), NaN for unoccupied bins
 %       occupancy    - Time spent in each bin (s)
 %       avg_velocity - Average velocity in each bin (cm/s)
+%       spike_count  - Raw spike count per spatial bin
 %
 %   Example:
 %       edges = 0:2:120;  % 2-cm bins from 0 to 120 cm
-%       [rate, occ, vel] = compute_trial_firing_rate(trial, cluster, edges);
+%       [rate, occ, vel, counts] = compute_trial_firing_rate(trial, cluster, edges);
 
     n_bins = length(edges) - 1;
     
@@ -33,6 +35,7 @@ function [rate, occupancy, avg_velocity] = compute_trial_firing_rate(trial, clus
         rate = nan(1, n_bins);
         occupancy = nan(1, n_bins);
         avg_velocity = nan(1, n_bins);
+        spike_count = zeros(1, n_bins);
         return;
     end
     

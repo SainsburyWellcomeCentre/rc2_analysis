@@ -2,6 +2,13 @@
 % For experiment group 'training_running', bin position into 2-cm bins,
 % normalize spike counts by occupancy, and smooth with a Gaussian kernel (8-cm s.d.)
 %
+% SMOOTHING APPROACH:
+%   Spike counts and occupancy are smoothed SEPARATELY before computing rates.
+%   This is mathematically cleaner than smoothing rates directly:
+%       rate_smooth = smooth(counts) / smooth(occupancy)
+%   rather than:
+%       rate_smooth = smooth(counts / occupancy)
+%
 %   Specify options:
 %
 %       experiment_groups:      Will generate plots for all trials
@@ -41,11 +48,12 @@
 %%
 % Configuration
 experiment_groups       = {'ambient_light'};
-save_figs               = false;
-overwrite               = false;
+save_figs               = true;
+overwrite               = true;
 figure_dir              = {'spatial_firing_rate', 'ambient_light'};
-plot_single_cluster_fig = false;
-plot_heatmp_cluster_fig = false;
+plot_single_cluster_fig = true;
+plot_heatmp_cluster_fig = true;
+re_run_analysis         = false;  % Set to true to recompute all metrics, false to load cached data
 
 
 % Analysis parameters
@@ -65,16 +73,44 @@ fprintf('Found %d probe(s) for experiment group(s): %s\n', length(probe_ids), st
 for pid = 1:length(probe_ids)
     fprintf('\nProcessing probe %d/%d: %s\n', pid, length(probe_ids), probe_ids{pid});
     
-    data = ctl.load_formatted_data(probe_ids{pid});
-    clusters = data.selected_clusters();
-    sessions = data.motion_sessions();
+    % Define cache file path
+    cache_filename = sprintf('%s_spatial_analysis_cache.mat', probe_ids{pid});
+    cache_filepath = fullfile(ctl.figs.curr_dir, cache_filename);
     
-    fprintf('  Found %d clusters and %d sessions\n', length(clusters), length(sessions));
-    
-    % --- Collect and group trials using helper function ---
-    [trial_groups, group_names, group_labels] = collect_and_group_trials(sessions, position_threshold_cm);
-    fprintf('  Total long trials: %d\n', numel(trial_groups.long));
-    fprintf('  Total short trials: %d\n', numel(trial_groups.short));
+    % Try to load cached data if not re-running analysis
+    if ~re_run_analysis && exist(cache_filepath, 'file')
+        fprintf('  Loading cached analysis data from: %s\n', cache_filename);
+        load(cache_filepath, 'all_rate_smooth_by_group', 'all_rate_unsmooth_by_group', ...
+             'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
+             'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
+             'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
+             'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
+             'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
+             'all_rate_pooled_by_group', ...
+             'cluster_ids', 'n_clusters', 'group_names', 'group_labels');
+        fprintf('  Loaded cached data for %d clusters\n', n_clusters);
+        
+        % Still need to load data object for clusters info
+        data = ctl.load_formatted_data(probe_ids{pid});
+        clusters = data.selected_clusters();
+        sessions = data.motion_sessions();
+    else
+        if ~re_run_analysis
+            fprintf('  No cache found, computing analysis...\n');
+        else
+            fprintf('  Re-running analysis (re_run_analysis=true)...\n');
+        end
+        
+        data = ctl.load_formatted_data(probe_ids{pid});
+        clusters = data.selected_clusters();
+        sessions = data.motion_sessions();
+        
+        fprintf('  Found %d clusters and %d sessions\n', length(clusters), length(sessions));
+        
+        % --- Collect and group trials using helper function ---
+        [trial_groups, group_names, group_labels] = collect_and_group_trials(sessions, position_threshold_cm);
+        fprintf('  Total long trials: %d\n', numel(trial_groups.long));
+        fprintf('  Total short trials: %d\n', numel(trial_groups.short));
 
     % --- Initialize storage structures ---
     all_rate_smooth_by_group = struct();
@@ -88,6 +124,15 @@ for pid = 1:length(probe_ids)
     all_Q3_rate_unsmooth_by_group = struct();
     all_Q3_rate_smooth_by_group = struct();
     all_occ_by_group = struct();
+    
+    % Storage for per-trial data (for plotting individual traces)
+    all_rate_per_trial_by_group = struct();
+    all_rate_per_trial_smooth_by_group = struct();
+    all_spike_positions_by_group = struct();  % For position-based raster plots
+    all_global_trial_indices_by_group = struct();  % For preserving trial order
+    
+    % Storage for pooled trial rates (all trials combined before smoothing)
+    all_rate_pooled_by_group = struct();
     
     cluster_ids = [clusters.id];
     n_clusters = length(clusters);
@@ -123,18 +168,89 @@ for pid = 1:length(probe_ids)
             rate_per_trial = nan(n_trials, n_bins);
             occ_per_trial = nan(n_trials, n_bins);
             vel_per_trial = nan(n_trials, n_bins);
+            count_per_trial = nan(n_trials, n_bins);  % Store spike counts
+            spike_positions_per_trial = cell(n_trials, 1);  % For raster plots
+            global_trial_indices = zeros(n_trials, 1);  % Store global trial order
             
             for k = 1:n_trials
                 trial = trials_struct(k).trial;
-                [rate, occ, vel] = compute_trial_firing_rate(trial, cluster, edges);
+                global_trial_indices(k) = trials_struct(k).global_trial_idx;  % Store global index
+                [rate, occ, vel, counts] = compute_trial_firing_rate(trial, cluster, edges);
                 rate_per_trial(k, :) = rate;
                 occ_per_trial(k, :) = occ;
                 vel_per_trial(k, :) = vel;
+                count_per_trial(k, :) = counts;
+                
+                % Get spike positions for position-based raster plot (motion only)
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                tvec = trial.probe_t(motion_mask);
+                if ~isempty(pos) && ~isempty(tvec)
+                    st = cluster.spike_times;
+                    spike_mask = st >= tvec(1) & st <= tvec(end);
+                    st_in_trial = st(spike_mask);
+                    if ~isempty(st_in_trial)
+                        spike_pos = interp1(tvec, pos, st_in_trial, 'linear', 'extrap');
+                        % Adjust short trial positions to 60-120 range
+                        if strcmp(group, 'short')
+                            spike_pos = spike_pos + 60;
+                        end
+                        spike_positions_per_trial{k} = spike_pos(:)';
+                    else
+                        spike_positions_per_trial{k} = [];
+                    end
+                else
+                    spike_positions_per_trial{k} = [];
+                end
             end
             
-            % --- Compute quartiles and smooth using helper function ---
-            fprintf('\n    Cluster %d, %s trials:\n', cluster.id, group);
-            quartile_results = compute_quartiles_and_smooth(rate_per_trial, bin_size_cm, gauss_sigma_cm, true);
+            % Smooth spike counts and occupancy separately, then compute rates
+            % This is more mathematically sound than smoothing rates directly
+            count_per_trial_smooth = nan(n_trials, n_bins);
+            occ_per_trial_smooth = nan(n_trials, n_bins);
+            rate_per_trial_smooth = nan(n_trials, n_bins);
+            
+            for k = 1:n_trials
+                % Smooth counts and occupancy
+                count_per_trial_smooth(k, :) = smooth_spatial_rate(count_per_trial(k, :), bin_size_cm, gauss_sigma_cm);
+                occ_per_trial_smooth(k, :) = smooth_spatial_rate(occ_per_trial(k, :), bin_size_cm, gauss_sigma_cm);
+                
+                % Compute smoothed rate from smoothed counts and occupancy
+                rate_per_trial_smooth(k, :) = count_per_trial_smooth(k, :) ./ occ_per_trial_smooth(k, :);
+                rate_per_trial_smooth(k, isnan(rate_per_trial_smooth(k, :)) | isinf(rate_per_trial_smooth(k, :))) = 0;
+            end
+            
+            % Compute quartiles from SMOOTHED trial data
+            Q1_from_smoothed = prctile(rate_per_trial_smooth, 25, 1);
+            Q2_from_smoothed = prctile(rate_per_trial_smooth, 50, 1);  % Median
+            Q3_from_smoothed = prctile(rate_per_trial_smooth, 75, 1);
+            
+            % Compute mean across trials using smoothed counts/occupancy approach
+            mean_count_smooth = nanmean(count_per_trial_smooth, 1);
+            mean_occ_smooth = nanmean(occ_per_trial_smooth, 1);
+            mean_rate_smooth = mean_count_smooth ./ mean_occ_smooth;
+            mean_rate_smooth(isnan(mean_rate_smooth) | isinf(mean_rate_smooth)) = 0;
+            
+            % Also compute unsmoothed mean for comparison
+            mean_rate_unsmooth = nanmean(rate_per_trial, 1);
+            
+            % Compute POOLED trial rate: sum all counts/occupancy, then smooth
+            % This is for comparison with the _identification script approach
+            pooled_count = nansum(count_per_trial, 1);
+            pooled_occ = nansum(occ_per_trial, 1);
+            pooled_count_smooth = smooth_spatial_rate(pooled_count, bin_size_cm, gauss_sigma_cm);
+            pooled_occ_smooth = smooth_spatial_rate(pooled_occ, bin_size_cm, gauss_sigma_cm);
+            rate_pooled = pooled_count_smooth ./ pooled_occ_smooth;
+            rate_pooled(isnan(rate_pooled) | isinf(rate_pooled)) = 0;
+            
+            % --- Print statistics ---
+            fprintf('\n    Cluster %d, %s trials (n=%d):\n', cluster.id, group, n_trials);
+            fprintf('      Smoothed mean rate: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(mean_rate_smooth), min(mean_rate_smooth), max(mean_rate_smooth));
+            fprintf('      Smoothed Q2 (median): mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(Q2_from_smoothed), min(Q2_from_smoothed), max(Q2_from_smoothed));
+            fprintf('      Pooled rate: mean=%.2f Hz, range=[%.2f, %.2f] Hz\n', ...
+                    nanmean(rate_pooled), min(rate_pooled), max(rate_pooled));
             
             % Compute mean occupancy and velocity across trials
             mean_occupancy = nanmean(occ_per_trial, 1);
@@ -153,22 +269,47 @@ for pid = 1:length(probe_ids)
                 all_bin_centers_by_group.(group) = plot_bin_centers;
                 all_avg_velocity_by_group.(group) = nan(n_clusters, n_bins);
                 all_occ_by_group.(group) = nan(n_clusters, n_bins);
+                all_rate_per_trial_by_group.(group) = cell(n_clusters, 1);
+                all_rate_per_trial_smooth_by_group.(group) = cell(n_clusters, 1);
+                all_spike_positions_by_group.(group) = cell(n_clusters, 1);
+                all_global_trial_indices_by_group.(group) = cell(n_clusters, 1);
+                all_rate_pooled_by_group.(group) = nan(n_clusters, n_bins);
             end
             
             % --- Store results ---
-            all_rate_smooth_by_group.(group)(c, :) = quartile_results.mean_smooth;
-            all_rate_unsmooth_by_group.(group)(c, :) = quartile_results.mean_unsmooth;
-            all_Q1_rate_unsmooth_by_group.(group)(c, :) = quartile_results.Q1_unsmooth;
-            all_Q1_rate_smooth_by_group.(group)(c, :) = quartile_results.Q1_smooth;
-            all_Q2_rate_unsmooth_by_group.(group)(c, :) = quartile_results.Q2_unsmooth;
-            all_Q2_rate_smooth_by_group.(group)(c, :) = quartile_results.Q2_smooth;
-            all_Q3_rate_unsmooth_by_group.(group)(c, :) = quartile_results.Q3_unsmooth;
-            all_Q3_rate_smooth_by_group.(group)(c, :) = quartile_results.Q3_smooth;
+            all_rate_smooth_by_group.(group)(c, :) = mean_rate_smooth;
+            all_rate_unsmooth_by_group.(group)(c, :) = mean_rate_unsmooth;
+            % Store unsmoothed quartiles (computed from unsmoothed rates)
+            all_Q1_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 25, 1);
+            all_Q2_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 50, 1);
+            all_Q3_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 75, 1);
+            % Store smoothed quartiles (computed from smoothed rates)
+            all_Q1_rate_smooth_by_group.(group)(c, :) = Q1_from_smoothed;
+            all_Q2_rate_smooth_by_group.(group)(c, :) = Q2_from_smoothed;
+            all_Q3_rate_smooth_by_group.(group)(c, :) = Q3_from_smoothed;
             all_bin_centers_by_group.(group) = plot_bin_centers;
             all_avg_velocity_by_group.(group)(c, :) = mean_velocity;
             all_occ_by_group.(group)(c, :) = mean_occupancy;
+            all_rate_per_trial_by_group.(group){c} = rate_per_trial;
+            all_rate_per_trial_smooth_by_group.(group){c} = rate_per_trial_smooth;
+            all_spike_positions_by_group.(group){c} = spike_positions_per_trial;
+            all_global_trial_indices_by_group.(group){c} = global_trial_indices;
+            all_rate_pooled_by_group.(group)(c, :) = rate_pooled;
         end
     end
+    
+        % --- Save computed data to cache ---
+        fprintf('  Saving analysis data to cache: %s\n', cache_filename);
+        save(cache_filepath, 'all_rate_smooth_by_group', 'all_rate_unsmooth_by_group', ...
+             'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
+             'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
+             'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
+             'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
+             'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
+             'all_rate_pooled_by_group', ...
+             'cluster_ids', 'n_clusters', 'group_names', 'group_labels', '-v7.3');
+        fprintf('  Cache saved successfully\n');
+    end  % End of analysis computation block
 
     % --- Plot average running and occupancy profiles for each group ---
     if save_figs
@@ -186,7 +327,7 @@ for pid = 1:length(probe_ids)
         hold off;
         xlabel('Position (cm)');
         ylabel('Avg Velocity (cm/s)');
-        legend('show');
+        legend('show', 'Location', 'northeastoutside');
         % Removed title to avoid overlap with FigureTitle
         grid on;
         % Average occupancy
@@ -201,7 +342,7 @@ for pid = 1:length(probe_ids)
         hold off;
         xlabel('Position (cm)');
         ylabel('Occupancy (s)');
-        legend('show');
+        legend('show', 'Location', 'northeastoutside');
         % Removed title to avoid overlap with FigureTitle
         grid on;
         
@@ -276,10 +417,14 @@ for pid = 1:length(probe_ids)
             rate_data = struct();
             for g = 1:2
                 group = group_names{g};
-                rate_data.(group).mean_smooth = all_rate_smooth_by_group.(group)(c, :);
                 rate_data.(group).Q1_smooth = all_Q1_rate_smooth_by_group.(group)(c, :);
                 rate_data.(group).Q2_smooth = all_Q2_rate_smooth_by_group.(group)(c, :);
                 rate_data.(group).Q3_smooth = all_Q3_rate_smooth_by_group.(group)(c, :);
+                rate_data.(group).rate_per_trial = all_rate_per_trial_by_group.(group){c};
+                rate_data.(group).rate_per_trial_smooth = all_rate_per_trial_smooth_by_group.(group){c};
+                rate_data.(group).spike_positions = all_spike_positions_by_group.(group){c};
+                rate_data.(group).global_trial_indices = all_global_trial_indices_by_group.(group){c};
+                rate_data.(group).rate_pooled = all_rate_pooled_by_group.(group)(c, :);
             end
             
             % Create combined figure using helper function
@@ -288,7 +433,7 @@ for pid = 1:length(probe_ids)
                                                        group_colors, probe_ids{pid});
             
             % Save using the figure management system
-            if save_figs
+             if save_figs
                 % Convert to a4figure format for PDF joining
                 set(fig_cluster, 'PaperOrientation', 'landscape');
                 set(fig_cluster, 'PaperUnits', 'normalized');
