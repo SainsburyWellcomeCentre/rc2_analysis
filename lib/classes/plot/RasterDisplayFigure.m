@@ -42,7 +42,7 @@ classdef RasterDisplayFigure < handle
         %   NUMBER_OF_SECTIONS can only be one of 2, 3, 4, or 6.
         
             % setup a nice figure
-            obj.h_fig = figure();
+            obj.h_fig = figure('Visible', 'off');
             
             % get screen limitations
             set(0, 'units', 'centimeters');
@@ -60,10 +60,18 @@ classdef RasterDisplayFigure < handle
                            'outerposition', [0, 0, 21, H], ...
                            'color', 'w');
             
-            title_height = 2;
+            title_height = 1.5;
                        
             % work out the position of the axes
             if n_prot == 1
+                
+                section_size = obj.h_fig.InnerPosition(3:4) - [0, title_height];
+                x_i = 1;
+                y_i = 1;
+                section_position = [0, 0, section_size(1), section_size(2)];
+                obj.h_section(x_i, y_i) = RasterDisplaySection(obj.h_fig);
+                obj.h_section(x_i, y_i).set_position(section_position);
+                
             elseif n_prot == 2
                 
                 section_size = (obj.h_fig.InnerPosition(3:4) - [0, title_height])./[2, 3];
@@ -165,6 +173,8 @@ classdef RasterDisplayFigure < handle
             h_motion.ylim([0, nan]);
             h_motion.ylabel('cm/s');
             h_motion.xlabel('');
+            h_psth.ylabel('Spike count');
+            h_psth.xlabel('');
 %             h_rates.mean_colour('k');
 %             h_rates.add_sem([0.6, 0.6, 0.6]);
 %             h_rates.ylabel('Hz');
@@ -174,6 +184,10 @@ classdef RasterDisplayFigure < handle
             end
             
             title(h_raster.h_ax, title_str, 'interpreter', 'none')
+            
+            % Set ylabels after any axis modifications
+            ylabel(obj.h_section(x_i, y_i).h_ax(2), 'cm/s', 'interpreter', 'none', 'fontsize', 8);
+            ylabel(obj.h_section(x_i, y_i).h_ax(3), 'Spike count', 'interpreter', 'none', 'fontsize', 8);
             
             obj.h_raster{x_i, y_i} = h_raster;
             obj.h_motion{x_i, y_i} = h_motion;

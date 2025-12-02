@@ -16,7 +16,7 @@
 %       trial_group_labels:     Will generate a raster for all trials specified.
 %                               Should be a cell array, with each entry
 %                               either a string specifying a trial group,
-%                               or a cell array of strings specifying
+%                               or a cell array of strings specifying 
 %                               multiple trial groups.
 %                               e.g. {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'}
 %                               will create three heatmaps, the first
@@ -72,14 +72,14 @@
 
 
 %%
-experiment_groups       = {'darkness'};
-trial_group_labels      = {'R', {'T_bank', 'T_RT', 'T_R'}, 'RT'};
-raster_trigger          = {'motion', 'motion', 'motion'};
-limits                  = [-1, 1];
+experiment_groups       = {'ambient_light'};
+trial_group_labels      = {'RT'};
+raster_trigger          = {'motion'};
+limits                  = [-5, 10];
 common_fs               = 60;
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'rasters', 'darkness'};
+figure_dir              = {'spatial_firing_rate', 'rasters'};
 min_bout_duration       = 2;
 include_200ms           = true;
 
@@ -112,23 +112,25 @@ for ii = 1 : length(probe_ids)
     clusters    = data.selected_clusters();
     
     traces      = {};
+    trigger_times_all = {};
     
     for kk = 1 : length(trial_group_labels)
         
         if strcmp(raster_trigger{kk}, 'motion')
             options.min_bout_duration = min_bout_duration;
             options.include_200ms = include_200ms;
-            [traces{kk}, t, times] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs, options);
+            [traces{kk}, t, trigger_times_all{kk}] = data.get_traces_around_motion_onset(trial_group_labels{kk}, limits, common_fs, options);
         elseif strcmp(raster_trigger{kk}, 'mismatch')
-            [traces{kk}, t, times] = data.get_traces_around_mismatch_onset(trial_group_labels{kk}, limits, common_fs);
+            [traces{kk}, t, trigger_times_all{kk}] = data.get_traces_around_mismatch_onset(trial_group_labels{kk}, limits, common_fs);
         elseif strcmp(raster_trigger{kk}, 'solenoid')
-            [traces{kk}, t, times] = data.get_traces_around_solenoid_up(trial_group_labels{kk}, limits, common_fs);
+            [traces{kk}, t, trigger_times_all{kk}] = data.get_traces_around_solenoid_up(trial_group_labels{kk}, limits, common_fs);
         end
         
         for jj = 1 : length(clusters)
             
-            rd{jj}{kk} = RasterData(clusters(jj));
-            rd{jj}{kk}.trigger_times = times;
+            rd{jj}{kk} = RasterData(clusters(jj), limits);
+            rd{jj}{kk}.trigger_times = trigger_times_all{kk};
+            rd{jj}{kk}.fs = common_fs;
         end
     end
     
@@ -165,7 +167,7 @@ for ii = 1 : length(probe_ids)
         % give the page a title
         FigureTitle(r.h_fig, sprintf('%s, Cluster %i, %s', probe_ids{ii}, clusters(jj).id, clusters(jj).region_str));
         
-        ctl.figs.save_fig_to_join(true, 400); % 
+        ctl.figs.save_fig_to_join(true, 400); 
         
     end
     
