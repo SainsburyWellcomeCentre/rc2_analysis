@@ -1,8 +1,8 @@
-function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id)
+function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id)
+%                                      group_names, group_labels, group_colors, probe_id, stats)
 %
 %   Creates a 3-panel figure (1 row) showing:
 %       - Panel 1: Combined position-based raster for both long and short trials
@@ -22,11 +22,17 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %       group_labels       - Cell array with descriptive labels for legend
 %       group_colors       - Struct with RGB colors for each group
 %       probe_id           - String identifier for the probe (for title)
+%       stats              - (Optional) Struct with statistical test results per group
 %
 %   Outputs:
 %       fig - Figure handle
 
-    fig = figure('Position', [50, 50, 1500, 400]);
+    % Handle missing stats argument
+    if nargin < 8
+        stats = [];
+    end
+
+    fig = figure('Position', [50, 50, 1500, 550]);
     
     % Compute max firing rate as 120% of the third quartile across all data
     all_Q3_values = [];
@@ -50,7 +56,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 1 (col 1): Combined position-based raster for both long and short trials
-    subplot(1, 3, 1);
+    subplot(4, 3, [1, 4, 7]);
     hold on;
     
     % Collect all trials with their global indices and group info
@@ -120,7 +126,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 2 (col 2): Smoothed traces with median and IQR shading
-    subplot(1, 3, 2);
+    subplot(4, 3, [2, 5, 8]);
     hold on;
     
     for g = 1:length(group_names)
@@ -163,6 +169,73 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             plot(bin_centers, rate_pooled, '--', 'LineWidth', 2.5, 'Color', color, ...
                  'HandleVisibility', 'off');
         end
+        
+    end
+    
+    % Add asterisks on peaks and field bars for spatially tuned groups
+    if ~isempty(stats)
+        for g = 1:length(group_names)
+            group = group_names{g};
+            if isfield(stats, group)
+                group_stats = stats.(group);
+                if isfield(group_stats, 'isSpatiallyTuned') && group_stats.isSpatiallyTuned
+                    if isfield(group_stats, 'peakPosition') && isfield(group_stats, 'peakRate')
+                        peak_pos = group_stats.peakPosition;
+                        % Adjust peak position for short trials (plotted at 60-120 cm)
+                        if strcmp(group, 'short')
+                            peak_pos = peak_pos + 60;
+                        end
+                        peak_rate = group_stats.peakRate;
+                        color = group_colors.(group);
+                        
+                        % Plot large asterisk above the peak
+                        text(peak_pos, peak_rate + 0.05*max_firing_rate, '*', ...
+                             'FontSize', 24, 'FontWeight', 'bold', 'Color', color, ...
+                             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
+                        
+                        % Plot horizontal bar showing the detected field extent
+                        if isfield(group_stats, 'fieldStart') && isfield(group_stats, 'fieldEnd')
+                            field_start = group_stats.fieldStart;
+                            field_end = group_stats.fieldEnd;
+                            % Adjust for short trials
+                            if strcmp(group, 'short')
+                                field_start = field_start + 60;
+                                field_end = field_end + 60;
+                            end
+                            % Draw thick horizontal line with offset so blue/red don't overlap
+                            % Short trials (red) at 95%, long trials (blue) at 92%
+                            if strcmp(group, 'short')
+                                bar_y = 0.95 * max_firing_rate;
+                            else
+                                bar_y = 0.92 * max_firing_rate;
+                            end
+                            plot([field_start, field_end], [bar_y, bar_y], '-', ...
+                                 'LineWidth', 4, 'Color', color, 'HandleVisibility', 'off');
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    % Add "NS" label if no groups are spatially tuned
+    if ~isempty(stats)
+        any_significant = false;
+        for g = 1:length(group_names)
+            group = group_names{g};
+            if isfield(stats, group) && isfield(stats.(group), 'isSpatiallyTuned')
+                if stats.(group).isSpatiallyTuned
+                    any_significant = true;
+                    break;
+                end
+            end
+        end
+        if ~any_significant
+            % Add "NS" in top right corner
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', ...
+                 'FontSize', 16, 'FontWeight', 'bold', 'Color', [0.5 0.5 0.5], ...
+                 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
     end
     
     hold off;
@@ -175,7 +248,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 3 (col 3): X-normalized comparison
-    subplot(1, 3, 3);
+    subplot(4, 3, [3, 6, 9]);
     hold on;
     
     % Common normalized grid (0 to 1, displayed as 0% to 100%)
@@ -279,6 +352,61 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     ylim([0, max_firing_rate]);
     set(gca, 'XTick', 0:10:100);
     
-    % Overall figure title
-    sgtitle(sprintf('Cluster %d - %s', cluster_id, probe_id), 'FontWeight', 'bold');
+    % Overall figure title (escape underscores to prevent subscript rendering)
+    probe_id_escaped = strrep(probe_id, '_', '\\_');
+    sgtitle(sprintf('Cluster %d - %s', cluster_id, probe_id_escaped), 'FontWeight', 'bold');
+    
+    %% Bottom row: Statistical test results (if available)
+    if ~isempty(stats)
+        % Create text annotation panel spanning bottom row
+        subplot(4, 3, [10, 11, 12]);
+        axis off;
+        
+        % Prepare text content
+        text_content = {};
+        text_content{end+1} = '\fontsize{10}\bfStatistical Test Results:\rm';
+        text_content{end+1} = ' ';
+        
+        group_fields = fieldnames(stats);
+        for g_idx = 1:length(group_fields)
+            group = group_fields{g_idx};
+            s = stats.(group);
+            
+            % Find group label
+            group_display = group;
+            for gl_idx = 1:length(group_names)
+                if strcmp(group_names{gl_idx}, group)
+                    group_display = group_labels{gl_idx};
+                    break;
+                end
+            end
+            
+            % Calculate displayed peak position (add 60 for short trials to show absolute position)
+            peak_pos_display = s.peakPosition;
+            if strcmp(group, 'short')
+                peak_pos_display = s.peakPosition + 60;
+            end
+            
+            % Escape underscores in reason to prevent subscript rendering
+            reason_escaped = strrep(s.reason, '_', '\\_');
+            
+            % Group header
+            if s.isSpatiallyTuned
+                text_content{end+1} = sprintf('\\bf%s: PASS (spatially tuned)\\rm', group_display);
+            else
+                text_content{end+1} = sprintf('\\bf%s: FAIL (%s)\\rm', group_display, reason_escaped);
+            end
+            
+            % Test details (include field size in cm for easier interpretation)
+            field_size_cm = s.fieldBins * 2;  % 2cm bins
+            text_content{end+1} = sprintf('  Spikes: %d  |  Peak: %.2f Hz @ %.1f cm  |  Info: %.4f (p=%.4f)  |  Field: %d bins (%.0f cm)  |  Num fields: %d', ...
+                                         s.n_spikes, s.peakRate, peak_pos_display, s.info, s.pVal, s.fieldBins, field_size_cm, s.numFields);
+            text_content{end+1} = ' ';
+        end
+        
+        % Display text lower (0.3) to avoid overlap with bottom plot x-axis labels
+        text(0.05, 0.3, text_content, 'FontName', 'FixedWidth', 'FontSize', 9, ...
+             'VerticalAlignment', 'middle', 'HorizontalAlignment', 'left', ...
+             'Interpreter', 'tex');
+    end
 end

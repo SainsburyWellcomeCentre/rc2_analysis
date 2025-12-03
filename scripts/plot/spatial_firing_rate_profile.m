@@ -61,6 +61,23 @@ bin_size_cm = 2;
 gauss_sigma_cm = 8; % standard deviation for smoothing (cm)
 position_threshold_cm = 90; % threshold for long/short trial classification
 
+% Statistical analysis parameters (set run_statistics=false to skip slow shuffle tests)
+%
+% IMPORTANT: If you change any of the statistical parameters below (minSpikes, minPeakRate,
+% fieldFrac, minFieldBins, maxNumFields, nShuf, pThresh), you MUST set re_run_analysis=true
+% to recompute the cached data. The cache does not track parameter changes, so old cached
+% statistics will be invalid if you change classification criteria.
+%
+run_statistics = true;      % Set to false to skip statistical analysis and speed up processing
+minSpikes = 25;             % minimum spikes per cluster per group to attempt classification
+minPeakRate = 1.0;          % Hz minimum peak for field consideration
+fieldFrac = 0.7;            % field threshold fraction of peak
+minFieldBins = 5;           % contiguous bins for a field
+maxNumFields = 1;           % maximum number of fields for uniqueness criterion
+nShuf = 100;                % number of circular-shift shuffles
+pThresh = 0.05;             % significance threshold for Skaggs shuffle
+use_parallel = true;        % Use parallel processing for shuffles (requires Parallel Computing Toolbox)
+
 
 % Initialize controller and get probe IDs
 ctl = RC2Analysis();
@@ -80,15 +97,37 @@ for pid = 1:length(probe_ids)
     % Try to load cached data if not re-running analysis
     if ~re_run_analysis && exist(cache_filepath, 'file')
         fprintf('  Loading cached analysis data from: %s\n', cache_filename);
-        load(cache_filepath, 'all_rate_smooth_by_group', 'all_rate_unsmooth_by_group', ...
-             'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
-             'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
-             'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
-             'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
-             'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
-             'all_rate_pooled_by_group', ...
-             'cluster_ids', 'n_clusters', 'group_names', 'group_labels');
-        fprintf('  Loaded cached data for %d clusters\n', n_clusters);
+        loaded_vars = load(cache_filepath);
+        
+        % Load core variables
+        all_rate_smooth_by_group = loaded_vars.all_rate_smooth_by_group;
+        all_bin_centers_by_group = loaded_vars.all_bin_centers_by_group;
+        all_avg_velocity_by_group = loaded_vars.all_avg_velocity_by_group;
+        all_Q1_rate_smooth_by_group = loaded_vars.all_Q1_rate_smooth_by_group;
+        all_Q2_rate_smooth_by_group = loaded_vars.all_Q2_rate_smooth_by_group;
+        all_Q3_rate_smooth_by_group = loaded_vars.all_Q3_rate_smooth_by_group;
+        all_occ_by_group = loaded_vars.all_occ_by_group;
+        all_rate_per_trial_by_group = loaded_vars.all_rate_per_trial_by_group;
+        all_rate_per_trial_smooth_by_group = loaded_vars.all_rate_per_trial_smooth_by_group;
+        all_spike_positions_by_group = loaded_vars.all_spike_positions_by_group;
+        all_global_trial_indices_by_group = loaded_vars.all_global_trial_indices_by_group;
+        all_rate_pooled_by_group = loaded_vars.all_rate_pooled_by_group;
+        cluster_ids = loaded_vars.cluster_ids;
+        n_clusters = loaded_vars.n_clusters;
+        group_names = loaded_vars.group_names;
+        group_labels = loaded_vars.group_labels;
+        
+        % Load statistical results if available (for backward compatibility)
+        if isfield(loaded_vars, 'spatial_tuning_stats')
+            spatial_tuning_stats = loaded_vars.spatial_tuning_stats;
+            fprintf('  Loaded cached data for %d clusters (including statistical analysis)\n', n_clusters);
+        elseif isfield(loaded_vars, 'place_cell_stats')
+            % Legacy support for old cache files
+            spatial_tuning_stats = loaded_vars.place_cell_stats;
+            fprintf('  Loaded cached data for %d clusters (including statistical analysis - legacy format)\n', n_clusters);
+        else
+            fprintf('  Loaded cached data for %d clusters (no statistical analysis found - use re_run_analysis=true)\n', n_clusters);
+        end
         
         % Still need to load data object for clusters info
         data = ctl.load_formatted_data(probe_ids{pid});
@@ -114,14 +153,10 @@ for pid = 1:length(probe_ids)
 
     % --- Initialize storage structures ---
     all_rate_smooth_by_group = struct();
-    all_rate_unsmooth_by_group = struct();
     all_bin_centers_by_group = struct();
     all_avg_velocity_by_group = struct();
-    all_Q1_rate_unsmooth_by_group = struct();
     all_Q1_rate_smooth_by_group = struct();
-    all_Q2_rate_unsmooth_by_group = struct();
     all_Q2_rate_smooth_by_group = struct();
-    all_Q3_rate_unsmooth_by_group = struct();
     all_Q3_rate_smooth_by_group = struct();
     all_occ_by_group = struct();
     
@@ -201,7 +236,8 @@ for pid = 1:length(probe_ids)
                     end
                 else
                     spike_positions_per_trial{k} = [];
-                end
+                    endlll
+                    
             end
             
             % Smooth spike counts and occupancy separately, then compute rates
@@ -231,9 +267,6 @@ for pid = 1:length(probe_ids)
             mean_rate_smooth = mean_count_smooth ./ mean_occ_smooth;
             mean_rate_smooth(isnan(mean_rate_smooth) | isinf(mean_rate_smooth)) = 0;
             
-            % Also compute unsmoothed mean for comparison
-            mean_rate_unsmooth = nanmean(rate_per_trial, 1);
-            
             % Compute POOLED trial rate: sum all counts/occupancy, then smooth
             % This is for comparison with the _identification script approach
             pooled_count = nansum(count_per_trial, 1);
@@ -256,15 +289,36 @@ for pid = 1:length(probe_ids)
             mean_occupancy = nanmean(occ_per_trial, 1);
             mean_velocity = nanmean(vel_per_trial, 1);
             
+            % --- Pre-compute trial data for statistical testing (if enabled) ---
+            trial_data_cache = cell(n_trials, 1);  % Cache trial data to avoid reloading
+            
+            if run_statistics
+                for k = 1:n_trials
+                    trial = trials_struct(k).trial;
+                    motion_mask = trial.motion_mask();
+                    pos = trial.position(motion_mask);
+                    tvec = trial.probe_t(motion_mask);
+                    
+                    if ~isempty(pos) && ~isempty(tvec)
+                        % Get spike times within this trial
+                        st = cluster.spike_times;
+                        spike_mask = st >= tvec(1) & st <= tvec(end);
+                        st_in_trial = st(spike_mask);
+                        
+                        % Cache trial-specific data for shuffle test
+                        trial_data_cache{k} = struct( ...
+                            'pos', pos, 'tvec', tvec, 'st_in_trial', st_in_trial, ...
+                            'duration', tvec(end) - tvec(1), ...
+                            'occ_smooth', occ_per_trial_smooth(k, :));
+                    end
+                end
+            end
+            
             % --- Initialize storage if needed ---
             if ~isfield(all_rate_smooth_by_group, group)
                 all_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
-                all_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
-                all_Q1_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
                 all_Q1_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
-                all_Q2_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
                 all_Q2_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
-                all_Q3_rate_unsmooth_by_group.(group) = nan(n_clusters, n_bins);
                 all_Q3_rate_smooth_by_group.(group) = nan(n_clusters, n_bins);
                 all_bin_centers_by_group.(group) = plot_bin_centers;
                 all_avg_velocity_by_group.(group) = nan(n_clusters, n_bins);
@@ -278,11 +332,6 @@ for pid = 1:length(probe_ids)
             
             % --- Store results ---
             all_rate_smooth_by_group.(group)(c, :) = mean_rate_smooth;
-            all_rate_unsmooth_by_group.(group)(c, :) = mean_rate_unsmooth;
-            % Store unsmoothed quartiles (computed from unsmoothed rates)
-            all_Q1_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 25, 1);
-            all_Q2_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 50, 1);
-            all_Q3_rate_unsmooth_by_group.(group)(c, :) = prctile(rate_per_trial, 75, 1);
             % Store smoothed quartiles (computed from smoothed rates)
             all_Q1_rate_smooth_by_group.(group)(c, :) = Q1_from_smoothed;
             all_Q2_rate_smooth_by_group.(group)(c, :) = Q2_from_smoothed;
@@ -295,19 +344,168 @@ for pid = 1:length(probe_ids)
             all_spike_positions_by_group.(group){c} = spike_positions_per_trial;
             all_global_trial_indices_by_group.(group){c} = global_trial_indices;
             all_rate_pooled_by_group.(group)(c, :) = rate_pooled;
+            
+            % --- Perform statistical analysis on median firing rate ---
+            if run_statistics
+                % Count total spikes across all trials in this group
+                n_spikes_group = 0;
+                for k = 1:n_trials
+                    if ~isempty(trial_data_cache{k})
+                        n_spikes_group = n_spikes_group + length(trial_data_cache{k}.st_in_trial);
+                    end
+                end
+                
+                % Check minimum spike count
+                if n_spikes_group < minSpikes
+                    spatial_tuning_stats.(sprintf('cluster_%d', cluster.id)).(group) = struct( ...
+                        'isSpatiallyTuned', false, 'reason', 'insufficient_spikes', ...
+                        'n_spikes', n_spikes_group, 'info', NaN, 'pVal', NaN, ...
+                        'peakRate', NaN, 'peakPosition', NaN, 'fieldBins', 0, 'numFields', 0);
+                    continue;
+                end
+                
+                % Use median of smoothed trials as the rate map for statistical testing
+                median_rate_smooth = Q2_from_smoothed;
+                median_occ_smooth = nanmean(occ_per_trial_smooth, 1);
+                
+                % Compute Skaggs information on median rate
+                infoObs = skaggs_info(median_rate_smooth, median_occ_smooth);
+                
+                % Circular shuffle test (with parallel processing)
+                infoNull = zeros(nShuf, 1);
+                
+                % Pre-generate random shifts for all shuffles (vectorized)
+                shift_offsets = rand(nShuf, n_trials);
+                
+                % Choose acceleration method: Parallel > Serial
+                if use_parallel && nShuf > 20
+                    % Use parfor for parallel CPU processing
+                    parfor s = 1:nShuf
+                        rate_per_trial_shuf = compute_shuffled_rates(trial_data_cache, shift_offsets(s, :), ...
+                                                                     edges, bin_size_cm, gauss_sigma_cm, n_bins);
+                        median_rate_shuf = nanmedian(rate_per_trial_shuf, 1);
+                        infoNull(s) = skaggs_info(median_rate_shuf, median_occ_smooth);
+                    end
+                else
+                    % Use regular serial for loop
+                    for s = 1:nShuf
+                        rate_per_trial_shuf = compute_shuffled_rates(trial_data_cache, shift_offsets(s, :), ...
+                                                                     edges, bin_size_cm, gauss_sigma_cm, n_bins);
+                        median_rate_shuf = nanmedian(rate_per_trial_shuf, 1);
+                        infoNull(s) = skaggs_info(median_rate_shuf, median_occ_smooth);
+                    end
+                end
+                
+                % Compute p-value
+                pVal = (sum(infoNull >= infoObs) + 1) / (nShuf + 1);
+            else
+                % Skip statistical tests
+                n_spikes_group = NaN;
+                infoObs = NaN;
+                pVal = NaN;
+            end
+            
+            % Peak detection and field analysis on median rate
+            if run_statistics
+                median_rate_smooth = Q2_from_smoothed;
+                [peakRate, peakIdx] = max(median_rate_smooth);
+                peakPosition = bin_centers(peakIdx);
+        
+                % Field detection: count how many spatial bins belong to firing fields
+                % 
+                % FIELD DETECTION ALGORITHM:
+                % 1. Set threshold = fieldFrac * peakRate (e.g., 0.2 * peak = 20% of max)
+                % 2. Find all bins where firing rate >= threshold
+                % 3. Group consecutive bins into "fields" (contiguous regions above threshold)
+                % 4. Count the number of bins in each field
+                % 5. Record the longest field and total number of separate fields
+                %
+                % EXAMPLE: If bins [5,6,7,8] and [15,16] are above threshold:
+                %   - numFields = 2 (two separate regions)
+                %   - fieldBins for field 1 = 4 bins (covering 8 cm with 2cm bins)
+                %   - fieldBins for field 2 = 2 bins (covering 4 cm with 2cm bins)
+                %   - longestField = 4 bins (the larger of the two)
+                %
+                % For spatial tuning classification, we require:
+                %   - longestField >= minFieldBins (e.g., >= 5 bins = 10 cm)
+                %   - numFields <= maxNumFields (typically 1, for single-field criterion)
+                
+                thresh = fieldFrac * peakRate;
+                above = find(median_rate_smooth >= thresh);
+                
+                if isempty(above)
+                    longestField = 0;
+                    numFields = 0;
+                    fieldStart = NaN;
+                    fieldEnd = NaN;
+                else
+                    % Find contiguous segments by looking for breaks in the sequence
+                    % diff(above) > 1 indicates a gap between consecutive bins
+                    d = diff(above);
+                    breaks = [0, find(d > 1), length(above)];
+                    numFields = length(breaks) - 1;
+                    segLens = zeros(numFields, 1);
+                    segStarts = zeros(numFields, 1);
+                    segEnds = zeros(numFields, 1);
+                    for k = 1:numFields
+                        idx = (breaks(k)+1) : breaks(k+1);
+                        seg = above(idx);
+                        segLens(k) = length(seg);
+                        segStarts(k) = seg(1);  % First bin index in this field
+                        segEnds(k) = seg(end);  % Last bin index in this field
+                    end
+                    [longestField, longestIdx] = max(segLens);
+                    % Store the boundaries of the longest field (in bin indices)
+                    fieldStartIdx = segStarts(longestIdx);
+                    fieldEndIdx = segEnds(longestIdx);
+                    % Convert to position in cm (bin edges, not centers)
+                    fieldStart = bin_centers(fieldStartIdx) - bin_size_cm/2;
+                    fieldEnd = bin_centers(fieldEndIdx) + bin_size_cm/2;
+                end
+                
+                % Classification logic
+                isSpatiallyTuned = (pVal < pThresh) && (longestField >= minFieldBins) && ...
+                          (numFields <= maxNumFields) && (peakRate >= minPeakRate);
+                
+                reasonStr = 'passes';
+                if ~isSpatiallyTuned
+                    if pVal >= pThresh
+                        reasonStr = 'info_not_significant';
+                    elseif peakRate < minPeakRate
+                        reasonStr = 'low_peak';
+                    elseif longestField < minFieldBins
+                        reasonStr = 'small_field';
+                    elseif numFields > maxNumFields
+                        reasonStr = 'multiple_fields';
+                    end
+                end
+                
+                % Store statistical results (including field boundaries for plotting)
+                spatial_tuning_stats.(sprintf('cluster_%d', cluster.id)).(group) = struct( ...
+                    'isSpatiallyTuned', isSpatiallyTuned, 'reason', reasonStr, ...
+                    'n_spikes', n_spikes_group, 'info', infoObs, 'pVal', pVal, ...
+                    'peakRate', peakRate, 'peakPosition', peakPosition, ...
+                    'fieldBins', longestField, 'numFields', numFields, ...
+                    'fieldStart', fieldStart, 'fieldEnd', fieldEnd);
+                
+                fprintf('      Spatial tuning analysis: isSpatiallyTuned=%d, reason=%s, info=%.3f, pVal=%.3f, peak=%.2f Hz at %.1f cm\n', ...
+                        isSpatiallyTuned, reasonStr, infoObs, pVal, peakRate, peakPosition);
+            end
         end
     end
     
         % --- Save computed data to cache ---
         fprintf('  Saving analysis data to cache: %s\n', cache_filename);
-        save(cache_filepath, 'all_rate_smooth_by_group', 'all_rate_unsmooth_by_group', ...
+        save(cache_filepath, 'all_rate_smooth_by_group', ...
              'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
              'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
              'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
              'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
              'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
              'all_rate_pooled_by_group', ...
-             'cluster_ids', 'n_clusters', 'group_names', 'group_labels', '-v7.3');
+             'spatial_tuning_stats', ...
+             'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
+             'bin_size_cm', 'gauss_sigma_cm', '-v7.3');
         fprintf('  Cache saved successfully\n');
     end  % End of analysis computation block
 
@@ -427,10 +625,19 @@ for pid = 1:length(probe_ids)
                 rate_data.(group).rate_pooled = all_rate_pooled_by_group.(group)(c, :);
             end
             
+            % Get statistics for this cluster (if available)
+            cluster_stats = [];
+            if exist('spatial_tuning_stats', 'var')
+                cluster_field = sprintf('cluster_%d', cluster.id);
+                if isfield(spatial_tuning_stats, cluster_field)
+                    cluster_stats = spatial_tuning_stats.(cluster_field);
+                end
+            end
+            
             % Create combined figure using helper function
             fig_cluster = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
                                                        rate_data, group_names, group_labels, ...
-                                                       group_colors, probe_ids{pid});
+                                                       group_colors, probe_ids{pid}, cluster_stats);
             
             % Save using the figure management system
              if save_figs
@@ -469,7 +676,7 @@ for pid = 1:length(probe_ids)
     
         for g = 1:2
             group = group_names{g};
-            rate_mat = all_rate_smooth_by_group.(group);
+            rate_mat = all_Q2_rate_smooth_by_group.(group);  % Use median (Q2) instead of mean
             bin_centers = all_bin_centers_by_group.(group);
             sorted_rate_mat = rate_mat(sort_idx, :);
             
@@ -490,9 +697,11 @@ for pid = 1:length(probe_ids)
                 xlim([0, 120]); % Long trials span 0-120 cm
             end
             
-            % Normalized heatmap
-            norm_rate_mat = sorted_rate_mat ./ max(sorted_rate_mat, [], 2);
-            norm_rate_mat(isnan(norm_rate_mat)) = 0;
+            % Normalized heatmap (min-max normalization: (x - min) / (max - min))
+            min_vals = min(sorted_rate_mat, [], 2);
+            max_vals = max(sorted_rate_mat, [], 2);
+            norm_rate_mat = (sorted_rate_mat - min_vals) ./ (max_vals - min_vals);
+            norm_rate_mat(isnan(norm_rate_mat) | isinf(norm_rate_mat)) = 0;
             subplot(2, 2, g+2, 'Parent', fig_heatmaps);
             imagesc(bin_centers, 1:n_clusters, norm_rate_mat);
             colormap('jet'); % Changed to blue-to-yellow colormap
@@ -515,6 +724,190 @@ for pid = 1:length(probe_ids)
         FigureTitle(fig_heatmaps, sprintf('Heatmaps - %s', probe_ids{pid}));
         ctl.figs.save_fig_to_join();
         
+        % --- Plot spatially tuned clusters with Gaussian fits ---
+        if exist('spatial_tuning_stats', 'var')
+            fprintf('  Creating spatially tuned clusters plot with Gaussian fits...\n');
+            
+            % Identify clusters that are spatially tuned in BOTH long AND short trials
+            spatially_tuned_both = [];
+            
+            for c = 1:n_clusters
+                cluster_field = sprintf('cluster_%d', cluster_ids(c));
+                if isfield(spatial_tuning_stats, cluster_field)
+                    stats = spatial_tuning_stats.(cluster_field);
+                    % Must be tuned in BOTH groups
+                    if isfield(stats, 'long') && stats.long.isSpatiallyTuned && ...
+                       isfield(stats, 'short') && stats.short.isSpatiallyTuned
+                        spatially_tuned_both = [spatially_tuned_both; c];
+                    end
+                end
+            end
+            
+            n_tuned_both = length(spatially_tuned_both);
+            fprintf('    Found %d clusters spatially tuned in BOTH long and short trials\n', n_tuned_both);
+            
+            if n_tuned_both > 0
+                % Sort clusters by peak position in long trials
+                peak_pos_long = zeros(n_tuned_both, 1);
+                for i = 1:n_tuned_both
+                    c = spatially_tuned_both(i);
+                    cluster_field = sprintf('cluster_%d', cluster_ids(c));
+                    peak_pos_long(i) = spatial_tuning_stats.(cluster_field).long.peakPosition;
+                end
+                [~, sort_idx] = sort(peak_pos_long);
+                spatially_tuned_both_sorted = spatially_tuned_both(sort_idx);
+                
+                % Generate pastel colors for all clusters
+                pastel_colors = generate_pastel_colors(n_tuned_both);
+                
+                % --- Create 3D plot with clusters along z-axis ---
+                fprintf('  Creating 3D visualization of spatially tuned clusters...\n');
+                fig_3d = ctl.figs.a4figure('landscape');
+                
+                % Left subplot: Long trials in 3D
+                subplot(1, 2, 1, 'Parent', fig_3d);
+                hold on;
+                
+                for i = 1:n_tuned_both
+                    c = spatially_tuned_both_sorted(i);
+                    cluster_id = cluster_ids(c);
+                    cluster_field = sprintf('cluster_%d', cluster_id);
+                    color = pastel_colors(i, :);
+                    
+                    % Get median firing rate
+                    bin_centers_long = all_bin_centers_by_group.long;
+                    median_rate_long = all_Q2_rate_smooth_by_group.long(c, :);
+                    
+                    % Fit Gaussian
+                    peak_pos = spatial_tuning_stats.(cluster_field).long.peakPosition;
+                    peak_rate = spatial_tuning_stats.(cluster_field).long.peakRate;
+                    sigma_guess = gauss_sigma_cm;
+                    p0 = [peak_rate, peak_pos, sigma_guess];
+                    
+                    % Create z-coordinate (cluster depth) - convert to double
+                    z_position = double(cluster_id);
+                    
+                    % Fit and plot in 3D
+                    try
+                        gauss_fit = @(p, x) p(1) * exp(-((x - p(2)).^2) / (2 * p(3)^2));
+                        options = optimset('Display', 'off');
+                        p_fit = lsqcurvefit(gauss_fit, p0, bin_centers_long, median_rate_long, ...
+                                           [0, 0, 1], [inf, 120, 50], options);
+                        
+                        x_fit = linspace(0, 120, 200);
+                        y_fit = gauss_fit(p_fit, x_fit);
+                        z_fit = ones(size(x_fit)) * z_position;
+                        
+                        % Plot filled area using patch (y=cluster, z=firing rate)
+                        x_patch = [x_fit, fliplr(x_fit)];
+                        y_patch = [z_fit, fliplr(z_fit)];  % cluster ID on y-axis
+                        z_patch = [y_fit, zeros(size(y_fit))];  % firing rate on z-axis
+                        patch(x_patch, y_patch, z_patch, color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+                        
+                        % Plot line on top
+                        plot3(x_fit, z_fit, y_fit, 'Color', color, 'LineWidth', 2);
+                    catch
+                        % If fit fails, just plot the median
+                        y_data = ones(size(bin_centers_long)) * z_position;
+                        plot3(bin_centers_long, y_data, median_rate_long, 'Color', color, 'LineWidth', 2);
+                    end
+                end
+                
+                xlabel('Position (cm)');
+                ylabel('Cluster ID');
+                zlabel('Firing Rate (Hz)');
+                title('Long Trials (0-120 cm)');
+                grid on;
+                view(3);
+                hold off;
+                
+                % Right subplot: Short trials in 3D
+                subplot(1, 2, 2, 'Parent', fig_3d);
+                hold on;
+                
+                for i = 1:n_tuned_both
+                    c = spatially_tuned_both_sorted(i);
+                    cluster_id = cluster_ids(c);
+                    cluster_field = sprintf('cluster_%d', cluster_id);
+                    color = pastel_colors(i, :);
+                    
+                    % Get median firing rate
+                    bin_centers_short = all_bin_centers_by_group.short;
+                    median_rate_short = all_Q2_rate_smooth_by_group.short(c, :);
+                    
+                    % Fit Gaussian
+                    peak_pos = spatial_tuning_stats.(cluster_field).short.peakPosition;
+                    peak_rate = spatial_tuning_stats.(cluster_field).short.peakRate;
+                    p0 = [peak_rate, peak_pos, sigma_guess];
+                    
+                    % Create z-coordinate (cluster depth) - convert to double
+                    z_position = double(cluster_id);
+                    
+                    % Fit and plot in 3D
+                    try
+                        gauss_fit = @(p, x) p(1) * exp(-((x - p(2)).^2) / (2 * p(3)^2));
+                        options = optimset('Display', 'off');
+                        p_fit = lsqcurvefit(gauss_fit, p0, bin_centers_short, median_rate_short, ...
+                                           [0, 60, 1], [inf, 120, 50], options);
+                        
+                        x_fit = linspace(60, 120, 200);
+                        y_fit = gauss_fit(p_fit, x_fit);
+                        z_fit = ones(size(x_fit)) * z_position;
+                        
+                        % Plot filled area using patch (y=cluster, z=firing rate)
+                        x_patch = [x_fit, fliplr(x_fit)];
+                        y_patch = [z_fit, fliplr(z_fit)];  % cluster ID on y-axis
+                        z_patch = [y_fit, zeros(size(y_fit))];  % firing rate on z-axis
+                        patch(x_patch, y_patch, z_patch, color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+                        
+                        % Plot line on top
+                        plot3(x_fit, z_fit, y_fit, 'Color', color, 'LineWidth', 2);
+                    catch
+                        % If fit fails, just plot the median
+                        y_data = ones(size(bin_centers_short)) * z_position;
+                        plot3(bin_centers_short, y_data, median_rate_short, 'Color', color, 'LineWidth', 2);
+                    end
+                end
+                
+                xlabel('Position (cm)');
+                ylabel('Cluster ID');
+                zlabel('Firing Rate (Hz)');
+                title('Short Trials (60-120 cm)');
+                grid on;
+                view(3);
+                hold off;
+                
+                FigureTitle(fig_3d, sprintf('3D Spatial Tuning - %s', probe_ids{pid}));
+                ctl.figs.save_fig_to_join();
+            else
+                fprintf('    No clusters found that are spatially tuned in both groups. Skipping plot.\n');
+            end
+        end
+        
+        % Save statistics text summary
+        %
+        % NOTE: Only a text summary is saved for reference. The actual caching 
+        % (including all firing rate data and statistics) is done with 
+        % *_spatial_analysis_cache.mat
+        %
+        if run_statistics && exist('spatial_tuning_stats', 'var')
+            % Prepare analysis parameters structure
+            analysis_params = struct( ...
+                'bin_size_cm', bin_size_cm, ...
+                'gauss_sigma_cm', gauss_sigma_cm, ...
+                'minSpikes', minSpikes, ...
+                'minPeakRate', minPeakRate, ...
+                'fieldFrac', fieldFrac, ...
+                'minFieldBins', minFieldBins, ...
+                'maxNumFields', maxNumFields, ...
+                'nShuf', nShuf, ...
+                'pThresh', pThresh);
+            
+            % Call external function to save statistics
+            save_spatial_statistics(spatial_tuning_stats, probe_ids{pid}, ctl.figs.curr_dir, ...
+                                   analysis_params, cluster_ids, group_names, group_labels);
+        end
+        
         % Join all plots for this probe into one PDF
         fprintf('  Saving PDF for probe %s...\n', probe_ids{pid});
         fname = sprintf('%s.pdf', probe_ids{pid});
@@ -525,4 +918,36 @@ for pid = 1:length(probe_ids)
     end
 end
 
-fprintf('\nSpatial firing rate profile analysis completed for %d probe(s)\n', length(probe_ids)); 
+fprintf('\nSpatial firing rate profile analysis completed for %d probe(s)\n', length(probe_ids));
+
+% --- Summary of spatial tuning classification ---
+if exist('spatial_tuning_stats', 'var')
+    fprintf('\n=== SPATIAL TUNING CLASSIFICATION SUMMARY ===\n');
+    cluster_names = fieldnames(spatial_tuning_stats);
+    for c = 1:length(cluster_names)
+        cluster_name = cluster_names{c};
+        fprintf('\n%s:\n', cluster_name);
+        stats = spatial_tuning_stats.(cluster_name);
+        group_fields = fieldnames(stats);
+        for g = 1:length(group_fields)
+            group = group_fields{g};
+            s = stats.(group);
+            fprintf('  %s: isSpatiallyTuned=%d, reason=%s, spikes=%d, info=%.3f, pVal=%.3f, peak=%.2f Hz @ %.1f cm, fields=%d\n', ...
+                    group, s.isSpatiallyTuned, s.reason, s.n_spikes, s.info, s.pVal, s.peakRate, s.peakPosition, s.numFields);
+        end
+    end
+end
+
+% --- Helper function to generate pastel colors ---
+function colors = generate_pastel_colors(n)
+    % Generate n distinct pastel colors using HSV color space
+    % Pastel colors have high value (brightness) and low-to-medium saturation
+    hues = linspace(0, 1, n+1);
+    hues = hues(1:end-1); % Remove duplicate at end
+    colors = zeros(n, 3);
+    for i = 1:n
+        % Use moderate saturation (0.4-0.6) and high value (0.85-0.95) for pastel effect
+        hsv_color = [hues(i), 0.5, 0.9];
+        colors(i, :) = hsv2rgb(hsv_color);
+    end
+end
