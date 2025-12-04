@@ -1,29 +1,22 @@
 function rate_per_trial_shuf = compute_shuffled_rates(trial_data_cache, shift_offsets, edges, bin_size_cm, gauss_sigma_cm, n_bins)
-% COMPUTE_SHUFFLED_RATES Compute shuffled firing rates for all trials
+% COMPUTE_SHUFFLED_RATES [DEPRECATED] Compute shuffled firing rates using circular shift
+%
+%   *** DEPRECATED: This function is no longer used. ***
+%   Use compute_shuffled_spatial_info.m instead, which implements a bin-shuffle
+%   approach analogous to velocity tuning in ShuffleTuning.m
 %
 %   rate_per_trial_shuf = compute_shuffled_rates(trial_data_cache, shift_offsets, ...
 %                                                edges, bin_size_cm, gauss_sigma_cm, n_bins)
 %
-%   Efficiently computes shuffled firing rates for circular shuffle test by using
-%   pre-cached trial data to avoid redundant loading and processing.
+%   This function previously implemented circular shuffle testing by shifting spike
+%   times within each trial. This approach has been replaced by a simpler bin-shuffle
+%   method that completely shuffles the rate matrix to break trial-bin associations.
 %
-%   Inputs:
-%       trial_data_cache - Cell array of structs containing pre-computed trial data:
-%                           .pos - position vector
-%                           .tvec - time vector
-%                           .st_in_trial - spike times within trial
-%                           .duration - trial duration
-%                           .occ_smooth - smoothed occupancy
-%       shift_offsets    - Array of random shift fractions [0,1] for each trial
-%       edges            - Spatial bin edges (cm)
-%       bin_size_cm      - Size of each spatial bin (cm)
-%       gauss_sigma_cm   - Standard deviation of Gaussian smoothing kernel (cm)
-%       n_bins           - Number of spatial bins
-%
-%   Output:
-%       rate_per_trial_shuf - Shuffled firing rates (n_trials × n_bins)
-%
-%   This function is optimized for use in parfor loops for parallel shuffle testing.
+%   See also: compute_shuffled_spatial_info, ShuffleTuning
+
+    warning('compute_shuffled_rates is deprecated. Use compute_shuffled_spatial_info instead.');
+    
+    % Original implementation preserved for backward compatibility
 
     n_trials = length(trial_data_cache);
     rate_per_trial_shuf = nan(n_trials, n_bins);

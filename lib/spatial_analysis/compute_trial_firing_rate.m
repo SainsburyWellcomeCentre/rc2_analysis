@@ -54,13 +54,19 @@ function [rate, occupancy, avg_velocity, spike_count] = compute_trial_firing_rat
     % Compute spike count per bin
     spike_count = histcounts(spike_pos, edges);
     
-    % Compute occupancy and velocity per bin
+    % Compute occupancy and velocity per bin using histcounts for consistency
+    % Note: histcounts assigns values to bins as [edges(i), edges(i+1))
+    % except the last bin which includes both edges: [edges(end-1), edges(end)]
     dt_vec = [diff(tvec); 0];
+    
+    % Use histcounts to assign positions to bins (more robust than manual binning)
+    [~, ~, bin_idx] = histcounts(pos, edges);
+    
     occupancy = zeros(1, n_bins);
     velocity_sum = zeros(1, n_bins);
     
     for i = 1:n_bins
-        in_bin = pos >= edges(i) & pos < edges(i+1);
+        in_bin = (bin_idx == i);
         occupancy(i) = sum(dt_vec(in_bin));
         velocity_sum(i) = sum(vel(in_bin) .* dt_vec(in_bin));
     end

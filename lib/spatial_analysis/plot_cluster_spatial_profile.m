@@ -4,10 +4,11 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %   fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
 %                                      group_names, group_labels, group_colors, probe_id, stats)
 %
-%   Creates a 3-panel figure (1 row) showing:
+%   Creates a 4-panel figure (1 row) showing:
 %       - Panel 1: Combined position-based raster for both long and short trials
 %       - Panel 2: Smoothed traces with median and IQR shading, plus pooled rate (dashed)
-%       - Panel 3: X-normalized comparison with percentage x-axis, plus pooled rate (dashed)
+%       - Panel 3: Shuffle distribution histograms (long trials top, short trials bottom)
+%       - Panel 4: X-normalized comparison with percentage x-axis, plus pooled rate (dashed)
 %
 %   Inputs:
 %       cluster_id         - Numeric ID of the cluster
@@ -32,7 +33,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         stats = [];
     end
 
-    fig = figure('Position', [50, 50, 1500, 550]);
+    fig = figure('Position', [50, 50, 1800, 550]);
     
     % Compute max firing rate as 120% of the third quartile across all data
     all_Q3_values = [];
@@ -56,7 +57,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 1 (col 1): Combined position-based raster for both long and short trials
-    subplot(4, 3, [1, 4, 7]);
+    subplot(4, 4, [1, 5, 9]);
     hold on;
     
     % Collect all trials with their global indices and group info
@@ -126,7 +127,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 2 (col 2): Smoothed traces with median and IQR shading
-    subplot(4, 3, [2, 5, 8]);
+    subplot(4, 4, [2, 6, 10]);
     hold on;
     
     for g = 1:length(group_names)
@@ -247,8 +248,93 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     ylim([0, max_firing_rate]);
     set(gca, 'XTick', 0:20:120);
     
-    %% Panel 3 (col 3): X-normalized comparison
-    subplot(4, 3, [3, 6, 9]);
+    %% Panel 3 (col 3): Shuffle distribution histograms combined in one vertical plot
+    if ~isempty(stats)
+        % Combined vertical histogram spanning the full column
+        subplot(4, 4, [3, 7, 11]);
+        hold on;
+        
+        % Determine common x-axis range
+        all_info = [];
+        if isfield(stats, 'long') && isfield(stats.long, 'infoNull')
+            all_info = [all_info, stats.long.infoNull(:)', stats.long.info];
+        end
+        if isfield(stats, 'short') && isfield(stats.short, 'infoNull')
+            all_info = [all_info, stats.short.infoNull(:)', stats.short.info];
+        end
+        
+        % Remove NaN values before computing edges
+        all_info = all_info(~isnan(all_info));
+        
+        if ~isempty(all_info) && (max(all_info) > min(all_info))
+            % Create common bin edges
+            edges = linspace(min(all_info), max(all_info), 31);
+            bin_centers = (edges(1:end-1) + edges(2:end)) / 2;
+            bin_width = edges(2) - edges(1);
+            
+            % Plot long trials histogram if available
+            if isfield(stats, 'long') && isfield(stats.long, 'infoNull') && isfield(stats.long, 'info')
+                infoNull_long = stats.long.infoNull;
+                infoObs_long = stats.long.info;
+                pVal_long = stats.long.pVal;
+                
+                % Plot histogram with vertical bars
+                [n_long, ~] = histcounts(infoNull_long, edges);
+                bar(bin_centers, n_long, 'FaceColor', [0.6, 0.8, 1.0], 'EdgeColor', 'none', 'BarWidth', 0.8, 'FaceAlpha', 0.7);
+                
+                % Mark observed value with dot (interpolate histogram height at observed position)
+                y_long = interp1(bin_centers, n_long, infoObs_long, 'linear', 0);
+                scatter(infoObs_long, y_long, 100, [0, 0, 0.8], 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+                
+                % Add p-value text for long trials
+                if pVal_long < 0.001
+                    p_str_long = 'Long: p < 0.001';
+                else
+                    p_str_long = sprintf('Long: p = %.3f', pVal_long);
+                end
+                text(0.98, 0.95, p_str_long, 'Units', 'normalized', 'FontSize', 9, 'Color', [0, 0, 0.8], ...
+                     'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+            end
+            
+            % Plot short trials histogram if available
+            if isfield(stats, 'short') && isfield(stats.short, 'infoNull') && isfield(stats.short, 'info')
+                infoNull_short = stats.short.infoNull;
+                infoObs_short = stats.short.info;
+                pVal_short = stats.short.pVal;
+                
+                % Plot histogram with vertical bars (overlapping with long)
+                [n_short, ~] = histcounts(infoNull_short, edges);
+                bar(bin_centers, n_short, 'FaceColor', [1.0, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 0.6, 'FaceAlpha', 0.7);
+                
+                % Mark observed value with dot (interpolate histogram height at observed position)
+                y_short = interp1(bin_centers, n_short, infoObs_short, 'linear', 0);
+                scatter(infoObs_short, y_short, 100, [0.8, 0, 0], 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+                
+                % Add p-value text for short trials
+                if pVal_short < 0.001
+                    p_str_short = 'Short: p < 0.001';
+                else
+                    p_str_short = sprintf('Short: p = %.3f', pVal_short);
+                end
+                text(0.98, 0.85, p_str_short, 'Units', 'normalized', 'FontSize', 9, 'Color', [0.8, 0, 0], ...
+                     'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+            end
+            
+            xlabel('Skaggs Info (bits/spike)', 'FontSize', 9);
+            ylabel('Count', 'FontSize', 9);
+            title('Shuffle Distribution', 'FontSize', 10);
+            box off;
+            grid on;
+        else
+            text(0.5, 0.5, 'No shuffle data', 'HorizontalAlignment', 'center', 'FontSize', 10);
+            axis off;
+        end
+        
+        hold off;
+    end
+    
+    %% Panel 4 (col 4): X-normalized comparison
+    subplot(4, 4, [4, 8, 12]);
     hold on;
     
     % Common normalized grid (0 to 1, displayed as 0% to 100%)
@@ -352,14 +438,28 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     ylim([0, max_firing_rate]);
     set(gca, 'XTick', 0:10:100);
     
-    % Overall figure title (escape underscores to prevent subscript rendering)
-    probe_id_escaped = strrep(probe_id, '_', '\\_');
-    sgtitle(sprintf('Cluster %d - %s', cluster_id, probe_id_escaped), 'FontWeight', 'bold');
+    % Overall figure title (replace underscores with spaces to prevent subscript rendering)
+    probe_id_display = strrep(probe_id, '_', ' ');
+    % Create title using annotation instead of sgtitle for better positioning control
+    annotation('textbox', [0, 0.985, 1, 0.015], 'String', sprintf('Cluster %d - %s', cluster_id, probe_id_display), ...
+               'FontWeight', 'bold', 'FontSize', 12, 'HorizontalAlignment', 'center', ...
+               'EdgeColor', 'none', 'VerticalAlignment', 'middle');
     
     %% Bottom row: Statistical test results (if available)
     if ~isempty(stats)
+        % Adjust all subplot positions to move them higher and create more space at bottom
+        all_axes = findall(fig, 'Type', 'axes');
+        for ax_idx = 1:length(all_axes)
+            ax = all_axes(ax_idx);
+            pos = get(ax, 'Position');
+            % Move plots up by reducing bottom margin and reducing height
+            pos(2) = pos(2) + 0.18;  % Move up significantly to make room for title
+            pos(4) = pos(4) * 0.75;  % Reduce height more to fit between title and text
+            set(ax, 'Position', pos);
+        end
+        
         % Create text annotation panel spanning bottom row
-        subplot(4, 3, [10, 11, 12]);
+        subplot(4, 4, [13, 14, 15, 16]);
         axis off;
         
         % Prepare text content
@@ -387,14 +487,14 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
                 peak_pos_display = s.peakPosition + 60;
             end
             
-            % Escape underscores in reason to prevent subscript rendering
-            reason_escaped = strrep(s.reason, '_', '\\_');
+            % Replace underscores with spaces to prevent subscript rendering
+            reason_display = strrep(s.reason, '_', ' ');
             
             % Group header
             if s.isSpatiallyTuned
                 text_content{end+1} = sprintf('\\bf%s: PASS (spatially tuned)\\rm', group_display);
             else
-                text_content{end+1} = sprintf('\\bf%s: FAIL (%s)\\rm', group_display, reason_escaped);
+                text_content{end+1} = sprintf('\\bf%s: FAIL (%s)\\rm', group_display, reason_display);
             end
             
             % Test details (include field size in cm for easier interpretation)
@@ -404,9 +504,10 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             text_content{end+1} = ' ';
         end
         
-        % Display text lower (0.3) to avoid overlap with bottom plot x-axis labels
-        text(0.05, 0.3, text_content, 'FontName', 'FixedWidth', 'FontSize', 9, ...
-             'VerticalAlignment', 'middle', 'HorizontalAlignment', 'left', ...
+        % Display text even lower (-1.2) to avoid overlap with bottom plot x-axis labels
+        % Move much further left (0.01) to prevent text cutoff at figure edges
+        text(0.01, -1.2, text_content, 'FontName', 'FixedWidth', 'FontSize', 9, ...
+             'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left', ...
              'Interpreter', 'tex');
     end
 end

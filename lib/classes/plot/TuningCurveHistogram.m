@@ -44,13 +44,20 @@ classdef TuningCurveHistogram < RC2Axis
         %   See also: TuningTable
         
             [n, c] = histcounts(tuning.shuffled.r_shuff, 50);
-            obj.h_bar = barh(obj.h_ax, (c(1:end-1)+c(2:end))/2, n, 'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
-            set(obj.h_ax, 'plotboxaspectratio', [1, 3, 1])
-            ylim([-0.5, 0.5]);
-            scatter(obj.h_ax, 0, tuning.shuffled.r, obj.dot_size, obj.dot_col, 'fill');
+            bin_centers = (c(1:end-1)+c(2:end))/2;
+            obj.h_bar = bar(obj.h_ax, bin_centers, n, 'facecolor', [0.6, 0.6, 0.6], 'edgecolor', 'none', 'barwidth', 1);
+            set(obj.h_ax, 'plotboxaspectratio', [3, 1, 1]);
+            xlim([-0.5, 0.5]);
+            hold(obj.h_ax, 'on');
+            % Plot the observed r value as a dot at the corresponding histogram height
+            r_obs = tuning.shuffled.r;
+            % Interpolate histogram height at r_obs position
+            y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
+            scatter(obj.h_ax, r_obs, y_at_r, obj.dot_size*10, obj.dot_col, 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+            hold(obj.h_ax, 'off');
             if obj.plot_labels
-                xlabel('count');
-                ylabel('r');
+                xlabel('r');
+                ylabel('count');
             end
         end
     end
