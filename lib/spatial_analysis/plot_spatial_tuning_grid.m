@@ -68,7 +68,7 @@ function fig_grid = plot_spatial_tuning_grid(spatial_tuning_stats, all_bin_cente
     
     % Create figure
     fprintf('  Creating 2x3 grid visualization of spatially tuned clusters...\n');
-    fig_grid = figure('Position', [100, 100, 1200, 900], 'PaperPositionMode', 'auto');
+    fig_grid = figure('Position', [100, 100, 1200, 900], 'PaperPositionMode', 'auto', 'Visible', 'off');
     
     % Define Gaussian fit function
     gauss_fit = @(p, x) p(1) * exp(-((x - p(2)).^2) / (2 * p(3)^2));

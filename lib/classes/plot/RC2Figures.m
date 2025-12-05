@@ -122,6 +122,7 @@ classdef RC2Figures < handle
                 else
                     print(obj.fnames_to_join{obj.n_figs_to_join}, '-bestfit', '-dpdf', '-painters');
                 end
+                close(gcf);
             end
         end
         

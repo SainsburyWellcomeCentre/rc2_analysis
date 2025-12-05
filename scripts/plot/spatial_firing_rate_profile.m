@@ -22,6 +22,9 @@
 %   - lib/spatial_analysis/* helper functions
 
 %%
+% Prevent figures from popping up on screen
+set(groot, 'DefaultFigureVisible', 'off');
+
 % Configuration
 experiment_groups        = {'ambient_light'};
 save_figs                = true;
@@ -29,7 +32,7 @@ overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
-re_run_analysis          = true;  % Set to true to recompute all metrics, false to load cached data
+re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
 
 % Parallel processing configuration
 use_parallel            = true;   % Set to false to disable parallel processing entirely
@@ -351,9 +354,7 @@ for pid = 1:length(probe_ids)
                 set(fig_cluster, 'PaperUnits', 'normalized');
                 set(fig_cluster, 'PaperPosition', [0 0 1 1]);
                 ctl.figs.save_fig_to_join();
-            end
-            
-            if ~save_figs
+            else
                 close(fig_cluster);
             end
         end
@@ -499,3 +500,6 @@ for pid = 1:length(probe_ids)
 end
 
 fprintf('\n=== All probes processed ===\n');
+
+% Restore default figure visibility
+set(groot, 'DefaultFigureVisible', 'on');

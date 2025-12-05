@@ -44,7 +44,7 @@ classdef FigureTitle < handle
             VariableDefault('str', '');
             
             obj.h_fig = h_fig;
-            figure(obj.h_fig);
+            set(groot, 'CurrentFigure', obj.h_fig);
             obj.h_ax = axes('position', [0, 0, 1, 1]);
             
             axis off;

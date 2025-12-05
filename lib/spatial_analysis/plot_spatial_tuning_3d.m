@@ -182,6 +182,5 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
         end
     end
     
-    drawnow;
     fprintf('  3D visualization completed\n');
 end

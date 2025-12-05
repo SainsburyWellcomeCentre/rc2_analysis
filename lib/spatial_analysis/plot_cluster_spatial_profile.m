@@ -33,7 +33,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         stats = [];
     end
 
-    fig = figure('Position', [50, 50, 1800, 550]);
+    fig = figure('Position', [50, 50, 1800, 550], 'Visible', 'off');
     
     % Compute max firing rate as 120% of the third quartile across all data
     all_Q3_values = [];
