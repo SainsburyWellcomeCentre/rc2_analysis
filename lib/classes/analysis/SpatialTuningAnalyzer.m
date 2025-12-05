@@ -530,6 +530,222 @@ classdef SpatialTuningAnalyzer < handle
             end
         end
         
+        function [rate_map_2d, vel_bin_edges, trial_count_map] = compute_2d_position_velocity_tuning(obj, cluster, group, n_vel_bins, sigma_velocity, min_occupancy)
+            % Compute 2D position × velocity firing rate map with equal-occupancy velocity bins
+            %
+            %   [rate_map_2d, vel_bin_edges, trial_count_map] = analyzer.compute_2d_position_velocity_tuning(cluster, group, n_vel_bins, sigma_velocity, min_occupancy)
+            %
+            %   Inputs:
+            %       cluster         - Cluster object
+            %       group           - 'long' or 'short'
+            %       n_vel_bins      - Number of velocity bins (will have equal occupancy)
+            %       sigma_velocity  - Smoothing sigma for velocity dimension (cm/s)
+            %       min_occupancy   - Minimum occupancy time (seconds) per trial to count as sampled
+            %
+            %   Outputs:
+            %       rate_map_2d     - 2D firing rate map (position × velocity), median across trials
+            %       vel_bin_edges   - Velocity bin edges (variable width for equal occupancy)
+            %       trial_count_map - Number of trials that sampled each bin (for alpha transparency)
+            
+            if nargin < 5
+                sigma_velocity = 5;  % Default smoothing sigma for velocity (cm/s)
+            end
+            if nargin < 6
+                min_occupancy = 0.1;  % Default minimum occupancy (seconds)
+            end
+            
+            % Get position bin configuration for this group
+            pos_edges = obj.bin_config.(group).edges;
+            n_pos_bins = obj.bin_config.(group).n_bins;
+            
+            % Get trials for this group
+            trials_struct = obj.trial_groups.(group);
+            n_trials = length(trials_struct);
+            
+            % Collect all velocities during motion to compute equal-occupancy bins
+            all_velocities = [];
+            for t = 1:n_trials
+                trial = trials_struct(t).trial;
+                motion_mask = trial.motion_mask();
+                velocity = trial.velocity(motion_mask);
+                all_velocities = [all_velocities; velocity(:)];
+            end
+            
+            % Compute equal-occupancy velocity bins using percentiles
+            prc_per_bin = 100 / n_vel_bins;
+            prc_bounds = 0 : prc_per_bin : 100+eps;
+            vel_bin_edges = prctile(all_velocities, prc_bounds);
+            
+            % Initialize 2D arrays for each trial
+            rate_maps_per_trial = nan(n_trials, n_pos_bins, n_vel_bins);
+            occupancy_per_trial = nan(n_trials, n_pos_bins, n_vel_bins);
+            bin_sampled_per_trial = zeros(n_trials, n_pos_bins, n_vel_bins);  % Track which bins are sampled per trial
+            
+            % Find cluster index in the stored data
+            cluster_idx = find(obj.cluster_ids == cluster.id);
+            if isempty(cluster_idx)
+                error('Cluster %d not found in analyzer cluster_ids', cluster.id);
+            end
+            
+            for t = 1:n_trials
+                trial = trials_struct(t).trial;
+                
+                % Get the already-computed smoothed spatial firing rate for this trial
+                % rate_per_trial_smooth is stored as a cell array {n_clusters x 1}
+                % where each cell contains a matrix (n_trials x n_bins)
+                rate_per_trial_smooth_cluster = obj.firing_rates.(group).rate_per_trial_smooth{cluster_idx};
+                spatial_rate_smooth = rate_per_trial_smooth_cluster(t, :);
+                
+                % Get position and velocity during motion
+                motion_mask = trial.motion_mask();
+                tvec = trial.probe_t(motion_mask);
+                position = trial.position(motion_mask);
+                velocity = trial.velocity(motion_mask);
+                
+                % Initialize 2D rate map for this trial
+                rate_map_trial = nan(n_pos_bins, n_vel_bins);
+                
+                % For each position bin, assign the spatial firing rate to the appropriate velocity bin
+                for p = 1:n_pos_bins
+                    % Find times when animal was in this position bin
+                    in_pos_bin = position >= pos_edges(p) & position < pos_edges(p+1);
+                    
+                    if any(in_pos_bin)
+                        % Get velocities when in this position bin
+                        vel_in_bin = velocity(in_pos_bin);
+                        
+                        % Assign to velocity bins
+                        for v = 1:n_vel_bins
+                            in_vel_bin = vel_in_bin >= vel_bin_edges(v) & vel_in_bin < vel_bin_edges(v+1);
+                            
+                            % Mark as sampled if this position×velocity combination occurred
+                            if any(in_vel_bin)
+                                bin_sampled_per_trial(t, p, v) = 1;
+                                % Assign the spatial firing rate (already smoothed)
+                                rate_map_trial(p, v) = spatial_rate_smooth(p);
+                            end
+                        end
+                    end
+                end
+                
+                rate_maps_per_trial(t, :, :) = rate_map_trial;
+            end
+            
+            % Compute median firing rate across trials
+            rate_map_2d = squeeze(nanmedian(rate_maps_per_trial, 1));
+            
+            % Count how many trials sampled each bin
+            trial_count_map = squeeze(sum(bin_sampled_per_trial, 1));
+        end
+        
+        function [rate_map_2d, accel_bin_edges, trial_count_map] = compute_2d_position_acceleration_tuning(obj, cluster, group, n_accel_bins, sigma_accel, min_occupancy)
+            % Compute 2D position × acceleration firing rate map with equal-occupancy acceleration bins
+            %
+            %   [rate_map_2d, accel_bin_edges, trial_count_map] = analyzer.compute_2d_position_acceleration_tuning(cluster, group, n_accel_bins, sigma_accel, min_occupancy)
+            %
+            %   Inputs:
+            %       cluster         - Cluster object
+            %       group           - 'long' or 'short'
+            %       n_accel_bins    - Number of acceleration bins (will have equal occupancy)
+            %       sigma_accel     - Smoothing sigma for acceleration dimension (cm/s²)
+            %       min_occupancy   - Minimum occupancy time (seconds) per trial to count as sampled
+            %
+            %   Outputs:
+            %       rate_map_2d     - 2D firing rate map (position × acceleration), median across trials
+            %       accel_bin_edges - Acceleration bin edges (variable width for equal occupancy)
+            %       trial_count_map - Number of trials that sampled each bin (for alpha transparency)
+            
+            if nargin < 5
+                sigma_accel = 10;  % Default smoothing sigma for acceleration (cm/s²) - reduced to preserve acceleration structure
+            end
+            if nargin < 6
+                min_occupancy = 0.1;  % Default minimum occupancy (seconds)
+            end
+            
+            % Get position bin configuration for this group
+            pos_edges = obj.bin_config.(group).edges;
+            n_pos_bins = obj.bin_config.(group).n_bins;
+            
+            % Get trials for this group
+            trials_struct = obj.trial_groups.(group);
+            n_trials = length(trials_struct);
+            
+            % Collect all accelerations during motion to compute equal-occupancy bins
+            all_accelerations = [];
+            for t = 1:n_trials
+                trial = trials_struct(t).trial;
+                motion_mask = trial.motion_mask();
+                acceleration = trial.acceleration(motion_mask);
+                all_accelerations = [all_accelerations; acceleration(:)];
+            end
+            
+            % Compute equal-occupancy acceleration bins using percentiles
+            prc_per_bin = 100 / n_accel_bins;
+            prc_bounds = 0 : prc_per_bin : 100+eps;
+            accel_bin_edges = prctile(all_accelerations, prc_bounds);
+            
+            % Initialize 2D arrays for each trial
+            rate_maps_per_trial = nan(n_trials, n_pos_bins, n_accel_bins);
+            occupancy_per_trial = nan(n_trials, n_pos_bins, n_accel_bins);
+            bin_sampled_per_trial = zeros(n_trials, n_pos_bins, n_accel_bins);  % Track which bins are sampled per trial
+            
+            % Find cluster index in the stored data
+            cluster_idx = find(obj.cluster_ids == cluster.id);
+            if isempty(cluster_idx)
+                error('Cluster %d not found in analyzer cluster_ids', cluster.id);
+            end
+            
+            for t = 1:n_trials
+                trial = trials_struct(t).trial;
+                
+                % Get the already-computed smoothed spatial firing rate for this trial
+                % rate_per_trial_smooth is stored as a cell array {n_clusters x 1}
+                % where each cell contains a matrix (n_trials x n_bins)
+                rate_per_trial_smooth_cluster = obj.firing_rates.(group).rate_per_trial_smooth{cluster_idx};
+                spatial_rate_smooth = rate_per_trial_smooth_cluster(t, :);
+                
+                % Get position and acceleration during motion
+                motion_mask = trial.motion_mask();
+                tvec = trial.probe_t(motion_mask);
+                position = trial.position(motion_mask);
+                acceleration = trial.acceleration(motion_mask);
+                
+                % Initialize 2D rate map for this trial
+                rate_map_trial = nan(n_pos_bins, n_accel_bins);
+                
+                % For each position bin, assign the spatial firing rate to the appropriate acceleration bin
+                for p = 1:n_pos_bins
+                    % Find times when animal was in this position bin
+                    in_pos_bin = position >= pos_edges(p) & position < pos_edges(p+1);
+                    
+                    if any(in_pos_bin)
+                        % Get accelerations when in this position bin
+                        accel_in_bin = acceleration(in_pos_bin);
+                        
+                        % Assign to acceleration bins
+                        for a = 1:n_accel_bins
+                            in_accel_bin = accel_in_bin >= accel_bin_edges(a) & accel_in_bin < accel_bin_edges(a+1);
+                            
+                            % Mark as sampled if this position×acceleration combination occurred
+                            if any(in_accel_bin)
+                                bin_sampled_per_trial(t, p, a) = 1;
+                                % Assign the spatial firing rate (already smoothed)
+                                rate_map_trial(p, a) = spatial_rate_smooth(p);
+                            end
+                        end
+                    end
+                end
+                
+                rate_maps_per_trial(t, :, :) = rate_map_trial;
+            end
+            
+            % Compute median firing rate across trials
+            rate_map_2d = squeeze(nanmedian(rate_maps_per_trial, 1));
+            
+            % Count how many trials sampled each bin
+            trial_count_map = squeeze(sum(bin_sampled_per_trial, 1));
+        end
+        
         function save_cache(obj, cache_filepath)
             % Save analysis results to cache file
             %

@@ -1,4 +1,4 @@
-% Plot spatial firing rate profile for each cluster using position as x-axis
+ % Plot spatial firing rate profile for each cluster using position as x-axis
 % For experiment group 'training_running', bin position into 2-cm bins,
 % normalize spike counts by occupancy, and smooth with a Gaussian kernel (8-cm s.d.)
 %
@@ -42,6 +42,12 @@ max_workers             = 4;      % Maximum number of parallel workers
 bin_size_cm = 2;
 gauss_sigma_cm = 8; % standard deviation for smoothing (cm)
 position_threshold_cm = 90; % threshold for long/short trial classification
+
+% Speed tuning parameters
+trial_group_label_for_tuning = 'RT';  % Must match the label used in create_tables.m
+
+% Acceleration tuning parameters
+trial_group_label_for_accel_tuning = 'RT';  % Must match the label used in create_tables_acceleration.m
 
 % Statistical analysis parameters
 run_statistics = true;      % Set to false to skip statistical analysis
@@ -316,6 +322,37 @@ for pid = 1:length(probe_ids)
         % Define colors for the two groups
         group_colors = struct('long', [0 0 0.8], 'short', [0.8 0 0]); % Blue for long, red for short
         
+        % Load speed tuning curves for all clusters (combined long+short trials)
+        tuning_curves = cell(n_clusters, 1);
+        for c = 1:n_clusters
+            try
+                tuning_curves{c} = data.load_tuning_curves(cluster_ids(c), trial_group_label_for_tuning);
+            catch ME
+                fprintf('    Warning: Could not load speed tuning curve for cluster %d\n', cluster_ids(c));
+                fprintf('    Error: %s\n', ME.message);
+                tuning_curves{c} = [];
+            end
+        end
+        
+        % Load acceleration tuning curves for all clusters (combined long+short trials)
+        accel_tuning_curves = cell(n_clusters, 1);
+        for c = 1:n_clusters
+            try
+                % load_tuning_curves_acceleration returns a cell array {all, acc, dec}
+                % We want the 'all' table (index 1) for combined acceleration tuning
+                accel_data = data.load_tuning_curves_acceleration(cluster_ids(c), trial_group_label_for_accel_tuning);
+                if ~isempty(accel_data) && length(accel_data) >= 1
+                    accel_tuning_curves{c} = accel_data{1};  % Extract 'all' table
+                else
+                    accel_tuning_curves{c} = [];
+                end
+            catch ME
+                fprintf('    Warning: Could not load acceleration tuning curve for cluster %d\n', cluster_ids(c));
+                fprintf('    Error: %s\n', ME.message);
+                accel_tuning_curves{c} = [];
+            end
+        end
+        
         for c = 1:n_clusters
             cluster = clusters(c);
             
@@ -342,10 +379,62 @@ for pid = 1:length(probe_ids)
                 end
             end
             
+            % Compute 2D rate maps (position × velocity/acceleration) with equal-occupancy binning
+            rate_maps_2d = struct();
+            
+            % Velocity: use 20 equal-occupancy bins (5% per bin, like tuning curves)
+            n_vel_bins = 20;
+            sigma_vel = 5;  % Smoothing sigma for velocity (cm/s)
+            min_occ = 0.1;  % Minimum occupancy threshold per trial (seconds)
+            
+            % Compute for long trials
+            [rate_maps_2d.vel_long, vel_bin_edges_long, vel_trial_counts_long] = ...
+                analyzer.compute_2d_position_velocity_tuning(cluster, 'long', n_vel_bins, sigma_vel, min_occ);
+            % Compute for short trials  
+            [rate_maps_2d.vel_short, vel_bin_edges_short, vel_trial_counts_short] = ...
+                analyzer.compute_2d_position_velocity_tuning(cluster, 'short', n_vel_bins, sigma_vel, min_occ);
+            
+            % Store bin edges, centers, and trial counts for plotting
+            rate_maps_2d.vel_bin_edges_long = vel_bin_edges_long;
+            rate_maps_2d.vel_bin_edges_short = vel_bin_edges_short;
+            rate_maps_2d.vel_bin_centers_long = (vel_bin_edges_long(1:end-1) + vel_bin_edges_long(2:end)) / 2;
+            rate_maps_2d.vel_bin_centers_short = (vel_bin_edges_short(1:end-1) + vel_bin_edges_short(2:end)) / 2;
+            rate_maps_2d.vel_trial_counts_long = vel_trial_counts_long;
+            rate_maps_2d.vel_trial_counts_short = vel_trial_counts_short;
+            rate_maps_2d.vel_n_trials_long = length(trial_groups.long);
+            rate_maps_2d.vel_n_trials_short = length(trial_groups.short);
+            
+            % Acceleration: use 20 equal-occupancy bins (5% per bin, like tuning curves)
+            n_accel_bins = 20;
+            sigma_accel = 10;  % Smoothing sigma for acceleration (cm/s²) - reduced to preserve structure
+            
+            % Compute for long trials
+            [rate_maps_2d.accel_long, accel_bin_edges_long, accel_trial_counts_long] = ...
+                analyzer.compute_2d_position_acceleration_tuning(cluster, 'long', n_accel_bins, sigma_accel, min_occ);
+            % Compute for short trials
+            [rate_maps_2d.accel_short, accel_bin_edges_short, accel_trial_counts_short] = ...
+                analyzer.compute_2d_position_acceleration_tuning(cluster, 'short', n_accel_bins, sigma_accel, min_occ);
+            
+            % Store bin edges, centers, and trial counts for plotting
+            rate_maps_2d.accel_bin_edges_long = accel_bin_edges_long;
+            rate_maps_2d.accel_bin_edges_short = accel_bin_edges_short;
+            rate_maps_2d.accel_bin_centers_long = (accel_bin_edges_long(1:end-1) + accel_bin_edges_long(2:end)) / 2;
+            rate_maps_2d.accel_bin_centers_short = (accel_bin_edges_short(1:end-1) + accel_bin_edges_short(2:end)) / 2;
+            rate_maps_2d.accel_trial_counts_long = accel_trial_counts_long;
+            rate_maps_2d.accel_trial_counts_short = accel_trial_counts_short;
+            rate_maps_2d.accel_n_trials_long = length(trial_groups.long);
+            rate_maps_2d.accel_n_trials_short = length(trial_groups.short);
+            
+            % Store position bins (both centers and edges) for axis
+            rate_maps_2d.pos_bins_long = analyzer.bin_config.long.centers;
+            rate_maps_2d.pos_bins_short = analyzer.bin_config.short.centers;
+            rate_maps_2d.pos_bin_edges_long = analyzer.bin_config.long.edges;
+            rate_maps_2d.pos_bin_edges_short = analyzer.bin_config.short.edges;
+            
             % Create combined figure using helper function
             fig_cluster = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
                                                        rate_data, group_names, group_labels, ...
-                                                       group_colors, probe_ids{pid}, cluster_stats);
+                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d);
             
             % Save using the figure management system
             if save_figs

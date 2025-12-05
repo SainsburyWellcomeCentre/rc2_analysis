@@ -1,14 +1,25 @@
-function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats)
+function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id, stats)
+%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d)
 %
-%   Creates a 4-panel figure (1 row) showing:
-%       - Panel 1: Combined position-based raster for both long and short trials
-%       - Panel 2: Smoothed traces with median and IQR shading, plus pooled rate (dashed)
-%       - Panel 3: Shuffle distribution histograms (long trials top, short trials bottom)
-%       - Panel 4: X-normalized comparison with percentage x-axis, plus pooled rate (dashed)
+%   Creates a 2-row, 4-column figure showing:
+%       Row 1:
+%           - Panel 1: Combined position-based raster for both long and short trials
+%           - Panel 2: Smoothed traces with median and IQR shading, plus pooled rate (dashed)
+%           - Panel 3: Shuffle distribution histograms (long trials top, short trials bottom)
+%           - Panel 4: X-normalized comparison with percentage x-axis, plus pooled rate (dashed)
+%       Row 2:
+%           - Panel 5: Speed tuning curve (combined long+short trials)
+%           - Panel 6: Speed tuning shuffle histogram
+%           - Panel 7: Acceleration tuning curve (combined long+short trials)
+%           - Panel 8: Acceleration tuning shuffle histogram
+%       Row 3:
+%           - Panel 9: Velocity × Position contour (long trials)
+%           - Panel 10: Velocity × Position contour (short trials)
+%           - Panel 11: Acceleration × Position contour (long trials)
+%           - Panel 12: Acceleration × Position contour (short trials)
 %
 %   Inputs:
 %       cluster_id         - Numeric ID of the cluster
@@ -24,16 +35,28 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %       group_colors       - Struct with RGB colors for each group
 %       probe_id           - String identifier for the probe (for title)
 %       stats              - (Optional) Struct with statistical test results per group
+%       tuning_data        - (Optional) Struct with speed tuning curve data (from data.load_tuning_curves)
+%       accel_tuning_data  - (Optional) Struct with acceleration tuning curve data (from data.load_tuning_curves_acceleration)
+%       rate_maps_2d       - (Optional) Struct with 2D rate maps for position×velocity and position×acceleration
 %
 %   Outputs:
 %       fig - Figure handle
 
-    % Handle missing stats argument
+    % Handle missing arguments
     if nargin < 8
         stats = [];
     end
+    if nargin < 9
+        tuning_data = [];
+    end
+    if nargin < 10
+        accel_tuning_data = [];
+    end
+    if nargin < 11
+        rate_maps_2d = [];
+    end
 
-    fig = figure('Position', [50, 50, 1800, 550], 'Visible', 'off');
+    fig = figure('Position', [50, 50, 2400, 1400], 'Visible', 'off');
     
     % Compute max firing rate as 120% of the third quartile across all data
     all_Q3_values = [];
@@ -57,7 +80,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 1 (col 1): Combined position-based raster for both long and short trials
-    subplot(4, 4, [1, 5, 9]);
+    subplot(3, 4, 1);
     hold on;
     
     % Collect all trials with their global indices and group info
@@ -106,9 +129,16 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         for t = 1:length(all_trials_data)
             trial_data = all_trials_data(t);
             if ~isempty(trial_data.spike_positions)
-                n_spikes = length(trial_data.spike_positions);
-                scatter(trial_data.spike_positions, t*ones(1, n_spikes), 8, ...
-                       trial_data.color, 'filled', 'MarkerFaceAlpha', 0.6);
+                % Plot vertical bars instead of dots
+                for s = 1:length(trial_data.spike_positions)
+                    % Adjust position for short trials (shift by 60 cm)
+                    pos = trial_data.spike_positions(s);
+                    if strcmp(trial_data.group, 'short')
+                        pos = pos + 60;
+                    end
+                    plot([pos, pos], ...
+                         [t-0.4, t+0.4], 'Color', trial_data.color, 'LineWidth', 1);
+                end
             end
         end
         
@@ -121,13 +151,12 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     hold off;
     xlabel('Position (cm)');
     ylabel('Trial # (chronological)');
-    title('Position Raster (Combined)');
     grid on;
     xlim([0, 120]);
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 2 (col 2): Smoothed traces with median and IQR shading
-    subplot(4, 4, [2, 6, 10]);
+    subplot(3, 4, 2);
     hold on;
     
     for g = 1:length(group_names)
@@ -242,7 +271,6 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     hold off;
     xlabel('Position (cm)');
     ylabel('Firing rate (Hz)');
-    title('Smoothed Rates with Median & IQR');
     grid on;
     xlim([0, 120]);
     ylim([0, max_firing_rate]);
@@ -251,7 +279,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     %% Panel 3 (col 3): Shuffle distribution histograms combined in one vertical plot
     if ~isempty(stats)
         % Combined vertical histogram spanning the full column
-        subplot(4, 4, [3, 7, 11]);
+        subplot(3, 4, 3);
         hold on;
         
         % Determine common x-axis range
@@ -322,7 +350,6 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             
             xlabel('Skaggs Info (bits/spike)', 'FontSize', 9);
             ylabel('Count', 'FontSize', 9);
-            title('Shuffle Distribution', 'FontSize', 10);
             box off;
             grid on;
         else
@@ -334,7 +361,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 4 (col 4): X-normalized comparison
-    subplot(4, 4, [4, 8, 12]);
+    subplot(3, 4, 4);
     hold on;
     
     % Common normalized grid (0 to 1, displayed as 0% to 100%)
@@ -422,12 +449,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             Q2_long_i = interp1(pos_long_norm(idxL), Q2_long(idxL), x_norm, 'linear', 'extrap');
             Q2_short_i = interp1(pos_short_norm(idxS), Q2_short(idxS), x_norm, 'linear', 'extrap');
             r = corr(Q2_long_i(:), Q2_short_i(:), 'rows', 'complete');
-            title(sprintf('Normalized Comparison (r = %.2f)', r));
-        else
-            title('Normalized Comparison');
         end
-    else
-        title('Normalized Comparison');
     end
     
     hold off;
@@ -438,42 +460,458 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     ylim([0, max_firing_rate]);
     set(gca, 'XTick', 0:10:100);
     
+    %% Panel 5 (row 2, col 1): Speed tuning curve
+    if ~isempty(tuning_data) && isstruct(tuning_data)
+        ax_tuning = subplot(3, 4, 5);
+        
+        % Extract tuning curve data
+        fr = nanmean(tuning_data.tuning, 2);
+        sd = nanstd(tuning_data.tuning, [], 2);
+        n = sum(~isnan(tuning_data.tuning), 2);
+        x = tuning_data.bin_centers;
+        
+        % Determine if significant
+        is_significant = tuning_data.shuffled.p < 0.05;
+        
+        % Set colors based on significance
+        if is_significant
+            data_color = 'k';
+            fit_color = 'k';
+        else
+            data_color = [0.6, 0.6, 0.6];
+            fit_color = [0.6, 0.6, 0.6];
+        end
+        
+        % Plot shuffled fits in background (light grey, dashed)
+        n_shuffs_to_plot = min(4, size(tuning_data.shuffled.beta_shuff, 1));
+        hold on;
+        for i = 1:n_shuffs_to_plot
+            % Linear polynomial fit for shuffled data
+            if length(tuning_data.shuffled.beta_shuff(i, :)) >= 2
+                x_fit = linspace(min(x), max(x), 100);
+                f = polyval(tuning_data.shuffled.beta_shuff(i, :), x_fit);
+                plot(ax_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+            end
+        end
+        
+        % Plot mean firing rate with error bars (SEM)
+        errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
+        
+        % Plot true fit (linear polynomial) - black if significant, gray if not
+        if isfield(tuning_data.shuffled, 'beta') && length(tuning_data.shuffled.beta) >= 2
+            x_fit = linspace(min(x), max(x), 100);
+            f = polyval(tuning_data.shuffled.beta, x_fit);
+            plot(ax_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
+        hold off;
+        
+        xlabel('Speed (cm/s)');
+        ylabel('Firing rate (Hz)');
+        grid on;
+        xlim([-5, max(x)+5]);
+        
+        % Add significance indicator
+        if is_significant
+            % Add asterisk in top-right if significant
+            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
+                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        else
+            % Add "NS" in top-right if not significant
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
+                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+    end
+    
+    %% Panel 6 (row 2, col 2): Speed tuning shuffle histogram
+    if ~isempty(tuning_data) && isstruct(tuning_data)
+        ax_hist = subplot(3, 4, 6);
+        
+        % Create histogram of shuffled r values
+        [n, c] = histcounts(tuning_data.shuffled.r_shuff, 50);
+        bin_centers = (c(1:end-1) + c(2:end)) / 2;
+        bar(ax_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
+        
+        hold on;
+        % Plot observed r value as a dot
+        r_obs = tuning_data.shuffled.r;
+        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
+        scatter(ax_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('r');
+        ylabel('Count');
+        xlim([-0.5, 0.5]);
+        set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
+        
+        % Add p-value text
+        if tuning_data.shuffled.p < 0.001
+            p_str = 'p < 0.001';
+        else
+            p_str = sprintf('p = %.3f', tuning_data.shuffled.p);
+        end
+        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
+             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+    end
+    
+    %% Panel 7 (row 2, col 3): Acceleration tuning curve
+    if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
+        ax_accel_tuning = subplot(3, 4, 7);
+        
+        % Extract tuning curve data
+        fr = nanmean(accel_tuning_data.tuning, 2);
+        sd = nanstd(accel_tuning_data.tuning, [], 2);
+        n = sum(~isnan(accel_tuning_data.tuning), 2);
+        x = accel_tuning_data.bin_centers;
+        
+        % Determine if significant
+        is_significant = accel_tuning_data.shuffled.p < 0.05;
+        
+        % Set colors based on significance
+        if is_significant
+            data_color = 'k';
+            fit_color = 'k';
+        else
+            data_color = [0.6, 0.6, 0.6];
+            fit_color = [0.6, 0.6, 0.6];
+        end
+        
+        % Plot shuffled fits in background (light grey, dashed)
+        n_shuffs_to_plot = min(4, size(accel_tuning_data.shuffled.beta_shuff, 1));
+        hold on;
+        for i = 1:n_shuffs_to_plot
+            % Linear polynomial fit for shuffled data
+            if length(accel_tuning_data.shuffled.beta_shuff(i, :)) >= 2
+                x_fit = linspace(min(x), max(x), 100);
+                f = polyval(accel_tuning_data.shuffled.beta_shuff(i, :), x_fit);
+                plot(ax_accel_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+            end
+        end
+        
+        % Plot mean firing rate with error bars (SEM)
+        errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
+        
+        % Plot true fit (linear polynomial) - black if significant, gray if not
+        if isfield(accel_tuning_data.shuffled, 'beta') && length(accel_tuning_data.shuffled.beta) >= 2
+            x_fit = linspace(min(x), max(x), 100);
+            f = polyval(accel_tuning_data.shuffled.beta, x_fit);
+            plot(ax_accel_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
+        hold off;
+        
+        xlabel('Acceleration (cm/s^2)');
+        ylabel('Firing rate (Hz)');
+        grid on;
+        xlim([min(x)-5, max(x)+5]);
+        
+        % Add significance indicator
+        if is_significant
+            % Add asterisk in top-right if significant
+            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
+                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        else
+            % Add "NS" in top-right if not significant
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
+                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+    end
+    
+    %% Panel 8 (row 2, col 4): Acceleration tuning shuffle histogram
+    if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
+        ax_accel_hist = subplot(3, 4, 8);
+        
+        % Create histogram of shuffled r values
+        [n, c] = histcounts(accel_tuning_data.shuffled.r_shuff, 50);
+        bin_centers = (c(1:end-1) + c(2:end)) / 2;
+        bar(ax_accel_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
+        
+        hold on;
+        % Plot observed r value as a dot
+        r_obs = accel_tuning_data.shuffled.r;
+        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
+        scatter(ax_accel_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('r');
+        ylabel('Count');
+        xlim([-0.5, 0.5]);
+        set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
+        
+        % Add p-value text
+        if accel_tuning_data.shuffled.p < 0.001
+            p_str = 'p < 0.001';
+        else
+            p_str = sprintf('p = %.3f', accel_tuning_data.shuffled.p);
+        end
+        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
+             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+    end
+    
+    %% Row 3: 2D Contour Plots (Velocity × Position and Acceleration × Position)
+    if ~isempty(rate_maps_2d)
+        % Panel 9: Velocity × Position (long trials) with trial-based transparency
+        if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
+            ax_vel_long = subplot(3, 4, 9);
+            hold(ax_vel_long, 'on');
+            
+            % Get bin edges and data
+            pos_edges = rate_maps_2d.pos_bin_edges_long;
+            vel_edges = rate_maps_2d.vel_bin_edges_long;
+            rate_data = rate_maps_2d.vel_long;
+            
+            % Get colormap limits
+            cmin = min(rate_data(:));
+            cmax = max(rate_data(:));
+            cmap = jet(256);
+            
+            % Create patches for each bin with variable height
+            for p = 1:length(pos_edges)-1
+                for v = 1:length(vel_edges)-1
+                    rate_val = rate_data(p, v);
+                    
+                    % Skip NaN values
+                    if isnan(rate_val)
+                        continue;
+                    end
+                    
+                    % Map rate to color
+                    if cmax > cmin
+                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                        color_idx = max(1, min(256, color_idx));
+                    else
+                        color_idx = 1;
+                    end
+                    face_color = cmap(color_idx, :);
+                    
+                    % Determine alpha
+                    if isfield(rate_maps_2d, 'vel_trial_counts_long') && isfield(rate_maps_2d, 'vel_n_trials_long')
+                        alpha_val = rate_maps_2d.vel_trial_counts_long(p, v) / rate_maps_2d.vel_n_trials_long;
+                    else
+                        alpha_val = 1;
+                    end
+                    
+                    % Create rectangle patch
+                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                    y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                    patch(ax_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+                end
+            end
+            
+            hold(ax_vel_long, 'off');
+            colormap(ax_vel_long, 'jet');
+            caxis(ax_vel_long, [cmin, cmax]);
+            set(gca, 'Color', [1 1 1]);
+            
+            xlabel('Position (cm)');
+            ylabel('Velocity (cm/s)');
+        end
+        
+        % Panel 10: Velocity × Position (short trials) with trial-based transparency
+        if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
+            ax_vel_short = subplot(3, 4, 10);
+            hold(ax_vel_short, 'on');
+            
+            % Get bin edges and data
+            pos_edges = rate_maps_2d.pos_bin_edges_short;
+            vel_edges = rate_maps_2d.vel_bin_edges_short;
+            rate_data = rate_maps_2d.vel_short;
+            
+            % Get colormap limits
+            cmin = min(rate_data(:));
+            cmax = max(rate_data(:));
+            cmap = jet(256);
+            
+            % Create patches for each bin with variable height
+            for p = 1:length(pos_edges)-1
+                for v = 1:length(vel_edges)-1
+                    rate_val = rate_data(p, v);
+                    
+                    % Skip NaN values
+                    if isnan(rate_val)
+                        continue;
+                    end
+                    
+                    % Map rate to color
+                    if cmax > cmin
+                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                        color_idx = max(1, min(256, color_idx));
+                    else
+                        color_idx = 1;
+                    end
+                    face_color = cmap(color_idx, :);
+                    
+                    % Determine alpha
+                    if isfield(rate_maps_2d, 'vel_trial_counts_short') && isfield(rate_maps_2d, 'vel_n_trials_short')
+                        alpha_val = rate_maps_2d.vel_trial_counts_short(p, v) / rate_maps_2d.vel_n_trials_short;
+                    else
+                        alpha_val = 1;
+                    end
+                    
+                    % Create rectangle patch
+                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                    y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                    patch(ax_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+                end
+            end
+            
+            hold(ax_vel_short, 'off');
+            colormap(ax_vel_short, 'jet');
+            caxis(ax_vel_short, [cmin, cmax]);
+            set(gca, 'Color', [1 1 1]);
+            
+            xlabel('Position (cm)');
+            ylabel('Velocity (cm/s)');
+        end
+        
+        % Panel 11: Acceleration × Position (long trials) with trial-based transparency
+        if isfield(rate_maps_2d, 'accel_long') && ~isempty(rate_maps_2d.accel_long)
+            ax_accel_long = subplot(3, 4, 11);
+            hold(ax_accel_long, 'on');
+            
+            % Get bin edges and data
+            pos_edges = rate_maps_2d.pos_bin_edges_long;
+            accel_edges = rate_maps_2d.accel_bin_edges_long;
+            rate_data = rate_maps_2d.accel_long;
+            
+            % Get colormap limits
+            cmin = min(rate_data(:));
+            cmax = max(rate_data(:));
+            cmap = jet(256);
+            
+            % Create patches for each bin with variable height
+            for p = 1:length(pos_edges)-1
+                for a = 1:length(accel_edges)-1
+                    rate_val = rate_data(p, a);
+                    
+                    % Skip NaN values
+                    if isnan(rate_val)
+                        continue;
+                    end
+                    
+                    % Map rate to color
+                    if cmax > cmin
+                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                        color_idx = max(1, min(256, color_idx));
+                    else
+                        color_idx = 1;
+                    end
+                    face_color = cmap(color_idx, :);
+                    
+                    % Determine alpha
+                    if isfield(rate_maps_2d, 'accel_trial_counts_long') && isfield(rate_maps_2d, 'accel_n_trials_long')
+                        alpha_val = rate_maps_2d.accel_trial_counts_long(p, a) / rate_maps_2d.accel_n_trials_long;
+                    else
+                        alpha_val = 1;
+                    end
+                    
+                    % Create rectangle patch
+                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                    y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
+                    patch(ax_accel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+                end
+            end
+            
+            hold(ax_accel_long, 'off');
+            colormap(ax_accel_long, 'jet');
+            caxis(ax_accel_long, [cmin, cmax]);
+            set(gca, 'Color', [1 1 1]);
+            
+            xlabel('Position (cm)');
+            ylabel('Accel (cm/s^2)');
+        end
+        
+        % Panel 12: Acceleration × Position (short trials) with trial-based transparency
+        if isfield(rate_maps_2d, 'accel_short') && ~isempty(rate_maps_2d.accel_short)
+            ax_accel_short = subplot(3, 4, 12);
+            hold(ax_accel_short, 'on');
+            
+            % Get bin edges and data
+            pos_edges = rate_maps_2d.pos_bin_edges_short;
+            accel_edges = rate_maps_2d.accel_bin_edges_short;
+            rate_data = rate_maps_2d.accel_short;
+            
+            % Get colormap limits
+            cmin = min(rate_data(:));
+            cmax = max(rate_data(:));
+            cmap = jet(256);
+            
+            % Create patches for each bin with variable height
+            for p = 1:length(pos_edges)-1
+                for a = 1:length(accel_edges)-1
+                    rate_val = rate_data(p, a);
+                    
+                    % Skip NaN values
+                    if isnan(rate_val)
+                        continue;
+                    end
+                    
+                    % Map rate to color
+                    if cmax > cmin
+                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                        color_idx = max(1, min(256, color_idx));
+                    else
+                        color_idx = 1;
+                    end
+                    face_color = cmap(color_idx, :);
+                    
+                    % Determine alpha
+                    if isfield(rate_maps_2d, 'accel_trial_counts_short') && isfield(rate_maps_2d, 'accel_n_trials_short')
+                        alpha_val = rate_maps_2d.accel_trial_counts_short(p, a) / rate_maps_2d.accel_n_trials_short;
+                    else
+                        alpha_val = 1;
+                    end
+                    
+                    % Create rectangle patch
+                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                    y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
+                    patch(ax_accel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+                end
+            end
+            
+            hold(ax_accel_short, 'off');
+            colormap(ax_accel_short, 'jet');
+            caxis(ax_accel_short, [cmin, cmax]);
+            set(gca, 'Color', [1 1 1]);
+            
+            xlabel('Position (cm)');
+            ylabel('Accel (cm/s^2)');
+        end
+    end
+    
     % Overall figure title (replace underscores with spaces to prevent subscript rendering)
     probe_id_display = strrep(probe_id, '_', ' ');
     
-    % ALWAYS adjust subplot positions BEFORE adding title to create adequate space at top
-    % This is critical for proper appearance when saved to PDF
+    % Adjust subplot positions to add space at top for title and increase spacing between plots
+    % With 3x4 grid, we have better natural spacing, so reduce compression
     all_axes = findall(fig, 'Type', 'axes');
     for ax_idx = 1:length(all_axes)
         ax = all_axes(ax_idx);
         pos = get(ax, 'Position');
         if ~isempty(stats)
-            % With statistics: compress plots more to fit title, plots, and text
-            pos(4) = pos(4) * 0.70;  % Reduce height significantly
-            pos(2) = pos(2) + 0.20;  % Move up to make room for text at bottom
+            % With statistics: gentle compression with good spacing
+            pos(4) = pos(4) * 0.88;  % Minimal compression for better readability
+            pos(2) = pos(2) * 0.92 + 0.03;  % Shift up slightly for title space
         else
-            % Without statistics: create substantial top margin for title
-            pos(4) = pos(4) * 0.82;  % Reduce height by 18%
-            pos(2) = pos(2) * 0.75;  % Scale down vertical position to compress towards bottom
+            % Without statistics: maintain readability with minimal adjustment
+            pos(4) = pos(4) * 0.90;  % Minimal compression
+            pos(2) = pos(2) * 0.90 + 0.02;  % Shift up slightly
         end
         set(ax, 'Position', pos);
     end
     
-    % Create title using annotation positioned at top with adequate margin below
-    annotation('textbox', [0, 0.94, 1, 0.06], 'String', sprintf('Cluster %d - %s', cluster_id, probe_id_display), ...
+    % Create title using annotation positioned WAY at top with large margin below
+    annotation('textbox', [0, 0.97, 1, 0.03], 'String', sprintf('Cluster %d - %s', cluster_id, probe_id_display), ...
                'FontWeight', 'bold', 'FontSize', 12, 'HorizontalAlignment', 'center', ...
                'EdgeColor', 'none', 'VerticalAlignment', 'middle');
     
-    %% Bottom row: Statistical test results (if available)
+    %% Bottom area: Statistical test results (if available)
     if ~isempty(stats)
         
-        % Create text annotation panel spanning bottom row
-        subplot(4, 4, [13, 14, 15, 16]);
-        axis off;
+        % Create invisible axis at the bottom for text annotation
+        ax_text = axes('Position', [0.1, -0.02, 0.8, 0.03], 'Visible', 'off');
         
         % Prepare text content
         text_content = {};
-        text_content{end+1} = '\fontsize{10}\bfStatistical Test Results:\rm';
+        text_content{end+1} = '\fontsize{7}\bfStatistical Test Results:\rm';
         text_content{end+1} = ' ';
         
         group_fields = fieldnames(stats);
@@ -513,10 +951,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             text_content{end+1} = ' ';
         end
         
-        % Display text even lower (-1.2) to avoid overlap with bottom plot x-axis labels
-        % Move much further left (0.01) to prevent text cutoff at figure edges
-        text(0.01, -1.2, text_content, 'FontName', 'FixedWidth', 'FontSize', 9, ...
-             'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left', ...
+        % Display text in the dedicated text axis at the bottom
+        text(ax_text, 0.01, 0.5, text_content, 'FontName', 'FixedWidth', 'FontSize', 6, ...
+             'VerticalAlignment', 'middle', 'HorizontalAlignment', 'left', ...
              'Interpreter', 'tex');
     end
 end
