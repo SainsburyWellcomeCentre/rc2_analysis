@@ -1,8 +1,8 @@
-function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d)
+function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d)
+%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison)
 %
 %   Creates a 2-row, 4-column figure showing:
 %       Row 1:
@@ -38,6 +38,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %       tuning_data        - (Optional) Struct with speed tuning curve data (from data.load_tuning_curves)
 %       accel_tuning_data  - (Optional) Struct with acceleration tuning curve data (from data.load_tuning_curves_acceleration)
 %       rate_maps_2d       - (Optional) Struct with 2D rate maps for position×velocity and position×acceleration
+%       dist_comparison    - (Optional) Struct with distribution comparison results (.absolute and .relative)
 %
 %   Outputs:
 %       fig - Figure handle
@@ -48,6 +49,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     if nargin < 9
         tuning_data = [];
+    end
+    if nargin < 12
+        dist_comparison = [];
     end
     if nargin < 10
         accel_tuning_data = [];
@@ -268,6 +272,30 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         end
     end
     
+    % Add absolute position distribution comparison result
+    if ~isempty(dist_comparison) && isfield(dist_comparison, 'absolute') && isstruct(dist_comparison.absolute)
+        if isfield(dist_comparison.absolute, 'same_distribution') && ~isnan(dist_comparison.absolute.same_distribution)
+            text_x_pos = 0.02;
+            text_y_pos = 0.95;
+            
+            if dist_comparison.absolute.same_distribution
+                abs_str = 'Abs: Same';
+            else
+                abs_str = 'Abs: Different';
+            end
+            if isfield(dist_comparison.absolute, 'p_value')
+                if dist_comparison.absolute.p_value < 0.001
+                    abs_str = sprintf('%s (p<0.001)', abs_str);
+                else
+                    abs_str = sprintf('%s (p=%.3f)', abs_str, dist_comparison.absolute.p_value);
+                end
+            end
+            text(text_x_pos, text_y_pos, abs_str, 'Units', 'normalized', ...
+                 'FontSize', 9, 'FontWeight', 'bold', 'Color', [0 0 0], ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+        end
+    end
+    
     hold off;
     xlabel('Position (cm)');
     ylabel('Firing rate (Hz)');
@@ -449,6 +477,30 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             Q2_long_i = interp1(pos_long_norm(idxL), Q2_long(idxL), x_norm, 'linear', 'extrap');
             Q2_short_i = interp1(pos_short_norm(idxS), Q2_short(idxS), x_norm, 'linear', 'extrap');
             r = corr(Q2_long_i(:), Q2_short_i(:), 'rows', 'complete');
+        end
+    end
+    
+    % Add relative position distribution comparison result
+    if ~isempty(dist_comparison) && isfield(dist_comparison, 'relative') && isstruct(dist_comparison.relative)
+        if isfield(dist_comparison.relative, 'same_distribution') && ~isnan(dist_comparison.relative.same_distribution)
+            text_x_pos = 0.02;
+            text_y_pos = 0.95;
+            
+            if dist_comparison.relative.same_distribution
+                rel_str = 'Rel: Same';
+            else
+                rel_str = 'Rel: Different';
+            end
+            if isfield(dist_comparison.relative, 'p_value')
+                if dist_comparison.relative.p_value < 0.001
+                    rel_str = sprintf('%s (p<0.001)', rel_str);
+                else
+                    rel_str = sprintf('%s (p=%.3f)', rel_str, dist_comparison.relative.p_value);
+                end
+            end
+            text(text_x_pos, text_y_pos, rel_str, 'Units', 'normalized', ...
+                 'FontSize', 9, 'FontWeight', 'bold', 'Color', [0 0 0], ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
         end
     end
     

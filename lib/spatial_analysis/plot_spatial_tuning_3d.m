@@ -1,7 +1,7 @@
-function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, all_Q2_rate_smooth_by_group, cluster_ids, probe_id, ctl)
+function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, all_Q2_rate_smooth_by_group, cluster_ids, probe_id, ctl)
 % PLOT_SPATIAL_TUNING_3D Create 3D visualization of spatial tuning
 %
-%   fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, ...
+%   [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, ...
 %       all_Q2_rate_smooth_by_group, cluster_ids, probe_id, ctl)
 %
 %   Creates a 2x2 grid of 3D plots showing spatially tuned clusters with
@@ -18,7 +18,8 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
 %       ctl                          - RC2Analysis controller object
 %
 %   Returns:
-%       fig_3d - Figure handle (empty if no spatially tuned clusters found)
+%       fig_3d      - Figure handle (empty if no spatially tuned clusters found)
+%       fit_results - Struct containing fit parameters and R² for all clusters/conditions
 
     % Identify clusters that are spatially tuned in at least one condition
     n_clusters = length(cluster_ids);
@@ -37,6 +38,43 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
     
     n_tuned = length(spatially_tuned_any);
     fprintf('    Found %d clusters spatially tuned in at least one condition\n', n_tuned);
+    
+    % Initialize fit results structure for ALL clusters (not just tuned ones)
+    fit_results = struct();
+    
+    % Store median firing rates for ALL clusters (both tuned and non-tuned)
+    for c = 1:n_clusters
+        cluster_id = cluster_ids(c);
+        cluster_field = sprintf('cluster_%d', cluster_id);
+        fit_results.(cluster_field) = struct();
+        
+        % Store data for all four conditions
+        conditions = {'long_unnormalized', 'long_normalized', 'short_unnormalized', 'short_normalized'};
+        trial_types = {'long', 'long', 'short', 'short'};
+        normalize_flags = [false, true, false, true];
+        
+        for cond_idx = 1:4
+            condition_key = conditions{cond_idx};
+            trial_type = trial_types{cond_idx};
+            
+            if strcmp(trial_type, 'long')
+                bin_centers = all_bin_centers_by_group.long;
+                rate_data = all_Q2_rate_smooth_by_group.long(c, :);
+            else
+                bin_centers = all_bin_centers_by_group.short;
+                rate_data = all_Q2_rate_smooth_by_group.short(c, :);
+            end
+            
+            fit_results.(cluster_field).(condition_key) = struct();
+            fit_results.(cluster_field).(condition_key).median_firing_rate = rate_data;
+            fit_results.(cluster_field).(condition_key).bin_centers = bin_centers;
+            fit_results.(cluster_field).(condition_key).amplitude = NaN;
+            fit_results.(cluster_field).(condition_key).center = NaN;
+            fit_results.(cluster_field).(condition_key).sigma = NaN;
+            fit_results.(cluster_field).(condition_key).r_squared = NaN;
+            fit_results.(cluster_field).(condition_key).fit_success = false;
+        end
+    end
     
     if n_tuned == 0
         fprintf('    No spatially tuned clusters found. Skipping 3D plot.\n');
@@ -71,7 +109,17 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
     options = optimset('Display', 'off');
     n_gauss_points = 50;
     
-    % Helper function to plot 3D subplot
+    % Helper function for conditional expression
+    ternary = @(cond, true_val, false_val) iif(cond, true_val, false_val);
+    function result = iif(cond, true_val, false_val)
+        if cond
+            result = true_val;
+        else
+            result = false_val;
+        end
+    end
+    
+    % Helper function to plot 3D subplot and collect fit results
     function plot_3d_subplot(subplot_pos, bin_centers, rates, trial_type, normalize, x_lim, title_str)
         subplot(2, 2, subplot_pos, 'Parent', fig_3d);
         hold on;
@@ -83,6 +131,17 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
             color = pastel_colors(i, :);
             
             rate_data = rates(c, :);
+            
+            % Determine condition key
+            if normalize
+                condition_key = sprintf('%s_normalized', trial_type);
+            else
+                condition_key = sprintf('%s_unnormalized', trial_type);
+            end
+            
+            % Update median firing rate (already initialized for all clusters)
+            fit_results.(cluster_field).(condition_key).median_firing_rate = rate_data;
+            fit_results.(cluster_field).(condition_key).bin_centers = bin_centers;
             
             % Normalize if requested
             if normalize
@@ -121,6 +180,21 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
                 
                 try
                     p_fit = lsqcurvefit(gauss_fit, p0, bin_centers, rate_data, [], [], options);
+                    
+                    % Compute R²
+                    y_pred = gauss_fit(p_fit, bin_centers);
+                    ss_res = sum((rate_data - y_pred).^2);
+                    ss_tot = sum((rate_data - mean(rate_data)).^2);
+                    r_squared = 1 - (ss_res / ss_tot);
+                    
+                    % Store fit parameters
+                    fit_results.(cluster_field).(condition_key).amplitude = p_fit(1);
+                    fit_results.(cluster_field).(condition_key).center = p_fit(2);
+                    fit_results.(cluster_field).(condition_key).sigma = p_fit(3);
+                    fit_results.(cluster_field).(condition_key).r_squared = r_squared;
+                    fit_results.(cluster_field).(condition_key).fit_success = true;
+                    
+                    % Plot Gaussian
                     x_fine = linspace(min(bin_centers), max(bin_centers), n_gauss_points);
                     y_fine = gauss_fit(p_fit, x_fine);
                     
@@ -130,9 +204,23 @@ function fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_b
                     Z_mesh = repmat(y_fine, 2, 1);
                     surf(X_mesh, Y_mesh, Z_mesh, 'FaceColor', color, 'EdgeColor', 'none', ...
                          'FaceAlpha', 0.6, 'FaceLighting', 'gouraud');
-                catch
-                    % Fit failed, skip Gaussian
+                catch ME
+                    % Fit failed, store failure info
+                    fit_results.(cluster_field).(condition_key).amplitude = NaN;
+                    fit_results.(cluster_field).(condition_key).center = NaN;
+                    fit_results.(cluster_field).(condition_key).sigma = NaN;
+                    fit_results.(cluster_field).(condition_key).r_squared = NaN;
+                    fit_results.(cluster_field).(condition_key).fit_success = false;
+                    fit_results.(cluster_field).(condition_key).error_message = ME.message;
                 end
+            else
+                % Not spatially tuned
+                fit_results.(cluster_field).(condition_key).amplitude = NaN;
+                fit_results.(cluster_field).(condition_key).center = NaN;
+                fit_results.(cluster_field).(condition_key).sigma = NaN;
+                fit_results.(cluster_field).(condition_key).r_squared = NaN;
+                fit_results.(cluster_field).(condition_key).fit_success = false;
+                fit_results.(cluster_field).(condition_key).error_message = 'Not spatially tuned';
             end
         end
         

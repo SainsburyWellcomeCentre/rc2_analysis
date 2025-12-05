@@ -315,6 +315,28 @@ for pid = 1:length(probe_ids)
         end
     end
 
+    % Compute distribution comparisons for all clusters
+    fprintf('  Computing distribution comparisons using Kruskal-Wallis test...\n');
+    dist_comparison_results = cell(n_clusters, 1);
+    
+    for c = 1:n_clusters
+        try
+            rate_long = all_rate_per_trial_by_group.long{c};
+            rate_short = all_rate_per_trial_by_group.short{c};
+            bin_centers_long = all_bin_centers_by_group.long;
+            bin_centers_short = all_bin_centers_by_group.short;
+            
+            % Perform distribution comparison using Kruskal-Wallis test
+            dist_comparison_results{c} = compare_spatial_distributions(...
+                rate_long, rate_short, bin_centers_long, bin_centers_short);
+        catch ME
+            fprintf('    Warning: Could not compute distribution comparison for cluster %d\n', cluster_ids(c));
+            fprintf('    Error: %s\n', ME.message);
+            dist_comparison_results{c} = [];
+        end
+    end
+    fprintf('  Distribution comparisons complete\n');
+
     % For each cluster, create a combined figure with spatial profile and x-normalized comparison
     if plot_single_cluster_fig
         fprintf('  Creating individual cluster plots...\n');
@@ -434,7 +456,7 @@ for pid = 1:length(probe_ids)
             % Create combined figure using helper function
             fig_cluster = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
                                                        rate_data, group_names, group_labels, ...
-                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d);
+                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c});
             
             % Save using the figure management system
             if save_figs
@@ -447,6 +469,18 @@ for pid = 1:length(probe_ids)
                 close(fig_cluster);
             end
         end
+    end
+    
+    % Plot distribution comparison contingency table
+    if save_figs
+        fprintf('  Creating distribution comparison contingency table...\n');
+        fig_contingency = plot_distribution_comparison_contingency(dist_comparison_results, cluster_ids, probe_ids{pid});
+        
+        % Convert to a4figure format for PDF joining
+        set(fig_contingency, 'PaperOrientation', 'landscape');
+        set(fig_contingency, 'PaperUnits', 'normalized');
+        set(fig_contingency, 'PaperPosition', [0 0 1 1]);
+        ctl.figs.save_fig_to_join();
     end
     
     % Plot heatmaps for each group in a single figure with four subplots
@@ -467,12 +501,42 @@ for pid = 1:length(probe_ids)
         end
         [~, sort_idx] = sort(peak_positions);
         sorted_cluster_ids = cluster_ids(sort_idx);
+        
+        % Determine significance for each cluster in each condition
+        is_significant_long = false(n_clusters, 1);
+        is_significant_short = false(n_clusters, 1);
+        
+        if ~isempty(spatial_tuning_stats)
+            for c = 1:n_clusters
+                cluster_field = sprintf('cluster_%d', cluster_ids(c));
+                if isfield(spatial_tuning_stats, cluster_field)
+                    stats = spatial_tuning_stats.(cluster_field);
+                    if isfield(stats, 'long') && stats.long.isSpatiallyTuned
+                        is_significant_long(c) = true;
+                    end
+                    if isfield(stats, 'short') && stats.short.isSpatiallyTuned
+                        is_significant_short(c) = true;
+                    end
+                end
+            end
+        end
+        
+        % Sort significance vectors to match sorted clusters
+        sorted_is_significant_long = is_significant_long(sort_idx);
+        sorted_is_significant_short = is_significant_short(sort_idx);
     
         for g = 1:2
             group = group_names{g};
             rate_mat = all_Q2_rate_smooth_by_group.(group);  % Use median (Q2) instead of mean
             bin_centers = all_bin_centers_by_group.(group);
             sorted_rate_mat = rate_mat(sort_idx, :);
+            
+            % Get significance for this group
+            if strcmp(group, 'long')
+                is_sig = sorted_is_significant_long;
+            else
+                is_sig = sorted_is_significant_short;
+            end
             
             % Raw heatmap
             subplot(2, 2, g, 'Parent', fig_heatmaps);
@@ -490,14 +554,55 @@ for pid = 1:length(probe_ids)
                 xlim([0, 120]);
             end
             
-            % Normalized heatmap (min-max normalization)
+            % Normalized heatmap (min-max normalization) with gray for non-significant
             min_vals = min(sorted_rate_mat, [], 2);
             max_vals = max(sorted_rate_mat, [], 2);
             norm_rate_mat = (sorted_rate_mat - min_vals) ./ (max_vals - min_vals);
             norm_rate_mat(isnan(norm_rate_mat) | isinf(norm_rate_mat)) = 0;
+            
+            % Convert to grayscale for non-significant clusters
+            gray_norm_rate_mat = norm_rate_mat;
+            for c = 1:n_clusters
+                if ~is_sig(c)
+                    % Convert to grayscale by averaging the normalized values
+                    gray_norm_rate_mat(c, :) = mean(norm_rate_mat(c, :));
+                end
+            end
+            
             subplot(2, 2, g+2, 'Parent', fig_heatmaps);
-            imagesc(bin_centers, 1:n_clusters, norm_rate_mat);
-            colormap('jet');
+            h = imagesc(bin_centers, 1:n_clusters, gray_norm_rate_mat);
+            
+            % Create custom colormap: jet for significant, gray for non-significant
+            jet_cmap = jet(256);
+            gray_cmap = repmat(linspace(0.5, 1, 256)', 1, 3); % Gray from dark to light
+            
+            % Apply colormap
+            colormap(gca, jet_cmap);
+            
+            % Manually set grayscale colors for non-significant clusters
+            hold on;
+            for c = 1:n_clusters
+                if ~is_sig(c)
+                    % Overlay a grayscale patch for this cluster
+                    gray_vals = norm_rate_mat(c, :);
+                    gray_rgb = repmat(0.5 + 0.5 * gray_vals, 3, 1)';
+                    
+                    % Create a patch for each bin in this cluster row
+                    n_bins = length(bin_centers);
+                    if strcmp(group, 'short')
+                        bin_width = (bin_centers(2) - bin_centers(1));
+                    else
+                        bin_width = (bin_centers(2) - bin_centers(1));
+                    end
+                    
+                    for b = 1:n_bins
+                        rectangle('Position', [bin_centers(b) - bin_width/2, c - 0.5, bin_width, 1], ...
+                                  'FaceColor', gray_rgb(b, :), 'EdgeColor', 'none');
+                    end
+                end
+            end
+            hold off;
+            
             colorbar;
             xlabel('Position (cm)');
             ylabel('Cluster (sorted by maximum peak position)');
@@ -546,23 +651,239 @@ for pid = 1:length(probe_ids)
             n_tuned = length(spatially_tuned_any);
             fprintf('    Found %d clusters spatially tuned in at least one condition\n', n_tuned);
             
-            % Create 2x3 grid plot using helper function
-            % Create 2x3 grid plot
-            fig_grid = plot_spatial_tuning_grid(spatial_tuning_stats, ...
-                all_bin_centers_by_group, all_Q2_rate_smooth_by_group, ...
-                cluster_ids, gauss_sigma_cm, probe_ids{pid});
-            
-            if ~isempty(fig_grid)
-                ctl.figs.save_fig_to_join();
-            end
-            
-            % Create 3D visualization
-            fig_3d = plot_spatial_tuning_3d(spatial_tuning_stats, ...
+            % Create 3D visualization and get fit results
+            [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, ...
                 all_bin_centers_by_group, all_Q2_rate_smooth_by_group, ...
                 cluster_ids, probe_ids{pid}, ctl);
             
             if ~isempty(fig_3d)
                 ctl.figs.save_fig_to_join();
+            end
+            
+            % Plot paired comparison of Gaussian peak positions
+            if ~isempty(fit_results)
+                fprintf('  Creating Gaussian peak position comparison plot...\n');
+                
+                % Plot parameters
+                jitter_amount = 0.15;
+                line_alpha = 0.6;
+                point_size = 50;
+                r_squared_threshold = 0.3;
+                
+                % Create figure with 2 subplots
+                fig_peak_comparison = ctl.figs.a4figure('landscape');
+                
+                % Define conditions to plot
+                peak_position_conditions = {
+                    {'long_unnormalized', 'short_unnormalized', 'Peak Position (cm)', 1, false};
+                    {'long_unnormalized', 'short_unnormalized', 'Normalized Peak Position', 2, true}
+                };
+                
+                for cond_idx = 1:length(peak_position_conditions)
+                    long_cond = peak_position_conditions{cond_idx}{1};
+                    short_cond = peak_position_conditions{cond_idx}{2};
+                    ylabel_str = peak_position_conditions{cond_idx}{3};
+                    subplot_idx = peak_position_conditions{cond_idx}{4};
+                    do_normalize = peak_position_conditions{cond_idx}{5};
+                    
+                    parameter_name = 'center';
+                    
+                    % Extract peak positions for all clusters
+                    long_amplitudes = nan(n_clusters, 1);
+                    short_amplitudes = nan(n_clusters, 1);
+                    long_valid = false(n_clusters, 1);
+                    short_valid = false(n_clusters, 1);
+                    
+                    for c = 1:n_clusters
+                        cluster_field = sprintf('cluster_%d', cluster_ids(c));
+                        
+                        if isfield(fit_results, cluster_field)
+                            % Long condition
+                            if isfield(fit_results.(cluster_field), long_cond)
+                                fit_data = fit_results.(cluster_field).(long_cond);
+                                if fit_data.fit_success && ~isnan(fit_data.(parameter_name)) && ...
+                                   ~isnan(fit_data.r_squared) && fit_data.r_squared >= r_squared_threshold
+                                    pos = fit_data.(parameter_name);
+                                    pos = max(0, min(120, pos));
+                                    
+                                    if do_normalize
+                                        pos = pos / 120;
+                                        pos = max(0, min(1, pos));
+                                    end
+                                    
+                                    long_amplitudes(c) = pos;
+                                    long_valid(c) = true;
+                                end
+                            end
+                            
+                            % Short condition
+                            if isfield(fit_results.(cluster_field), short_cond)
+                                fit_data = fit_results.(cluster_field).(short_cond);
+                                if fit_data.fit_success && ~isnan(fit_data.(parameter_name)) && ...
+                                   ~isnan(fit_data.r_squared) && fit_data.r_squared >= r_squared_threshold
+                                    pos = fit_data.(parameter_name);
+                                    pos = pos + 60;  % Shift short trials to absolute positions
+                                    pos = max(60, min(120, pos));
+                                    
+                                    if do_normalize
+                                        pos = (pos - 60) / 60;
+                                        pos = max(0, min(1, pos));
+                                    end
+                                    
+                                    short_amplitudes(c) = pos;
+                                    short_valid(c) = true;
+                                end
+                            end
+                        end
+                    end
+                    
+                    has_any_data = long_valid | short_valid;
+                    n_to_plot = sum(has_any_data);
+                    
+                    if n_to_plot > 0
+                        % Create subplot
+                        subplot(1, 2, subplot_idx, 'Parent', fig_peak_comparison);
+                        hold on;
+                        
+                        % Generate jitter
+                        rng(42);
+                        jitter = (rand(n_clusters, 1) - 0.5) * 2 * jitter_amount;
+                        
+                        x_long = 1;
+                        x_short = 2;
+                        
+                        % Plot connecting lines
+                        for c = 1:n_clusters
+                            if long_valid(c) && short_valid(c)
+                                plot([x_long + jitter(c), x_short + jitter(c)], ...
+                                     [long_amplitudes(c), short_amplitudes(c)], ...
+                                     '-', 'Color', [0.5 0.5 0.5 line_alpha], 'LineWidth', 1);
+                            end
+                        end
+                        
+                        % Plot points
+                        for c = 1:n_clusters
+                            if ~has_any_data(c)
+                                continue;
+                            end
+                            
+                            if long_valid(c) && short_valid(c)
+                                color = [0.2 0.4 0.8];
+                            elseif long_valid(c)
+                                color = [0.3 0.7 0.9];
+                            else
+                                color = [0.9 0.5 0.2];
+                            end
+                            
+                            if long_valid(c)
+                                scatter(x_long + jitter(c), long_amplitudes(c), point_size, color, 'filled', ...
+                                        'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
+                            end
+                            
+                            if short_valid(c)
+                                scatter(x_short + jitter(c), short_amplitudes(c), point_size, color, 'filled', ...
+                                        'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
+                                text(x_short + jitter(c) + 0.08, short_amplitudes(c), sprintf('%d', cluster_ids(c)), ...
+                                     'FontSize', 8, 'VerticalAlignment', 'middle', 'HorizontalAlignment', 'left');
+                            end
+                        end
+                        
+                        xlim([0.5, 2.8]);
+                        xticks([x_long, x_short]);
+                        xticklabels({'Long', 'Short'});
+                        ylabel(ylabel_str);
+                        title(strrep(long_cond, '_', ' '));
+                        grid on;
+                        
+                        if subplot_idx == 1
+                            ylim([0, 120]);
+                            yline(60, '--k', 'LineWidth', 1.5, 'Alpha', 0.5);
+                        else
+                            ylim([0, 1]);
+                            ylabel('Normalized Peak Position (0-1, fraction of track length)');
+                        end
+                        
+                        % Add legend to first subplot
+                        if subplot_idx == 1
+                            legend_entries = {};
+                            legend_colors = {};
+                            if any(long_valid & short_valid)
+                                legend_entries{end+1} = 'Both conditions';
+                                legend_colors{end+1} = [0.2 0.4 0.8];
+                            end
+                            if any(long_valid & ~short_valid)
+                                legend_entries{end+1} = 'Long only';
+                                legend_colors{end+1} = [0.3 0.7 0.9];
+                            end
+                            if any(~long_valid & short_valid)
+                                legend_entries{end+1} = 'Short only';
+                                legend_colors{end+1} = [0.9 0.5 0.2];
+                            end
+                            
+                            if ~isempty(legend_entries)
+                                legend_handles = [];
+                                for i = 1:length(legend_entries)
+                                    legend_handles(i) = scatter(NaN, NaN, point_size, legend_colors{i}, 'filled', ...
+                                                               'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
+                                end
+                                legend(legend_handles, legend_entries, 'Location', 'best');
+                            end
+                        end
+                        
+                        hold off;
+                    end
+                end
+                
+                sgtitle(sprintf('Gaussian Peak Position Comparison - %s', probe_ids{pid}), 'FontSize', 14, 'FontWeight', 'bold');
+                ctl.figs.save_fig_to_join();
+            end
+            
+            % Save fit results to MAT file
+            % This saves:
+            %   1) Gaussian fit parameters (amplitude, center, sigma, R², success) for all clusters/conditions
+            %   2) Median firing rates across position bins for all clusters
+            %   3) Bin centers for each condition
+            if ~isempty(fit_results)
+                fprintf('  Saving Gaussian fit results to MAT file...\n');
+                
+                % Organize data for saving
+                gaussian_fits = struct();
+                gaussian_fits.probe_id = probe_ids{pid};
+                gaussian_fits.cluster_ids = cluster_ids';
+                
+                % Store fit parameters in organized structure
+                gaussian_fits.fits = struct();
+                for c = 1:n_clusters
+                    cluster_id = cluster_ids(c);
+                    cluster_field = sprintf('cluster_%d', cluster_id);
+                    
+                    if isfield(fit_results, cluster_field)
+                        gaussian_fits.fits.(cluster_field) = struct();
+                        
+                        for cond = {'long_unnormalized', 'long_normalized', 'short_unnormalized', 'short_normalized'}
+                            condition = cond{1};
+                            if isfield(fit_results.(cluster_field), condition)
+                                res = fit_results.(cluster_field).(condition);
+                                gaussian_fits.fits.(cluster_field).(condition) = struct();
+                                gaussian_fits.fits.(cluster_field).(condition).amplitude = res.amplitude;
+                                gaussian_fits.fits.(cluster_field).(condition).center = res.center;
+                                gaussian_fits.fits.(cluster_field).(condition).sigma = res.sigma;
+                                gaussian_fits.fits.(cluster_field).(condition).r_squared = res.r_squared;
+                                gaussian_fits.fits.(cluster_field).(condition).fit_success = res.fit_success;
+                                gaussian_fits.fits.(cluster_field).(condition).median_firing_rate = res.median_firing_rate;
+                                gaussian_fits.fits.(cluster_field).(condition).bin_centers = res.bin_centers;
+                                if isfield(res, 'error_message')
+                                    gaussian_fits.fits.(cluster_field).(condition).error_message = res.error_message;
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                % Save to MAT file
+                mat_path = fullfile(ctl.figs.curr_dir, sprintf('%s_spatial_tuning_fits.mat', probe_ids{pid}));
+                save(mat_path, 'gaussian_fits', '-v7.3');
+                fprintf('    Saved spatial tuning fits to: %s\n', mat_path);
             end
         end
     end
