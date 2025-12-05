@@ -1,4 +1,4 @@
-% Plot spatial firing rate profile for each cluster using position as x-axis
+ % Plot spatial firing rate profile for each cluster using position as x-axis
 % For experiment group 'training_running', bin position into 2-cm bins,
 % normalize spike counts by occupancy, and smooth with a Gaussian kernel (8-cm s.d.)
 %
@@ -62,6 +62,11 @@ plot_single_cluster_fig = true;
 plot_heatmp_cluster_fig = true;
 re_run_analysis         = false;  % Set to true to recompute all metrics, false to load cached data
 
+% Parallel processing configuration
+use_parallel            = true;   % Set to false to disable parallel processing entirely
+max_workers             = 4;      % Maximum number of parallel workers (reduce if running out of memory)
+                                  % Recommended: 2-4 for laptops, 4-8 for desktops with 16GB+ RAM
+
 
 % Analysis parameters
 bin_size_cm = 2;
@@ -93,7 +98,7 @@ ctl.setup_figures(figure_dir, save_figs);
 fprintf('Found %d probe(s) for experiment group(s): %s\n', length(probe_ids), strjoin(experiment_groups, ', '));
 
 
-for pid = 1:length(probe_ids)
+for pid = 5:length(probe_ids)
     fprintf('\nProcessing probe %d/%d: %s\n', pid, length(probe_ids), probe_ids{pid});
     
     % Define cache file path
@@ -247,9 +252,26 @@ for pid = 1:length(probe_ids)
         end
 
         % --- Compute spatial firing rate profiles for all clusters ---
-        fprintf('  Computing spatial firing rate profiles for %d clusters (parallelized)...\n', n_clusters);
+        if use_parallel
+            % Initialize or get existing parallel pool with limited workers
+            current_pool = gcp('nocreate');
+            if isempty(current_pool)
+                fprintf('  Starting parallel pool with %d workers...\n', max_workers);
+                parpool('local', max_workers);
+            elseif current_pool.NumWorkers ~= max_workers
+                fprintf('  Restarting parallel pool with %d workers (was %d)...\n', max_workers, current_pool.NumWorkers);
+                delete(current_pool);
+                parpool('local', max_workers);
+            else
+                fprintf('  Using existing parallel pool with %d workers\n', current_pool.NumWorkers);
+            end
+            fprintf('  Computing spatial firing rate profiles for %d clusters (parallelized)...\n', n_clusters);
+        else
+            fprintf('  Computing spatial firing rate profiles for %d clusters (sequential - parallel disabled)...\n', n_clusters);
+        end
         
-        parfor c = 1:n_clusters
+        if use_parallel
+            parfor c = 1:n_clusters
             cluster = clusters(c);
             
             for g = 1:2
@@ -555,6 +577,277 @@ for pid = 1:length(probe_ids)
                 %         isSpatiallyTuned, reasonStr, infoObs, pVal, peakRate, peakPosition);
             end
             end
+        end
+        else
+            % Sequential processing (no parallel pool)
+            for c = 1:n_clusters
+            cluster = clusters(c);
+            
+            for g = 1:2
+                group = group_names{g};
+                trials_struct = trial_groups.(group);
+            
+            % Use pre-calculated bin information
+            if strcmp(group, 'long')
+                edges = edges_long;
+                bin_centers = bin_centers_long;
+                n_bins = n_bins_long;
+                plot_bin_centers = plot_bin_centers_long;
+            else
+                edges = edges_short;
+                bin_centers = bin_centers_short;
+                n_bins = n_bins_short;
+                plot_bin_centers = plot_bin_centers_short;
+            end
+            
+            % --- Compute trial-by-trial firing rates using helper function ---
+            n_trials = length(trials_struct);
+            rate_per_trial = nan(n_trials, n_bins);
+            occ_per_trial = nan(n_trials, n_bins);
+            vel_per_trial = nan(n_trials, n_bins);
+            count_per_trial = nan(n_trials, n_bins);  % Store spike counts
+            spike_positions_per_trial = cell(n_trials, 1);  % For raster plots
+            global_trial_indices = zeros(n_trials, 1);  % Store global trial order
+            
+            for k = 1:n_trials
+                trial = trials_struct(k).trial;
+                global_trial_indices(k) = trials_struct(k).global_trial_idx;  % Store global index
+                [rate, occ, vel, counts] = compute_trial_firing_rate(trial, cluster, edges);
+                rate_per_trial(k, :) = rate;
+                occ_per_trial(k, :) = occ;
+                vel_per_trial(k, :) = vel;
+                count_per_trial(k, :) = counts;
+                
+                % Get spike positions for position-based raster plot (motion only)
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                tvec = trial.probe_t(motion_mask);
+                if ~isempty(pos) && ~isempty(tvec)
+                    st = cluster.spike_times;
+                    spike_mask = st >= tvec(1) & st <= tvec(end);
+                    st_in_trial = st(spike_mask);
+                    if ~isempty(st_in_trial)
+                        spike_pos = interp1(tvec, pos, st_in_trial, 'linear');
+                        spike_positions_per_trial{k} = spike_pos(:)';
+                    else
+                        spike_positions_per_trial{k} = [];
+                    end
+                else
+                    spike_positions_per_trial{k} = [];
+                end
+                    
+            end
+            
+            % Smooth spike counts and occupancy separately, then compute rates
+            % This is more mathematically sound than smoothing rates directly
+            count_per_trial_smooth = nan(n_trials, n_bins);
+            occ_per_trial_smooth = nan(n_trials, n_bins);
+            rate_per_trial_smooth = nan(n_trials, n_bins);
+            
+            for k = 1:n_trials
+                % Smooth counts and occupancy
+                count_per_trial_smooth(k, :) = smooth_spatial_rate(count_per_trial(k, :), bin_size_cm, gauss_sigma_cm);
+                occ_per_trial_smooth(k, :) = smooth_spatial_rate(occ_per_trial(k, :), bin_size_cm, gauss_sigma_cm);
+                
+                % Compute smoothed rate from smoothed counts and occupancy
+                rate_per_trial_smooth(k, :) = count_per_trial_smooth(k, :) ./ occ_per_trial_smooth(k, :);
+                rate_per_trial_smooth(k, isnan(rate_per_trial_smooth(k, :)) | isinf(rate_per_trial_smooth(k, :))) = 0;
+            end
+            
+            % Compute quartiles from SMOOTHED trial data
+            Q1_from_smoothed = prctile(rate_per_trial_smooth, 25, 1);
+            Q2_from_smoothed = prctile(rate_per_trial_smooth, 50, 1);  % Median
+            Q3_from_smoothed = prctile(rate_per_trial_smooth, 75, 1);
+            
+            % Compute mean across trials using smoothed counts/occupancy approach
+            mean_count_smooth = nanmean(count_per_trial_smooth, 1);
+            mean_occ_smooth = nanmean(occ_per_trial_smooth, 1);
+            mean_rate_smooth = mean_count_smooth ./ mean_occ_smooth;
+            mean_rate_smooth(isnan(mean_rate_smooth) | isinf(mean_rate_smooth)) = 0;
+            
+            % Compute POOLED trial rate: sum all counts/occupancy, then smooth
+            % This is for comparison with the _identification script approach
+            pooled_count = nansum(count_per_trial, 1);
+            pooled_occ = nansum(occ_per_trial, 1);
+            pooled_count_smooth = smooth_spatial_rate(pooled_count, bin_size_cm, gauss_sigma_cm);
+            pooled_occ_smooth = smooth_spatial_rate(pooled_occ, bin_size_cm, gauss_sigma_cm);
+            rate_pooled = pooled_count_smooth ./ pooled_occ_smooth;
+            rate_pooled(isnan(rate_pooled) | isinf(rate_pooled)) = 0;
+            
+            % Compute mean occupancy and velocity across trials
+            mean_occupancy = nanmean(occ_per_trial, 1);
+            mean_velocity = nanmean(vel_per_trial, 1);
+            
+            % --- Store results in plain arrays (not structures, for compatibility) ---
+            if strcmp(group, 'long')
+                rate_smooth_long(c, :) = mean_rate_smooth;
+                Q1_rate_smooth_long(c, :) = Q1_from_smoothed;
+                Q2_rate_smooth_long(c, :) = Q2_from_smoothed;
+                Q3_rate_smooth_long(c, :) = Q3_from_smoothed;
+                avg_velocity_long(c, :) = mean_velocity;
+                occ_long(c, :) = mean_occupancy;
+                rate_per_trial_long{c} = rate_per_trial;
+                rate_per_trial_smooth_long{c} = rate_per_trial_smooth;
+                spike_positions_long{c} = spike_positions_per_trial;
+                global_trial_indices_long{c} = global_trial_indices;
+                rate_pooled_long(c, :) = rate_pooled;
+            else
+                rate_smooth_short(c, :) = mean_rate_smooth;
+                Q1_rate_smooth_short(c, :) = Q1_from_smoothed;
+                Q2_rate_smooth_short(c, :) = Q2_from_smoothed;
+                Q3_rate_smooth_short(c, :) = Q3_from_smoothed;
+                avg_velocity_short(c, :) = mean_velocity;
+                occ_short(c, :) = mean_occupancy;
+                rate_per_trial_short{c} = rate_per_trial;
+                rate_per_trial_smooth_short{c} = rate_per_trial_smooth;
+                spike_positions_short{c} = spike_positions_per_trial;
+                global_trial_indices_short{c} = global_trial_indices;
+                rate_pooled_short(c, :) = rate_pooled;
+            end
+            
+            % --- Perform statistical analysis on median firing rate ---
+            if run_statistics
+                % Count total spikes across all trials in this group
+                n_spikes_group = nansum(count_per_trial(:));
+                
+                % Check minimum spike count
+                if n_spikes_group < minSpikes
+                    if strcmp(group, 'long')
+                        stats_isSpatiallyTuned_long(c) = false;
+                        stats_reason_long{c} = 'insufficient_spikes';
+                        stats_n_spikes_long(c) = n_spikes_group;
+                        stats_info_long(c) = NaN;
+                        stats_pVal_long(c) = NaN;
+                        stats_infoNull_long{c} = [];
+                        stats_peakRate_long(c) = NaN;
+                        stats_peakPosition_long(c) = NaN;
+                        stats_fieldBins_long(c) = NaN;
+                        stats_numFields_long(c) = NaN;
+                        stats_fieldStart_long(c) = NaN;
+                        stats_fieldEnd_long(c) = NaN;
+                    else
+                        stats_isSpatiallyTuned_short(c) = false;
+                        stats_reason_short{c} = 'insufficient_spikes';
+                        stats_n_spikes_short(c) = n_spikes_group;
+                        stats_info_short(c) = NaN;
+                        stats_pVal_short(c) = NaN;
+                        stats_infoNull_short{c} = [];
+                        stats_peakRate_short(c) = NaN;
+                        stats_peakPosition_short(c) = NaN;
+                        stats_fieldBins_short(c) = NaN;
+                        stats_numFields_short(c) = NaN;
+                        stats_fieldStart_short(c) = NaN;
+                        stats_fieldEnd_short(c) = NaN;
+                    end
+                    continue;
+                end
+                
+                % Use median of smoothed trials as the rate map for statistical testing
+                median_rate_smooth = Q2_from_smoothed;
+                median_occ_smooth = nanmean(occ_per_trial_smooth, 1);
+                
+                % Compute Skaggs information on median rate
+                infoObs = skaggs_info(median_rate_smooth, median_occ_smooth);
+                
+                % Bin-shuffle test (analogous to velocity tuning in ShuffleTuning.m)
+                % Shuffles all rate matrix values to break trial-bin associations
+                infoNull = compute_shuffled_spatial_info(rate_per_trial_smooth, median_occ_smooth, nShuf);
+                
+                % Compute p-value
+                pVal = (sum(infoNull >= infoObs) + 1) / (nShuf + 1);
+            else
+                % Skip statistical tests
+                n_spikes_group = NaN;
+                infoObs = NaN;
+                pVal = NaN;
+            end
+            
+            % Peak detection and field analysis on median rate
+            if run_statistics
+                median_rate_smooth = Q2_from_smoothed;
+                [peakRate, peakIdx] = max(median_rate_smooth);
+                peakPosition = bin_centers(peakIdx);
+        
+                minRate = min(median_rate_smooth);
+                maxRate = max(median_rate_smooth);
+                thresh = minRate + fieldFrac * (maxRate - minRate);
+                above = find(median_rate_smooth >= thresh);
+                
+                if isempty(above)
+                    longestField = 0;
+                    numFields = 0;
+                    fieldStart = NaN;
+                    fieldEnd = NaN;
+                else
+                    d = diff(above);
+                    breaks = [0, find(d > 1), length(above)];
+                    numFields = length(breaks) - 1;
+                    segLens = zeros(numFields, 1);
+                    segStarts = zeros(numFields, 1);
+                    segEnds = zeros(numFields, 1);
+                    for k = 1:numFields
+                        seg = above(breaks(k)+1:breaks(k+1));
+                        segLens(k) = length(seg);
+                        segStarts(k) = seg(1);
+                        segEnds(k) = seg(end);
+                    end
+                    [longestField, longestIdx] = max(segLens);
+                    fieldStartIdx = segStarts(longestIdx);
+                    fieldEndIdx = segEnds(longestIdx);
+                    fieldStart = bin_centers(fieldStartIdx) - bin_size_cm/2;
+                    fieldEnd = bin_centers(fieldEndIdx) + bin_size_cm/2;
+                end
+                
+                % Classification logic
+                isSpatiallyTuned = (pVal < pThresh) && (longestField >= minFieldBins) && ...
+                          (numFields <= maxNumFields) && (peakRate >= minPeakRate);
+                
+                reasonStr = 'passes';
+                if ~isSpatiallyTuned
+                    if pVal >= pThresh
+                        reasonStr = 'info_not_significant';
+                    elseif peakRate < minPeakRate
+                        reasonStr = 'low_peak';
+                    elseif longestField < minFieldBins
+                        reasonStr = 'small_field';
+                    elseif numFields > maxNumFields
+                        reasonStr = 'multiple_fields';
+                    end
+                end
+                
+                % Store statistical results
+                if strcmp(group, 'long')
+                    stats_isSpatiallyTuned_long(c) = isSpatiallyTuned;
+                    stats_reason_long{c} = reasonStr;
+                    stats_n_spikes_long(c) = n_spikes_group;
+                    stats_info_long(c) = infoObs;
+                    stats_pVal_long(c) = pVal;
+                    stats_infoNull_long{c} = infoNull;
+                    stats_peakRate_long(c) = peakRate;
+                    stats_peakPosition_long(c) = peakPosition;
+                    stats_fieldBins_long(c) = longestField;
+                    stats_numFields_long(c) = numFields;
+                    stats_fieldStart_long(c) = fieldStart;
+                    stats_fieldEnd_long(c) = fieldEnd;
+                else
+                    stats_isSpatiallyTuned_short(c) = isSpatiallyTuned;
+                    stats_reason_short{c} = reasonStr;
+                    stats_n_spikes_short(c) = n_spikes_group;
+                    stats_info_short(c) = infoObs;
+                    stats_pVal_short(c) = pVal;
+                    stats_infoNull_short{c} = infoNull;
+                    stats_peakRate_short(c) = peakRate;
+                    stats_peakPosition_short(c) = peakPosition;
+                    stats_fieldBins_short(c) = longestField;
+                    stats_numFields_short(c) = numFields;
+                    stats_fieldStart_short(c) = fieldStart;
+                    stats_fieldEnd_short(c) = fieldEnd;
+                end
+                
+                fprintf('    Cluster %d/%d, %s: isSpatiallyTuned=%d, reason=%s\n', c, n_clusters, group, isSpatiallyTuned, reasonStr);
+            end
+            end
+        end
         end
         
         % --- Reassemble structures from plain arrays after parfor ---
@@ -914,8 +1207,20 @@ for pid = 1:length(probe_ids)
         end
         % Removed sgtitle to avoid overlap with FigureTitle
         
-        % Add figure title with cleaner formatting
+        % Adjust subplot positions BEFORE adding title to create significant space at top
+        all_axes = findall(fig_heatmaps, 'Type', 'axes');
+        for ax_idx = 1:length(all_axes)
+            ax = all_axes(ax_idx);
+            pos = get(ax, 'Position');
+            % Shift all plots down to make room at top for title
+            pos(4) = pos(4) * 0.82;  % Reduce height to 82% 
+            pos(2) = max(0.08, pos(2) - 0.03);  % Lower the bottom position
+            set(ax, 'Position', pos);
+        end
+        
+        % Add figure title after adjusting subplot positions
         FigureTitle(fig_heatmaps, sprintf('Heatmaps - %s', probe_ids{pid}));
+        
         ctl.figs.save_fig_to_join();
         
         % --- Plot spatially tuned clusters with Gaussian fits in 2x3 grid ---
@@ -961,14 +1266,14 @@ for pid = 1:length(probe_ids)
                 
                 % --- Create 2x3 grid plot ---
                 fprintf('  Creating 2x3 grid visualization of spatially tuned clusters...\n');
-                fig_grid = figure('Position', [100, 100, 1200, 800], 'PaperPositionMode', 'auto');
+                fig_grid = figure('Position', [100, 100, 1200, 900], 'PaperPositionMode', 'auto');
                 
                 % Define Gaussian fit function
                 gauss_fit = @(p, x) p(1) * exp(-((x - p(2)).^2) / (2 * p(3)^2));
                 options = optimset('Display', 'off');
                 
                 % Row 1, Column 1: Long trials (unnormalized)
-                subplot(3, 4, [1, 2], 'Parent', fig_grid);  % Row 1, spanning columns 1-2 of 4
+                subplot('Position', [0.08, 0.72, 0.38, 0.20], 'Parent', fig_grid);  % Row 1, left half
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -979,8 +1284,9 @@ for pid = 1:length(probe_ids)
                     bin_centers_long = all_bin_centers_by_group.long;
                     median_rate_long = all_Q2_rate_smooth_by_group.long(c, :);
                     
-                    % Plot original median
-                    plot(bin_centers_long, median_rate_long, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot original median with reduced alpha
+                    h = plot(bin_centers_long, median_rate_long, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Fit and plot Gaussian if tuned in long
                     if isfield(spatial_tuning_stats.(cluster_field), 'long') && spatial_tuning_stats.(cluster_field).long.isSpatiallyTuned
@@ -1008,7 +1314,7 @@ for pid = 1:length(probe_ids)
                 hold off;
                 
                 % Row 1, Column 2: Long trials (normalized)
-                subplot(3, 4, [3, 4], 'Parent', fig_grid);  % Row 1, spanning columns 3-4 of 4
+                subplot('Position', [0.54, 0.72, 0.38, 0.20], 'Parent', fig_grid);  % Row 1, right half
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -1028,8 +1334,9 @@ for pid = 1:length(probe_ids)
                         median_rate_norm = zeros(size(median_rate_long));
                     end
                     
-                    % Plot normalized median
-                    plot(bin_centers_long, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot normalized median with reduced alpha
+                    h = plot(bin_centers_long, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Fit and plot normalized Gaussian if tuned in long
                     if isfield(spatial_tuning_stats.(cluster_field), 'long') && spatial_tuning_stats.(cluster_field).long.isSpatiallyTuned
@@ -1057,8 +1364,8 @@ for pid = 1:length(probe_ids)
                 ylim([0, 1]);
                 hold off;
                 
-                % Row 2, Column 1: Short trials (unnormalized, 60-120 cm)
-                subplot(3, 4, 6, 'Parent', fig_grid);
+                % Row 2, Column 2: Short trials (unnormalized, 60-120 cm) - 60% width in position 2
+                subplot('Position', [0.23, 0.42, 0.23, 0.20], 'Parent', fig_grid);  % Row 2, position 2 (40% gap + 60% plot)
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -1069,8 +1376,9 @@ for pid = 1:length(probe_ids)
                     bin_centers_short = all_bin_centers_by_group.short;
                     median_rate_short = all_Q2_rate_smooth_by_group.short(c, :);
                     
-                    % Plot original median
-                    plot(bin_centers_short, median_rate_short, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot original median with reduced alpha
+                    h = plot(bin_centers_short, median_rate_short, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Fit and plot Gaussian if tuned in short
                     if isfield(spatial_tuning_stats.(cluster_field), 'short') && spatial_tuning_stats.(cluster_field).short.isSpatiallyTuned
@@ -1097,8 +1405,8 @@ for pid = 1:length(probe_ids)
                 xlim([60, 120]);
                 hold off;
                 
-                % Row 2, Column 2: Short trials (normalized, 60-120 cm)
-                subplot(3, 4, 7, 'Parent', fig_grid);
+                % Row 2, Column 4: Short trials (normalized, 60-120 cm) - 60% width in position 4
+                subplot('Position', [0.69, 0.42, 0.23, 0.20], 'Parent', fig_grid);  % Row 2, position 4 (40% gap + 60% plot)
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -1118,8 +1426,9 @@ for pid = 1:length(probe_ids)
                         median_rate_norm = zeros(size(median_rate_short));
                     end
                     
-                    % Plot normalized median
-                    plot(bin_centers_short, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot normalized median with reduced alpha
+                    h = plot(bin_centers_short, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Fit and plot normalized Gaussian if tuned in short
                     if isfield(spatial_tuning_stats.(cluster_field), 'short') && spatial_tuning_stats.(cluster_field).short.isSpatiallyTuned
@@ -1148,7 +1457,7 @@ for pid = 1:length(probe_ids)
                 hold off;
                 
                 % Row 3, Column 1: Short trials with percentage x-axis (data unchanged, spans full width)
-                subplot(3, 4, [9, 10], 'Parent', fig_grid);  % Row 3, spanning columns 1-2 of 4
+                subplot('Position', [0.08, 0.12, 0.38, 0.20], 'Parent', fig_grid);  % Row 3, left half
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -1162,8 +1471,9 @@ for pid = 1:length(probe_ids)
                     % Convert position to percentage (60cm=0%, 120cm=100%)
                     bin_centers_percent = (bin_centers_short - 60) / 60 * 100;
                     
-                    % Plot original data with percentage x-axis
-                    plot(bin_centers_percent, median_rate_short, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot original data with percentage x-axis and reduced alpha
+                    h = plot(bin_centers_percent, median_rate_short, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Plot Gaussian with SAME fit as row 2, just converted to percentage x-axis
                     if isfield(spatial_tuning_stats.(cluster_field), 'short') && spatial_tuning_stats.(cluster_field).short.isSpatiallyTuned
@@ -1194,7 +1504,7 @@ for pid = 1:length(probe_ids)
                 hold off;
                 
                 % Row 3, Column 2: Short trials normalized with percentage x-axis (data unchanged, spans full width)
-                subplot(3, 4, [11, 12], 'Parent', fig_grid);  % Row 3, spanning columns 3-4 of 4
+                subplot('Position', [0.54, 0.12, 0.38, 0.20], 'Parent', fig_grid);  % Row 3, right half
                 hold on;
                 for i = 1:n_tuned
                     c = spatially_tuned_sorted(i);
@@ -1217,8 +1527,9 @@ for pid = 1:length(probe_ids)
                         median_rate_norm = zeros(size(median_rate_short));
                     end
                     
-                    % Plot normalized data with percentage x-axis
-                    plot(bin_centers_percent, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    % Plot normalized data with percentage x-axis and reduced alpha
+                    h = plot(bin_centers_percent, median_rate_norm, 'o-', 'Color', color, 'LineWidth', 1.5, 'MarkerSize', 3, 'DisplayName', sprintf('C%d', cluster_id));
+                    h.Color(4) = 0.6;  % Set alpha to 0.6
                     
                     % Plot Gaussian with SAME fit as row 2, just normalized and converted to percentage
                     if isfield(spatial_tuning_stats.(cluster_field), 'short') && spatial_tuning_stats.(cluster_field).short.isSpatiallyTuned
@@ -1249,11 +1560,29 @@ for pid = 1:length(probe_ids)
                 ylim([0, 1]);
                 hold off;
                 
+                % Adjust subplot positions BEFORE adding title
+                % All subplots were positioned manually, so adjust them to create top space
+                all_axes = findall(fig_grid, 'Type', 'axes');
+                for ax_idx = 1:length(all_axes)
+                    ax = all_axes(ax_idx);
+                    pos = get(ax, 'Position');
+                    % Move all plots down by reducing top position
+                    pos(4) = pos(4) * 0.88;  % Reduce height 
+                    pos(2) = pos(2) * 0.85;  % Scale down vertical position to compress towards bottom
+                    set(ax, 'Position', pos);
+                end
+                
+                % Add figure title after adjusting positions
                 FigureTitle(fig_grid, sprintf('Spatial Tuning Grid - %s', probe_ids{pid}));
+                
                 ctl.figs.save_fig_to_join();
             else
                 fprintf('    No spatially tuned clusters found. Skipping plot.\n');
             end
+            
+            % --- Generate 3D visualization ---
+            fprintf('  Generating 3D spatial tuning visualization...\n');
+            spatial_firing_rate_profile_3d;
         end
         
         % Save statistics text summary

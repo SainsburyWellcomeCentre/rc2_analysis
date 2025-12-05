@@ -440,23 +440,32 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     
     % Overall figure title (replace underscores with spaces to prevent subscript rendering)
     probe_id_display = strrep(probe_id, '_', ' ');
-    % Create title using annotation instead of sgtitle for better positioning control
-    annotation('textbox', [0, 0.985, 1, 0.015], 'String', sprintf('Cluster %d - %s', cluster_id, probe_id_display), ...
+    
+    % ALWAYS adjust subplot positions BEFORE adding title to create adequate space at top
+    % This is critical for proper appearance when saved to PDF
+    all_axes = findall(fig, 'Type', 'axes');
+    for ax_idx = 1:length(all_axes)
+        ax = all_axes(ax_idx);
+        pos = get(ax, 'Position');
+        if ~isempty(stats)
+            % With statistics: compress plots more to fit title, plots, and text
+            pos(4) = pos(4) * 0.70;  % Reduce height significantly
+            pos(2) = pos(2) + 0.20;  % Move up to make room for text at bottom
+        else
+            % Without statistics: create substantial top margin for title
+            pos(4) = pos(4) * 0.82;  % Reduce height by 18%
+            pos(2) = pos(2) * 0.75;  % Scale down vertical position to compress towards bottom
+        end
+        set(ax, 'Position', pos);
+    end
+    
+    % Create title using annotation positioned at top with adequate margin below
+    annotation('textbox', [0, 0.94, 1, 0.06], 'String', sprintf('Cluster %d - %s', cluster_id, probe_id_display), ...
                'FontWeight', 'bold', 'FontSize', 12, 'HorizontalAlignment', 'center', ...
                'EdgeColor', 'none', 'VerticalAlignment', 'middle');
     
     %% Bottom row: Statistical test results (if available)
     if ~isempty(stats)
-        % Adjust all subplot positions to move them higher and create more space at bottom
-        all_axes = findall(fig, 'Type', 'axes');
-        for ax_idx = 1:length(all_axes)
-            ax = all_axes(ax_idx);
-            pos = get(ax, 'Position');
-            % Move plots up by reducing bottom margin and reducing height
-            pos(2) = pos(2) + 0.18;  % Move up significantly to make room for title
-            pos(4) = pos(4) * 0.75;  % Reduce height more to fit between title and text
-            set(ax, 'Position', pos);
-        end
         
         % Create text annotation panel spanning bottom row
         subplot(4, 4, [13, 14, 15, 16]);
