@@ -2,9 +2,8 @@
 % These tables are required by any script calling `load_tuning_curves_acceleration`
 
 
-
-experiment_groups = {'passive_same_luminance'};
-trial_group_labels = {'T_Vstatic'};
+experiment_groups    = {'ambient_light'};
+trial_group_labels   = {'RT'};
 
 ctl                  = RC2Analysis();
 

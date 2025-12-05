@@ -1,8 +1,8 @@
 % Create tuning curve tables for velocity. 
 % These tables are required by any script calling `load_tuning_curves`.
 
-experiment_groups    = {'darkness', 'mismatch_darkness_oct21'};%, 'mismatch_nov20', 'mismatch_jul21', };
-trial_group_labels   = {{'RT', 'R', {'T_bank', 'T_RT', 'T_R'}}, {'R', 'T', 'RT_gain_up'}};
+experiment_groups    = {'ambient_light'};
+trial_group_labels   = {'RT'};
 
 ctl                  = RC2Analysis();
 
