@@ -18,7 +18,7 @@ function info = skaggs_info(rateMap, occupancy)
 %   where:
 %       p_i  = probability of occupying bin i (normalized occupancy)
 %       λ_i  = firing rate in bin i
-%       λ    = mean firing rate (weighted by occupancy)
+%       λ    = overall mean firing rate (total spikes / total time)
 %
 %   Reference:
 %       Skaggs, W. E., McNaughton, B. L., Gothard, K. M., & Markus, E. J. (1993).
@@ -33,8 +33,9 @@ function info = skaggs_info(rateMap, occupancy)
     % Normalize occupancy to probability
     p_i = occupancy / sum(occupancy);
     
-    % Mean firing rate (weighted by occupancy)
-    lam = sum(p_i .* rateMap);
+    % Overall mean firing rate (total spikes / total time)
+    % Since rateMap = spikes/occupancy, we can recover total spikes
+    lam = sum(rateMap .* occupancy) / sum(occupancy);
     
     % Avoid log(0) and division by zero
     mask = (rateMap > 0) & (p_i > 0) & (lam > 0);

@@ -13,7 +13,7 @@ function infoNull = compute_shuffled_spatial_info(rate_per_trial_smooth, occ_smo
 %
 %   Inputs:
 %       rate_per_trial_smooth - (n_trials × n_bins) smoothed firing rates per trial
-%       occ_smooth            - (1 × n_bins) average occupancy across trials
+%       occ_smooth            - (1 × n_bins) total occupancy across trials
 %       nShuf                 - number of shuffles to perform
 %
 %   Output:

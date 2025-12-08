@@ -335,16 +335,16 @@ classdef SpatialTuningAnalyzer < handle
                 return;
             end
             
-            % Use median rate for testing
-            median_rate_smooth = rate_data.Q2_smooth;
-            median_occ_smooth = nanmean(spike_data.occ_per_trial_smooth, 1);
+            % Use median rate and total occupancy for testing
+            median_rate_smooth = nanmedian(spike_data.rate_per_trial_smooth, 1);
+            total_occ_smooth = nansum(spike_data.occ_per_trial_smooth, 1);
             
             % Compute Skaggs information
-            infoObs = skaggs_info(median_rate_smooth, median_occ_smooth);
+            infoObs = skaggs_info(median_rate_smooth, total_occ_smooth);
             
             % Bin-shuffle test
             infoNull = compute_shuffled_spatial_info(...
-                spike_data.rate_per_trial_smooth, median_occ_smooth, obj.stats_params.nShuf);
+                spike_data.rate_per_trial_smooth, total_occ_smooth, obj.stats_params.nShuf);
             
             % Compute p-value
             pVal = (sum(infoNull >= infoObs) + 1) / (obj.stats_params.nShuf + 1);
