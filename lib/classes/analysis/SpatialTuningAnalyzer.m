@@ -269,14 +269,6 @@ classdef SpatialTuningAnalyzer < handle
             mean_rate_smooth = mean_count_smooth ./ mean_occ_smooth;
             mean_rate_smooth(isnan(mean_rate_smooth) | isinf(mean_rate_smooth)) = 0;
             
-            % Compute pooled trial rate
-            pooled_count = nansum(count_per_trial, 1);
-            pooled_occ = nansum(occ_per_trial, 1);
-            pooled_count_smooth = smooth_spatial_rate(pooled_count, obj.bin_size_cm, obj.gauss_sigma_cm);
-            pooled_occ_smooth = smooth_spatial_rate(pooled_occ, obj.bin_size_cm, obj.gauss_sigma_cm);
-            rate_pooled = pooled_count_smooth ./ pooled_occ_smooth;
-            rate_pooled(isnan(rate_pooled) | isinf(rate_pooled)) = 0;
-            
             % Compute mean occupancy and velocity
             mean_occupancy = nanmean(occ_per_trial, 1);
             mean_velocity = nanmean(vel_per_trial, 1);
@@ -288,8 +280,7 @@ classdef SpatialTuningAnalyzer < handle
                 'Q2_smooth', Q2_smooth, ...
                 'Q3_smooth', Q3_smooth, ...
                 'avg_velocity', mean_velocity, ...
-                'occupancy', mean_occupancy, ...
-                'rate_pooled', rate_pooled);
+                'occupancy', mean_occupancy);
             
             spike_data = struct(...
                 'rate_per_trial', rate_per_trial, ...
@@ -427,7 +418,6 @@ classdef SpatialTuningAnalyzer < handle
                     'Q3_smooth', nan(n_clusters, n_bins), ...
                     'avg_velocity', nan(n_clusters, n_bins), ...
                     'occupancy', nan(n_clusters, n_bins), ...
-                    'rate_pooled', nan(n_clusters, n_bins), ...
                     'rate_per_trial', {cell(n_clusters, 1)}, ...
                     'rate_per_trial_smooth', {cell(n_clusters, 1)}, ...
                     'spike_positions', {cell(n_clusters, 1)}, ...
@@ -455,7 +445,6 @@ classdef SpatialTuningAnalyzer < handle
                     obj.firing_rates.(group).Q3_smooth(c, :) = result.(group).Q3_smooth;
                     obj.firing_rates.(group).avg_velocity(c, :) = result.(group).avg_velocity;
                     obj.firing_rates.(group).occupancy(c, :) = result.(group).occupancy;
-                    obj.firing_rates.(group).rate_pooled(c, :) = result.(group).rate_pooled;
                     
                     % Store per-trial data
                     obj.firing_rates.(group).rate_per_trial{c} = result.(group).rate_per_trial;
@@ -507,8 +496,7 @@ classdef SpatialTuningAnalyzer < handle
                 'rate_per_trial', obj.firing_rates.(group).rate_per_trial{cluster_idx}, ...
                 'rate_per_trial_smooth', obj.firing_rates.(group).rate_per_trial_smooth{cluster_idx}, ...
                 'spike_positions', obj.firing_rates.(group).spike_positions{cluster_idx}, ...
-                'global_trial_indices', obj.firing_rates.(group).global_trial_indices{cluster_idx}, ...
-                'rate_pooled', obj.firing_rates.(group).rate_pooled(cluster_idx, :));
+                'global_trial_indices', obj.firing_rates.(group).global_trial_indices{cluster_idx});
         end
         
         function stats = get_cluster_stats(obj, cluster_id, group)
@@ -763,7 +751,6 @@ classdef SpatialTuningAnalyzer < handle
             all_rate_per_trial_smooth_by_group = struct();
             all_spike_positions_by_group = struct();
             all_global_trial_indices_by_group = struct();
-            all_rate_pooled_by_group = struct();
             
             for g = 1:2
                 group = obj.group_names{g};
@@ -778,7 +765,6 @@ classdef SpatialTuningAnalyzer < handle
                 all_rate_per_trial_smooth_by_group.(group) = obj.firing_rates.(group).rate_per_trial_smooth;
                 all_spike_positions_by_group.(group) = obj.firing_rates.(group).spike_positions;
                 all_global_trial_indices_by_group.(group) = obj.firing_rates.(group).global_trial_indices;
-                all_rate_pooled_by_group.(group) = obj.firing_rates.(group).rate_pooled;
             end
             
             spatial_tuning_stats = obj.tuning_stats;
@@ -795,7 +781,6 @@ classdef SpatialTuningAnalyzer < handle
                  'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
                  'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
                  'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
-                 'all_rate_pooled_by_group', ...
                  'spatial_tuning_stats', ...
                  'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
                  'bin_size_cm', 'gauss_sigma_cm', '-v7.3');
@@ -821,7 +806,6 @@ classdef SpatialTuningAnalyzer < handle
                 obj.firing_rates.(group).rate_per_trial_smooth = loaded_vars.all_rate_per_trial_smooth_by_group.(group);
                 obj.firing_rates.(group).spike_positions = loaded_vars.all_spike_positions_by_group.(group);
                 obj.firing_rates.(group).global_trial_indices = loaded_vars.all_global_trial_indices_by_group.(group);
-                obj.firing_rates.(group).rate_pooled = loaded_vars.all_rate_pooled_by_group.(group);
             end
             
             obj.cluster_ids = loaded_vars.cluster_ids;

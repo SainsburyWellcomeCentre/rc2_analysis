@@ -7,9 +7,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %   Creates a 2-row, 4-column figure showing:
 %       Row 1:
 %           - Panel 1: Combined position-based raster for both long and short trials
-%           - Panel 2: Smoothed traces with median and IQR shading, plus pooled rate (dashed)
+%           - Panel 2: Smoothed traces with median and IQR shading
 %           - Panel 3: Shuffle distribution histograms (long trials top, short trials bottom)
-%           - Panel 4: X-normalized comparison with percentage x-axis, plus pooled rate (dashed)
+%           - Panel 4: X-normalized comparison with percentage x-axis
 %       Row 2:
 %           - Panel 5: Speed tuning curve (combined long+short trials)
 %           - Panel 6: Speed tuning shuffle histogram
@@ -29,7 +29,6 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %                              .rate_per_trial (raw rates, n_trials x n_bins)
 %                              .rate_per_trial_smooth (smoothed rates, n_trials x n_bins)
 %                              .spike_positions (cell array of spike positions per trial)
-%                              .rate_pooled (pooled trial rate: smooth(sum(counts))/smooth(sum(occ)))
 %       group_names        - Cell array {'long', 'short'}
 %       group_labels       - Cell array with descriptive labels for legend
 %       group_colors       - Struct with RGB colors for each group
@@ -135,11 +134,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             if ~isempty(trial_data.spike_positions)
                 % Plot vertical bars instead of dots
                 for s = 1:length(trial_data.spike_positions)
-                    % Adjust position for short trials (shift by 60 cm)
+                    % Short trial spike positions are already in the 60-120 cm range
+                    % (they're stored in absolute coordinates), so NO shift is needed
                     pos = trial_data.spike_positions(s);
-                    if strcmp(trial_data.group, 'short')
-                        pos = pos + 60;
-                    end
                     plot([pos, pos], ...
                          [t-0.4, t+0.4], 'Color', trial_data.color, 'LineWidth', 1);
                 end
@@ -196,13 +193,6 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         % Plot median (Q2) as thick solid line
         plot(bin_centers, Q2_smooth, '-', 'LineWidth', 2.5, 'Color', color, ...
              'HandleVisibility', 'off');
-        
-        % Plot pooled rate as thick dashed line if available
-        if isfield(rate_data.(group), 'rate_pooled')
-            rate_pooled = rate_data.(group).rate_pooled;
-            plot(bin_centers, rate_pooled, '--', 'LineWidth', 2.5, 'Color', color, ...
-                 'HandleVisibility', 'off');
-        end
         
     end
     
@@ -444,20 +434,6 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         % Plot median as solid line
         plot(x_percent, Q2_i, '-', 'LineWidth', 2, 'Color', color, ...
              'HandleVisibility', 'off');
-        
-        % Plot pooled rate as dashed line if available
-        if isfield(rate_data.(group), 'rate_pooled')
-            rate_pooled = rate_data.(group).rate_pooled(:);
-            idx_pooled = isfinite(pos_norm) & isfinite(rate_pooled);
-            
-            if sum(idx_pooled) >= 2
-                pos_n_pooled = pos_norm(idx_pooled);
-                rate_pooled_n = rate_pooled(idx_pooled);
-                rate_pooled_i = interp1(pos_n_pooled, rate_pooled_n, x_norm, 'linear', 'extrap');
-                plot(x_percent, rate_pooled_i, '--', 'LineWidth', 2, 'Color', color, ...
-                     'HandleVisibility', 'off');
-            end
-        end
     end
     
     % Compute correlation between long and short medians
@@ -750,7 +726,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             
             hold(ax_vel_long, 'off');
             colormap(ax_vel_long, 'jet');
-            caxis(ax_vel_long, [cmin, cmax]);
+            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+                caxis(ax_vel_long, [cmin, cmax]);
+            end
             set(gca, 'Color', [1 1 1]);
             
             xlabel('Position (cm)');
@@ -807,7 +785,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             
             hold(ax_vel_short, 'off');
             colormap(ax_vel_short, 'jet');
-            caxis(ax_vel_short, [cmin, cmax]);
+            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+                caxis(ax_vel_short, [cmin, cmax]);
+            end
             set(gca, 'Color', [1 1 1]);
             
             xlabel('Position (cm)');
@@ -864,7 +844,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             
             hold(ax_accel_long, 'off');
             colormap(ax_accel_long, 'jet');
-            caxis(ax_accel_long, [cmin, cmax]);
+            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+                caxis(ax_accel_long, [cmin, cmax]);
+            end
             set(gca, 'Color', [1 1 1]);
             
             xlabel('Position (cm)');
@@ -921,7 +903,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             
             hold(ax_accel_short, 'off');
             colormap(ax_accel_short, 'jet');
-            caxis(ax_accel_short, [cmin, cmax]);
+            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+                caxis(ax_accel_short, [cmin, cmax]);
+            end
             set(gca, 'Color', [1 1 1]);
             
             xlabel('Position (cm)');

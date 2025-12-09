@@ -18,25 +18,30 @@ function fig = plot_distribution_comparison_contingency(dist_comparison_results,
 %   Outputs:
 %       fig - Figure handle
 
-    n_clusters = length(cluster_ids);
+    n_clusters_total = length(cluster_ids);
     
     % Initialize contingency table
     % Rows: Absolute (1=Same, 2=Different)
     % Cols: Relative (1=Same, 2=Different)
     contingency = zeros(2, 2);
     
-    % Classify each cluster
-    abs_labels = cell(n_clusters, 1);
-    rel_labels = cell(n_clusters, 1);
+    % Classify each cluster (only spatially tuned clusters have non-empty results)
+    abs_labels = cell(n_clusters_total, 1);
+    rel_labels = cell(n_clusters_total, 1);
+    n_spatially_tuned = 0;
     
-    for c = 1:n_clusters
+    for c = 1:n_clusters_total
         comp = dist_comparison_results{c};
         
         if isempty(comp)
+            % Skip non-spatially tuned clusters
             abs_labels{c} = 'NA';
             rel_labels{c} = 'NA';
             continue;
         end
+        
+        % Count this as a spatially tuned cluster
+        n_spatially_tuned = n_spatially_tuned + 1;
         
         % Absolute position comparison
         if isfield(comp, 'absolute') && isstruct(comp.absolute) && ...
@@ -97,8 +102,8 @@ function fig = plot_distribution_comparison_contingency(dist_comparison_results,
         end
     end
     
-    % Add title with probe ID
-    title(sprintf('Distribution Comparison: %s (n=%d clusters)', probe_id, n_clusters), ...
+    % Add title with probe ID (showing only spatially tuned clusters)
+    title(sprintf('Distribution Comparison: %s (n=%d spatially tuned clusters)', probe_id, n_spatially_tuned), ...
           'FontSize', 16, 'FontWeight', 'bold');
     
     % Add subtitle explaining the contingency table
