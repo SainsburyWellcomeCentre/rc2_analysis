@@ -119,6 +119,12 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
         end
     end
     
+    % Calculate global max firing rate for absolute firing rate plots (unnormalized)
+    % This ensures both long and short unnormalized plots have the same z-axis limit
+    max_rate_long = max(all_Q2_rate_smooth_by_group.long(spatially_tuned_sorted, :), [], 'all');
+    max_rate_short = max(all_Q2_rate_smooth_by_group.short(spatially_tuned_sorted, :), [], 'all');
+    global_max_rate = max(max_rate_long, max_rate_short);
+    
     % Helper function to plot 3D subplot and collect fit results
     function plot_3d_subplot(subplot_pos, bin_centers, rates, trial_type, normalize, x_lim, title_str)
         subplot(2, 2, subplot_pos, 'Parent', fig_3d);
@@ -237,6 +243,9 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
         ylim([0.5, n_tuned + 0.5]);
         if normalize
             zlim([0, 1]);
+        else
+            % Use global max for unnormalized plots to ensure same scale
+            zlim([0, global_max_rate]);
         end
         view([45, 35]);
         yticks(1:n_tuned);

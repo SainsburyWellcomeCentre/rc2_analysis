@@ -87,18 +87,18 @@ function fig = plot_distribution_comparison_contingency(dist_comparison_results,
     colormap('gray');
     colorbar;
     
-    % Set axis labels
+    % Set axis labels (larger font sizes)
     set(gca, 'XTick', 1:2, 'XTickLabel', {'Same', 'Different'});
     set(gca, 'YTick', 1:2, 'YTickLabel', {'Same', 'Different'});
-    xlabel('Relative Position', 'FontSize', 14, 'FontWeight', 'bold');
-    ylabel('Absolute Position', 'FontSize', 14, 'FontWeight', 'bold');
+    xlabel('Relative Position', 'FontSize', 20, 'FontWeight', 'bold');
+    ylabel('Absolute Position', 'FontSize', 20, 'FontWeight', 'bold');
     
-    % Add count text to each cell
+    % Add count text to each cell (larger font size)
     for i = 1:2
         for j = 1:2
             text(j, i, sprintf('%d', contingency(i, j)), ...
                  'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                 'FontSize', 24, 'FontWeight', 'bold', 'Color', [0.2 0.5 1]);
+                 'FontSize', 48, 'FontWeight', 'bold', 'Color', [0.2 0.5 1]);
         end
     end
     
@@ -106,40 +106,7 @@ function fig = plot_distribution_comparison_contingency(dist_comparison_results,
     title(sprintf('Distribution Comparison: %s (n=%d spatially tuned clusters)', probe_id, n_spatially_tuned), ...
           'FontSize', 16, 'FontWeight', 'bold');
     
-    % Add subtitle explaining the contingency table
-    annotation('textbox', [0.15, 0.02, 0.7, 0.05], ...
-               'String', 'Comparing firing rate distributions: 2nd half of long trials (60-120cm) vs short trials', ...
-               'HorizontalAlignment', 'center', 'FontSize', 10, 'EdgeColor', 'none');
-    
-    % Compute and display summary statistics
-    total_valid = sum(contingency(:));
-    
-    if total_valid > 0
-        % Count cells
-        same_same = contingency(1, 1);
-        same_diff = contingency(1, 2);
-        diff_same = contingency(2, 1);
-        diff_diff = contingency(2, 2);
-        
-        % Create summary text
-        summary_str = sprintf(['Summary:\n' ...
-                              'Same/Same: %d (%.1f%%)\n' ...
-                              'Same/Different: %d (%.1f%%)\n' ...
-                              'Different/Same: %d (%.1f%%)\n' ...
-                              'Different/Different: %d (%.1f%%)'], ...
-                              same_same, 100*same_same/total_valid, ...
-                              same_diff, 100*same_diff/total_valid, ...
-                              diff_same, 100*diff_same/total_valid, ...
-                              diff_diff, 100*diff_diff/total_valid);
-        
-        annotation('textbox', [0.65, 0.60, 0.30, 0.30], ...
-                   'String', summary_str, ...
-                   'FontSize', 11, 'FontWeight', 'bold', ...
-                   'BackgroundColor', [1 1 0.9], 'EdgeColor', 'k', ...
-                   'VerticalAlignment', 'top');
-    end
-    
-    % Adjust axes for better display
+    % Adjust axes for better display (larger tick labels)
     axis square;
-    set(gca, 'FontSize', 12, 'FontWeight', 'bold');
+    set(gca, 'FontSize', 18, 'FontWeight', 'bold');
 end

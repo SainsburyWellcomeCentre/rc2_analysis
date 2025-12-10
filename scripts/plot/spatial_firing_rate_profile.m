@@ -33,8 +33,8 @@ figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
 re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
-plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
-plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
+plot_velocity_tuning     = false;   % Set to false to skip velocity tuning plots
+plot_acceleration_tuning = false;   % Set to false to skip acceleration tuning plots
 
 % Parallel processing configuration
 use_parallel            = true;   % Set to false to disable parallel processing entirely
@@ -68,7 +68,7 @@ ctl.setup_figures(figure_dir, save_figs);
 
 fprintf('Found %d probe(s) for experiment group(s): %s\n', length(probe_ids), strjoin(experiment_groups, ', '));
 
-for pid = 2:length(probe_ids)
+for pid = 1:length(probe_ids)
     fprintf('\nProcessing probe %d/%d: %s\n', pid, length(probe_ids), probe_ids{pid});
     
     % Define cache file path
@@ -546,7 +546,6 @@ for pid = 2:length(probe_ids)
             peak_positions(c) = bin_centers(max_idx);
         end
         [~, sort_idx] = sort(peak_positions);
-        sorted_cluster_ids = cluster_ids(sort_idx);
         
         % Determine significance for each cluster in each condition
         is_significant_long = false(n_clusters, 1);
@@ -584,75 +583,68 @@ for pid = 2:length(probe_ids)
                 is_sig = sorted_is_significant_short;
             end
             
-            % Raw heatmap
-            subplot(2, 2, g, 'Parent', fig_heatmaps);
-            imagesc(bin_centers, 1:n_clusters, sorted_rate_mat);
-            colormap('jet');
-            colorbar;
-            xlabel('Position (cm)');
-            ylabel('Cluster (sorted by maximum peak position)');
-            set(gca, 'YTick', 1:n_clusters, 'YTickLabel', sorted_cluster_ids);
-            
-            % Set x-axis limits to make short trials visually half width
-            if strcmp(group, 'short')
-                xlim([60, 120]);
-            else
-                xlim([0, 120]);
-            end
-            
-            % Normalized heatmap (min-max normalization) with gray for non-significant
+            % Min-max normalization
             min_vals = min(sorted_rate_mat, [], 2);
             max_vals = max(sorted_rate_mat, [], 2);
             norm_rate_mat = (sorted_rate_mat - min_vals) ./ (max_vals - min_vals);
             norm_rate_mat(isnan(norm_rate_mat) | isinf(norm_rate_mat)) = 0;
             
-            % Convert to grayscale for non-significant clusters
-            gray_norm_rate_mat = norm_rate_mat;
-            for c = 1:n_clusters
-                if ~is_sig(c)
-                    % Convert to grayscale by averaging the normalized values
-                    gray_norm_rate_mat(c, :) = mean(norm_rate_mat(c, :));
-                end
+            % Separate significant and non-significant clusters, PRESERVING the global sort order
+            % (already sorted by long peak position)
+            sig_rate_mat = norm_rate_mat(is_sig, :);
+            nonsig_rate_mat = norm_rate_mat(~is_sig, :);
+            n_sig = sum(is_sig);
+            n_nonsig = sum(~is_sig);
+            
+            % DO NOT re-sort within significant or non-significant groups
+            % The order from the global long-condition sorting is preserved
+            
+            % Significant clusters (colored) - Row 1
+            subplot(2, 2, g, 'Parent', fig_heatmaps);
+            if n_sig > 0
+                imagesc(bin_centers, 1:n_sig, sig_rate_mat);
+                colormap(gca, 'jet');
+            else
+                % Empty plot if no significant clusters
+                axis off;
+                text(0.5, 0.5, 'No significant clusters', 'Units', 'normalized', ...
+                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
             end
-            
-            subplot(2, 2, g+2, 'Parent', fig_heatmaps);
-            h = imagesc(bin_centers, 1:n_clusters, gray_norm_rate_mat);
-            
-            % Create custom colormap: jet for significant, gray for non-significant
-            jet_cmap = jet(256);
-            gray_cmap = repmat(linspace(0.5, 1, 256)', 1, 3); % Gray from dark to light
-            
-            % Apply colormap
-            colormap(gca, jet_cmap);
-            
-            % Manually set grayscale colors for non-significant clusters
-            hold on;
-            for c = 1:n_clusters
-                if ~is_sig(c)
-                    % Overlay a grayscale patch for this cluster
-                    gray_vals = norm_rate_mat(c, :);
-                    gray_rgb = repmat(0.5 + 0.5 * gray_vals, 3, 1)';
-                    
-                    % Create a patch for each bin in this cluster row
-                    n_bins = length(bin_centers);
-                    if strcmp(group, 'short')
-                        bin_width = (bin_centers(2) - bin_centers(1));
-                    else
-                        bin_width = (bin_centers(2) - bin_centers(1));
-                    end
-                    
-                    for b = 1:n_bins
-                        rectangle('Position', [bin_centers(b) - bin_width/2, c - 0.5, bin_width, 1], ...
-                                  'FaceColor', gray_rgb(b, :), 'EdgeColor', 'none');
-                    end
-                end
-            end
-            hold off;
-            
-            colorbar;
             xlabel('Position (cm)');
-            ylabel('Cluster (sorted by maximum peak position)');
-            set(gca, 'YTick', 1:n_clusters, 'YTickLabel', sorted_cluster_ids);
+            if g == 1
+                ylabel('Significant Clusters');
+            else
+                set(gca, 'YTickLabel', []);
+            end
+            set(gca, 'YTick', []);
+            
+            % Set x-axis limits
+            if strcmp(group, 'short')
+                xlim([60, 120]);
+            else
+                xlim([0, 120]);
+            end
+            title(group_labels{g});
+            
+            % Non-significant clusters (grayscale) - Row 2
+            subplot(2, 2, g+2, 'Parent', fig_heatmaps);
+            if n_nonsig > 0
+                % Show the actual spatial profile in grayscale
+                imagesc(bin_centers, 1:n_nonsig, nonsig_rate_mat);
+                colormap(gca, gray(256));
+            else
+                % Empty plot if no non-significant clusters
+                axis off;
+                text(0.5, 0.5, 'No non-significant clusters', 'Units', 'normalized', ...
+                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
+            end
+            xlabel('Position (cm)');
+            if g == 1
+                ylabel('Non-Significant Clusters');
+            else
+                set(gca, 'YTickLabel', []);
+            end
+            set(gca, 'YTick', []);
             
             % Set x-axis limits
             if strcmp(group, 'short')
@@ -662,11 +654,20 @@ for pid = 2:length(probe_ids)
             end
         end
         
-        % Adjust subplot positions BEFORE adding title
+        % Adjust subplot positions to make right column half width and reduce gap
         all_axes = findall(fig_heatmaps, 'Type', 'axes');
         for ax_idx = 1:length(all_axes)
             ax = all_axes(ax_idx);
             pos = get(ax, 'Position');
+            
+            % Determine if this is a left or right subplot
+            if pos(1) > 0.5  % Right column
+                pos(3) = pos(3) * 0.5;  % Make width half
+                pos(1) = 0.55;  % Reduce gap between columns (was pos(1) + pos(3) * 0.5)
+            else  % Left column
+                pos(3) = pos(3) * 1.05;  % Slightly increase left column width
+            end
+            
             pos(4) = pos(4) * 0.82;  % Reduce height
             pos(2) = max(0.08, pos(2) - 0.03);  % Lower position
             set(ax, 'Position', pos);
@@ -926,10 +927,13 @@ for pid = 2:length(probe_ids)
                     end
                 end
                 
+                % Also save distribution comparison results (KW tests)
+                gaussian_fits.dist_comparison_results = dist_comparison_results;
+                
                 % Save to MAT file
                 mat_path = fullfile(ctl.figs.curr_dir, sprintf('%s_spatial_tuning_fits.mat', probe_ids{pid}));
                 save(mat_path, 'gaussian_fits', '-v7.3');
-                fprintf('    Saved spatial tuning fits to: %s\n', mat_path);
+                fprintf('    Saved spatial tuning fits and KW comparisons to: %s\n', mat_path);
             end
         end
     end

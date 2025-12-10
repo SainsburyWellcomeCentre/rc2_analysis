@@ -128,17 +128,59 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         [~, sort_idx] = sort([all_trials_data.global_idx]);
         all_trials_data = all_trials_data(sort_idx);
         
-        % Plot trials in original order
+        % Define spatial bins for raster (use 2 cm bins from 0-120 cm)
+        spatial_bin_size = 2;  % cm
+        spatial_bin_edges = 0:spatial_bin_size:120;
+        spatial_bin_centers = spatial_bin_edges(1:end-1) + spatial_bin_size/2;
+        n_spatial_bins = length(spatial_bin_centers);
+        
+        % First pass: find global maximum spike count across all trials and bins
+        global_max_spike_count = 0;
         for t = 1:length(all_trials_data)
             trial_data = all_trials_data(t);
             if ~isempty(trial_data.spike_positions)
-                % Plot vertical bars instead of dots
-                for s = 1:length(trial_data.spike_positions)
-                    % Short trial spike positions are already in the 60-120 cm range
-                    % (they're stored in absolute coordinates), so NO shift is needed
-                    pos = trial_data.spike_positions(s);
-                    plot([pos, pos], ...
-                         [t-0.4, t+0.4], 'Color', trial_data.color, 'LineWidth', 1);
+                % Adjust spike positions for short trials (shift to 60-120 cm range)
+                spike_pos = trial_data.spike_positions;
+                if strcmp(trial_data.group, 'short')
+                    spike_pos = spike_pos + 60;
+                end
+                
+                % Bin spike positions for this trial
+                spike_counts = histcounts(spike_pos, spatial_bin_edges);
+                trial_max = max(spike_counts);
+                if trial_max > global_max_spike_count
+                    global_max_spike_count = trial_max;
+                end
+            end
+        end
+        
+        % Second pass: plot trials with normalization across all trials
+        for t = 1:length(all_trials_data)
+            trial_data = all_trials_data(t);
+            if ~isempty(trial_data.spike_positions)
+                % Adjust spike positions for short trials (shift to 60-120 cm range)
+                spike_pos = trial_data.spike_positions;
+                if strcmp(trial_data.group, 'short')
+                    spike_pos = spike_pos + 60;
+                end
+                
+                % Bin spike positions for this trial
+                spike_counts = histcounts(spike_pos, spatial_bin_edges);
+                
+                % Plot one vertical bar per bin, with thickness proportional to spike count
+                if global_max_spike_count > 0
+                    % Normalize spike counts to bar thickness (0 to 0.8 units) using global maximum
+                    normalized_counts = spike_counts / global_max_spike_count * 0.8;
+                    
+                    for b = 1:n_spatial_bins
+                        if spike_counts(b) > 0
+                            % Bar thickness proportional to spike count (normalized across all trials)
+                            bar_half_height = normalized_counts(b) / 2;
+                            plot([spatial_bin_centers(b), spatial_bin_centers(b)], ...
+                                 [t - bar_half_height, t + bar_half_height], ...
+                                 'Color', trial_data.color, 'LineWidth', 2);
+                        end
+                    end
                 end
             end
         end
