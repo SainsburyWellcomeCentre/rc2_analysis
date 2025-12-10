@@ -196,7 +196,6 @@ classdef SpatialTuningAnalyzer < handle
                 result.(group).Q3_smooth = rate_data.Q3_smooth;
                 result.(group).avg_velocity = rate_data.avg_velocity;
                 result.(group).occupancy = rate_data.occupancy;
-                result.(group).rate_pooled = rate_data.rate_pooled;
                 result.(group).rate_per_trial = spike_data.rate_per_trial;
                 result.(group).rate_per_trial_smooth = spike_data.rate_per_trial_smooth;
                 result.(group).spike_positions = spike_data.spike_positions;
