@@ -1,25 +1,30 @@
-function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison)
+function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison)
+%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data)
 %
-%   Creates a 2-row, 4-column figure showing:
+%   Creates a 4-row, 4-column figure showing:
 %       Row 1:
 %           - Panel 1: Combined position-based raster for both long and short trials
 %           - Panel 2: Smoothed traces with median and IQR shading
 %           - Panel 3: Shuffle distribution histograms (long trials top, short trials bottom)
 %           - Panel 4: X-normalized comparison with percentage x-axis
 %       Row 2:
-%           - Panel 5: Speed tuning curve (combined long+short trials)
-%           - Panel 6: Speed tuning shuffle histogram
-%           - Panel 7: Acceleration tuning curve (combined long+short trials)
-%           - Panel 8: Acceleration tuning shuffle histogram
+%           - Panel 5: Time-to-goal raster for both long and short trials
+%           - Panel 6: Time-to-goal firing rate with quartiles
+%           - Panel 7: (empty/reserved)
+%           - Panel 8: Normalized time-to-goal comparison
 %       Row 3:
-%           - Panel 9: Velocity × Position contour (long trials)
-%           - Panel 10: Velocity × Position contour (short trials)
-%           - Panel 11: Acceleration × Position contour (long trials)
-%           - Panel 12: Acceleration × Position contour (short trials)
+%           - Panel 9: Speed tuning curve (combined long+short trials)
+%           - Panel 10: Speed tuning shuffle histogram
+%           - Panel 11: Acceleration tuning curve (combined long+short trials)
+%           - Panel 12: Acceleration tuning shuffle histogram
+%       Row 4:
+%           - Panel 13: Velocity × Position contour (long trials)
+%           - Panel 14: Velocity × Position contour (short trials)
+%           - Panel 15: Acceleration × Position contour (long trials)
+%           - Panel 16: Acceleration × Position contour (short trials)
 %
 %   Inputs:
 %       cluster_id         - Numeric ID of the cluster
@@ -38,11 +43,15 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
 %       accel_tuning_data  - (Optional) Struct with acceleration tuning curve data (from data.load_tuning_curves_acceleration)
 %       rate_maps_2d       - (Optional) Struct with 2D rate maps for position×velocity and position×acceleration
 %       dist_comparison    - (Optional) Struct with distribution comparison results (.absolute and .relative)
+%       ttg_data           - (Optional) Struct with time-to-goal data per group
 %
 %   Outputs:
 %       fig - Figure handle
 
     % Handle missing arguments
+    if nargin < 13
+        ttg_data = [];
+    end
     if nargin < 8
         stats = [];
     end
@@ -59,7 +68,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         rate_maps_2d = [];
     end
 
-    fig = figure('Position', [50, 50, 2400, 1400], 'Visible', 'off');
+    fig = figure('Position', [50, 50, 2400, 1800], 'Visible', 'off');
     
     % Compute max firing rate as 120% of the third quartile across all data
     all_Q3_values = [];
@@ -83,7 +92,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 1 (col 1): Combined position-based raster for both long and short trials
-    subplot(3, 4, 1);
+    subplot(4, 4, 1);
     hold on;
     
     % Collect all trials with their global indices and group info
@@ -199,7 +208,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 2 (col 2): Smoothed traces with median and IQR shading
-    subplot(3, 4, 2);
+    subplot(4, 4, 2);
     hold on;
     
     for g = 1:length(group_names)
@@ -339,7 +348,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     %% Panel 3 (col 3): Shuffle distribution histograms combined in one vertical plot
     if ~isempty(stats)
         % Combined vertical histogram spanning the full column
-        subplot(3, 4, 3);
+        subplot(4, 4, 3);
         hold on;
         
         % Determine common x-axis range
@@ -421,7 +430,7 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     end
     
     %% Panel 4 (col 4): X-normalized comparison
-    subplot(3, 4, 4);
+    subplot(4, 4, 4);
     hold on;
     
     % Common normalized grid (0 to 1, displayed as 0% to 100%)
@@ -530,9 +539,322 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
     ylim([0, max_firing_rate]);
     set(gca, 'XTick', 0:10:100);
     
-    %% Panel 5 (row 2, col 1): Speed tuning curve
+    %% NEW ROW 2: Time-to-Goal Analysis
+    
+    %% Panel 5 (row 2, col 1): Normalized time-to-goal raster (0-100%)
+    if ~isempty(ttg_data)
+        subplot(4, 4, 5);
+        hold on;
+        
+        % Collect all trials with their global indices and group info
+        all_trials_ttg = [];
+        
+        % Collect long trials
+        if isfield(ttg_data, 'long') && isfield(ttg_data.long, 'spike_ttg_norm')
+            spike_ttg_norm = ttg_data.long.spike_ttg_norm;
+            global_indices = ttg_data.long.global_trial_indices;
+            n_long_trials = length(spike_ttg_norm);
+            color = group_colors.long;
+            
+            for t = 1:n_long_trials
+                all_trials_ttg = [all_trials_ttg; struct(...
+                    'global_idx', global_indices(t), ...
+                    'spike_ttg_norm', {spike_ttg_norm{t}}, ...
+                    'color', color, ...
+                    'group', 'long')]; %#ok<AGROW>
+            end
+        end
+        
+        % Collect short trials
+        if isfield(ttg_data, 'short') && isfield(ttg_data.short, 'spike_ttg_norm')
+            spike_ttg_norm = ttg_data.short.spike_ttg_norm;
+            global_indices = ttg_data.short.global_trial_indices;
+            n_short_trials = length(spike_ttg_norm);
+            color = group_colors.short;
+            
+            for t = 1:n_short_trials
+                all_trials_ttg = [all_trials_ttg; struct(...
+                    'global_idx', global_indices(t), ...
+                    'spike_ttg_norm', {spike_ttg_norm{t}}, ...
+                    'color', color, ...
+                    'group', 'short')]; %#ok<AGROW>
+            end
+        end
+        
+        % Sort by global trial index
+        if ~isempty(all_trials_ttg)
+            [~, sort_idx] = sort([all_trials_ttg.global_idx]);
+            all_trials_ttg = all_trials_ttg(sort_idx);
+            
+            % Get normalized TTG bin edges from data (0-100%)
+            ttg_bin_edges = ttg_data.long.bin_edges_norm;
+            ttg_bin_centers = ttg_data.long.bin_centers_norm;
+            n_ttg_bins = length(ttg_bin_centers);
+            
+            % First pass: find global maximum spike count across all trials and bins
+            global_max_spike_count = 0;
+            for t = 1:length(all_trials_ttg)
+                trial_data = all_trials_ttg(t);
+                if ~isempty(trial_data.spike_ttg_norm)
+                    spike_counts = histcounts(trial_data.spike_ttg_norm, ttg_bin_edges);
+                    trial_max = max(spike_counts);
+                    if trial_max > global_max_spike_count
+                        global_max_spike_count = trial_max;
+                    end
+                end
+            end
+            
+            % Second pass: plot trials with normalization
+            for t = 1:length(all_trials_ttg)
+                trial_data = all_trials_ttg(t);
+                if ~isempty(trial_data.spike_ttg_norm)
+                    % Bin spike TTG (normalized) for this trial
+                    spike_counts = histcounts(trial_data.spike_ttg_norm, ttg_bin_edges);
+                    
+                    % Plot one vertical bar per bin, with thickness proportional to spike count
+                    if global_max_spike_count > 0
+                        % Normalize spike counts to bar thickness (0 to 0.8 units)
+                        normalized_counts = spike_counts / global_max_spike_count * 0.8;
+                        
+                        for b = 1:n_ttg_bins
+                            if spike_counts(b) > 0
+                                bar_half_height = normalized_counts(b) / 2;
+                                plot([ttg_bin_centers(b), ttg_bin_centers(b)], ...
+                                     [t - bar_half_height, t + bar_half_height], ...
+                                     'Color', trial_data.color, 'LineWidth', 2);
+                            end
+                        end
+                    end
+                end
+            end
+            
+            set(gca, 'YDir', 'reverse', 'YLim', [0, length(all_trials_ttg)+1]);
+            if length(all_trials_ttg) > 1
+                set(gca, 'YTick', [1, length(all_trials_ttg)]);
+            end
+        end
+        
+        hold off;
+        xlabel('Time to goal (%)');
+        ylabel('Trial # (chronological)');
+        grid on;
+        xlim([0, 100]);
+        set(gca, 'XDir', 'reverse');  % Invert x-axis so 0 is on the right
+        set(gca, 'XTick', 0:20:100);
+    end
+    
+    %% Panel 6 (row 2, col 2): Time-to-goal firing rate with NORMALIZED binning (0-100%)
+    if ~isempty(ttg_data)
+        subplot(4, 4, 6);
+        hold on;
+        
+        % Compute firing rates binned by normalized time-to-goal for each group
+        for g = 1:length(group_names)
+            group = group_names{g};
+            
+            if ~isfield(ttg_data, group)
+                continue;
+            end
+            
+            spike_ttg_norm = ttg_data.(group).spike_ttg_norm;
+            bin_edges = ttg_data.(group).bin_edges_norm;  % 0-100%
+            bin_centers = ttg_data.(group).bin_centers_norm;
+            n_bins = length(bin_centers);
+            n_trials = length(spike_ttg_norm);
+            trial_durations = ttg_data.(group).trial_durations;  % Duration of each trial in seconds
+            
+            % Compute spike counts and occupancy per trial per bin
+            spike_counts_per_trial = nan(n_trials, n_bins);
+            occupancy_per_trial = nan(n_trials, n_bins);
+            
+            bin_width_percent = bin_edges(2) - bin_edges(1);  % e.g., 2.5%
+            
+            for t = 1:n_trials
+                if trial_durations(t) > 0
+                    % Bin duration in seconds for this trial
+                    bin_duration_sec = trial_durations(t) * (bin_width_percent / 100);
+                    
+                    % Compute spike counts
+                    if ~isempty(spike_ttg_norm{t})
+                        spike_counts_per_trial(t, :) = histcounts(spike_ttg_norm{t}, bin_edges);
+                    else
+                        spike_counts_per_trial(t, :) = 0;
+                    end
+                    
+                    % Occupancy: each bin has the same occupancy (bin_duration_sec) since we're
+                    % using normalized time - every trial covers 0-100%
+                    occupancy_per_trial(t, :) = bin_duration_sec;
+                end
+            end
+            
+            % Smooth spike counts and occupancy with Gaussian kernel
+            sigma_percent = 13;  % percent
+            sigma_bins = sigma_percent / bin_width_percent;
+            
+            spike_counts_smooth = zeros(size(spike_counts_per_trial));
+            occupancy_smooth = zeros(size(occupancy_per_trial));
+            
+            for t = 1:n_trials
+                spike_counts_smooth(t, :) = imgaussfilt(spike_counts_per_trial(t, :), sigma_bins, 'Padding', 'replicate');
+                occupancy_smooth(t, :) = imgaussfilt(occupancy_per_trial(t, :), sigma_bins, 'Padding', 'replicate');
+            end
+            
+            % Compute firing rate: smoothed spikes / smoothed occupancy
+            rate_per_trial_smooth = spike_counts_smooth ./ occupancy_smooth;
+            rate_per_trial_smooth(occupancy_smooth == 0) = nan;  % Avoid division by zero
+            
+            % Compute quartiles across trials
+            Q1_smooth = quantile(rate_per_trial_smooth, 0.25, 1);
+            Q2_smooth = quantile(rate_per_trial_smooth, 0.50, 1);  % Median
+            Q3_smooth = quantile(rate_per_trial_smooth, 0.75, 1);
+            
+            color = group_colors.(group);
+            
+            % Plot Q1-Q3 shaded area
+            fill_x = [bin_centers, fliplr(bin_centers)];
+            fill_y = [Q1_smooth, fliplr(Q3_smooth)];
+            fill(fill_x, fill_y, color, 'FaceAlpha', 0.2, 'EdgeColor', 'none', ...
+                 'HandleVisibility', 'off');
+            
+            % Plot individual smoothed trials as thin lines
+            for t = 1:n_trials
+                plot(bin_centers, rate_per_trial_smooth(t, :), '-', 'LineWidth', 0.5, 'Color', [color, 0.3], ...
+                     'HandleVisibility', 'off');
+            end
+            
+            % Plot median (Q2) as thick solid line
+            plot(bin_centers, Q2_smooth, '-', 'LineWidth', 2.5, 'Color', color, ...
+                 'HandleVisibility', 'off');
+        end
+        
+        hold off;
+        xlabel('Time to goal (%)');
+        ylabel('Firing rate (Hz)');
+        grid on;
+        xlim([0, 100]);
+        set(gca, 'XDir', 'reverse');  % Invert x-axis so 0 is on the right
+        set(gca, 'XTick', 0:20:100);
+    end
+    
+    %% Panel 7 (row 2, col 3): Skaggs information for normalized TTG
+    if ~isempty(ttg_data)
+        subplot(4, 4, 7);
+        hold on;
+        
+        % Determine common x-axis range for both groups
+        all_info = [];
+        
+        for g = 1:length(group_names)
+            group = group_names{g};
+            
+            if ~isfield(ttg_data, group) || ~isfield(ttg_data.(group), 'spike_ttg_norm')
+                continue;
+            end
+            
+            spike_ttg_norm = ttg_data.(group).spike_ttg_norm;
+            bin_edges = ttg_data.(group).bin_edges_norm;
+            bin_centers = ttg_data.(group).bin_centers_norm;
+            n_bins = length(bin_centers);
+            n_trials = length(spike_ttg_norm);
+            
+            % Compute rate matrix (trials x bins)
+            rate_matrix = nan(n_trials, n_bins);
+            for t = 1:n_trials
+                if ~isempty(spike_ttg_norm{t})
+                    spike_counts = histcounts(spike_ttg_norm{t}, bin_edges);
+                    rate_matrix(t, :) = spike_counts;
+                end
+            end
+            
+            % Compute mean rate across bins
+            mean_rate_per_bin = nanmean(rate_matrix, 1);
+            overall_mean_rate = nanmean(mean_rate_per_bin);
+            
+            % Compute occupancy (fraction of trials in each bin)
+            occupancy = sum(~isnan(rate_matrix), 1) / n_trials;
+            
+            % Compute Skaggs information
+            info_observed = 0;
+            for b = 1:n_bins
+                if occupancy(b) > 0 && mean_rate_per_bin(b) > 0 && overall_mean_rate > 0
+                    ratio = mean_rate_per_bin(b) / overall_mean_rate;
+                    info_observed = info_observed + occupancy(b) * ratio * log2(ratio);
+                end
+            end
+            
+            % Shuffle test (100 shuffles)
+            n_shuffles = 100;
+            info_shuffled = nan(n_shuffles, 1);
+            
+            for shuf = 1:n_shuffles
+                % Shuffle the rate matrix (break trial-bin associations)
+                rate_matrix_shuf = rate_matrix(:);
+                rate_matrix_shuf = rate_matrix_shuf(randperm(length(rate_matrix_shuf)));
+                rate_matrix_shuf = reshape(rate_matrix_shuf, size(rate_matrix));
+                
+                % Compute shuffled Skaggs info
+                mean_rate_shuf = nanmean(rate_matrix_shuf, 1);
+                overall_mean_shuf = nanmean(mean_rate_shuf);
+                
+                info_shuf = 0;
+                for b = 1:n_bins
+                    if occupancy(b) > 0 && mean_rate_shuf(b) > 0 && overall_mean_shuf > 0
+                        ratio = mean_rate_shuf(b) / overall_mean_shuf;
+                        info_shuf = info_shuf + occupancy(b) * ratio * log2(ratio);
+                    end
+                end
+                info_shuffled(shuf) = info_shuf;
+            end
+            
+            % Compute p-value
+            p_value = sum(info_shuffled >= info_observed) / n_shuffles;
+            
+            % Store for plotting
+            all_info = [all_info, info_shuffled(:)', info_observed];
+            
+            % Plot histogram
+            color = group_colors.(group);
+            [n_hist, ~] = histcounts(info_shuffled, 30);
+            edges_hist = linspace(min(info_shuffled), max(info_shuffled), 31);
+            bin_centers_hist = (edges_hist(1:end-1) + edges_hist(2:end)) / 2;
+            
+            bar(bin_centers_hist, n_hist, 'FaceColor', color, 'EdgeColor', 'none', ...
+                'FaceAlpha', 0.6, 'BarWidth', 0.8);
+            
+            % Mark observed value
+            y_obs = interp1(bin_centers_hist, n_hist, info_observed, 'linear', 0);
+            scatter(info_observed, y_obs, 100, color, 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+            
+            % Add p-value text
+            if strcmp(group, 'long')
+                text_y = 0.95;
+            else
+                text_y = 0.85;
+            end
+            
+            if p_value < 0.001
+                p_str = sprintf('%s: p < 0.001', group_labels{g});
+            else
+                p_str = sprintf('%s: p = %.3f', group_labels{g}, p_value);
+            end
+            text(0.98, text_y, p_str, 'Units', 'normalized', 'FontSize', 9, ...
+                 'Color', color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        end
+        
+        hold off;
+        xlabel('Skaggs Info (bits/spike)');
+        ylabel('Count');
+        grid on;
+        box off;
+    end
+    
+    %% Panel 8 (row 2, col 4): Empty (reserved for future use)
+    % Panels 5-7 in Row 2 show: normalized TTG raster, firing rate, and Skaggs info
+    % Panel 8 intentionally left empty - Row 2 uses only 3 columns
+    
+    %% Panel 9 (row 3, col 1): Speed tuning curve
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_tuning = subplot(3, 4, 5);
+        ax_tuning = subplot(4, 4, 9);
         
         % Extract tuning curve data
         fr = nanmean(tuning_data.tuning, 2);
@@ -592,9 +914,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         end
     end
     
-    %% Panel 6 (row 2, col 2): Speed tuning shuffle histogram
+    %% Panel 10 (row 3, col 2): Speed tuning shuffle histogram
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_hist = subplot(3, 4, 6);
+        ax_hist = subplot(4, 4, 10);
         
         % Create histogram of shuffled r values
         [n, c] = histcounts(tuning_data.shuffled.r_shuff, 50);
@@ -623,9 +945,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
-    %% Panel 7 (row 2, col 3): Acceleration tuning curve
+    %% Panel 11 (row 3, col 3): Acceleration tuning curve
     if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_tuning = subplot(3, 4, 7);
+        ax_accel_tuning = subplot(4, 4, 11);
         
         % Extract tuning curve data
         fr = nanmean(accel_tuning_data.tuning, 2);
@@ -685,9 +1007,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
         end
     end
     
-    %% Panel 8 (row 2, col 4): Acceleration tuning shuffle histogram
+    %% Panel 12 (row 3, col 4): Acceleration tuning shuffle histogram
     if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_hist = subplot(3, 4, 8);
+        ax_accel_hist = subplot(4, 4, 12);
         
         % Create histogram of shuffled r values
         [n, c] = histcounts(accel_tuning_data.shuffled.r_shuff, 50);
@@ -716,11 +1038,11 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
-    %% Row 3: 2D Contour Plots (Velocity × Position and Acceleration × Position)
+    %% Row 4: 2D Contour Plots (Velocity × Position and Acceleration × Position)
     if ~isempty(rate_maps_2d)
-        % Panel 9: Velocity × Position (long trials) with trial-based transparency
+        % Panel 13: Velocity × Position (long trials) with trial-based transparency
         if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
-            ax_vel_long = subplot(3, 4, 9);
+            ax_vel_long = subplot(4, 4, 13);
             hold(ax_vel_long, 'on');
             
             % Get bin edges and data
@@ -777,9 +1099,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             ylabel('Velocity (cm/s)');
         end
         
-        % Panel 10: Velocity × Position (short trials) with trial-based transparency
+        % Panel 14: Velocity × Position (short trials) with trial-based transparency
         if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
-            ax_vel_short = subplot(3, 4, 10);
+            ax_vel_short = subplot(4, 4, 14);
             hold(ax_vel_short, 'on');
             
             % Get bin edges and data
@@ -836,9 +1158,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             ylabel('Velocity (cm/s)');
         end
         
-        % Panel 11: Acceleration × Position (long trials) with trial-based transparency
+        % Panel 15: Acceleration × Position (long trials) with trial-based transparency
         if isfield(rate_maps_2d, 'accel_long') && ~isempty(rate_maps_2d.accel_long)
-            ax_accel_long = subplot(3, 4, 11);
+            ax_accel_long = subplot(4, 4, 15);
             hold(ax_accel_long, 'on');
             
             % Get bin edges and data
@@ -895,9 +1217,9 @@ function fig = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, ra
             ylabel('Accel (cm/s^2)');
         end
         
-        % Panel 12: Acceleration × Position (short trials) with trial-based transparency
+        % Panel 16: Acceleration × Position (short trials) with trial-based transparency
         if isfield(rate_maps_2d, 'accel_short') && ~isempty(rate_maps_2d.accel_short)
-            ax_accel_short = subplot(3, 4, 12);
+            ax_accel_short = subplot(4, 4, 16);
             hold(ax_accel_short, 'on');
             
             % Get bin edges and data

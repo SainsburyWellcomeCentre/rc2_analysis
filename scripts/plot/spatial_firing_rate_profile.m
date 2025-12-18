@@ -31,7 +31,7 @@ save_figs                = true;
 overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
-plot_heatmap_cluster_fig = true;
+plot_heatmap_cluster_fig = false;
 re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
 plot_velocity_tuning     = false;   % Set to false to skip velocity tuning plots
 plot_acceleration_tuning = false;   % Set to false to skip acceleration tuning plots
@@ -266,6 +266,252 @@ for pid = 1:length(probe_ids)
         FigureTitle(fig_profiles, sprintf('Average Profiles - %s', probe_ids{pid}));
         ctl.figs.save_fig_to_join();
     end
+    
+    % --- Compute and plot time-to-arrival estimates ---
+    if save_figs
+        fprintf('  Computing time-to-arrival estimates...\n');
+        
+        % Compute time-to-arrival for each trial in each group
+        tta_data = struct();
+        
+        for g = 1:2
+            group = group_names{g};
+            trials_struct = trial_groups.(group);
+            n_trials = length(trials_struct);
+            
+            % Goal position is 120cm for both groups (short trials run from 60-120cm)
+            goal_position = 120;  % cm
+            
+            % Store data for all trials
+            tta_data.(group).time_series = cell(n_trials, 1);
+            tta_data.(group).time_axis = cell(n_trials, 1);
+            tta_data.(group).position_series = cell(n_trials, 1);
+            tta_data.(group).tta_values = cell(n_trials, 1);
+            
+            for k = 1:n_trials
+                trial = trials_struct(k).trial;
+                motion_mask = trial.motion_mask();
+                
+                % Get position, velocity, and time during motion
+                pos = trial.position(motion_mask);
+                vel = trial.velocity(motion_mask);
+                time = trial.probe_t(motion_mask);
+                
+                if ~isempty(pos) && ~isempty(vel) && ~isempty(time)
+                    % Compute time-to-arrival: (goal - current_pos) / current_vel
+                    % Only compute where velocity > 0.1 cm/s to avoid division by very small numbers
+                    tta = nan(size(pos));
+                    valid_vel = vel > 0.1;
+                    tta(valid_vel) = (goal_position - pos(valid_vel)) ./ vel(valid_vel);
+                    
+                    % Cap unrealistic values (e.g., negative or very large)
+                    tta(tta < 0) = nan;  % Negative means moving away or past goal
+                    tta(tta > 60) = nan; % Cap at 60 seconds (unrealistically long)
+                    
+                    % Store data
+                    tta_data.(group).time_series{k} = tta;
+                    tta_data.(group).time_axis{k} = time - time(1);  % Normalize to start at 0
+                    tta_data.(group).position_series{k} = pos;
+                    tta_data.(group).tta_values{k} = tta;
+                end
+            end
+        end
+        
+        % Create combined figure with TTA plots (3 rows × 1 column)
+        fig_tta = ctl.figs.a4figure('landscape');
+        
+        % Plot 1: Time-to-arrival (constant velocity) vs Position - TOP
+        % FORMULA: TTA(x) = (x_goal - x) / v(x)
+        % For each sample at position x with velocity v, compute time assuming constant velocity
+        % Then bin by position and average within each bin
+        subplot(3, 1, 1, 'Parent', fig_tta);
+        hold on;
+        
+        for g = 1:2
+            group = group_names{g};
+            n_trials = length(tta_data.(group).position_series);
+            bin_centers = all_bin_centers_by_group.(group);
+            bin_edges = analyzer.bin_config.(group).edges;
+            n_bins = length(bin_centers);
+            
+            % Bin TTA values by position for each trial
+            tta_binned = nan(n_trials, n_bins);
+            
+            for k = 1:n_trials
+                pos = tta_data.(group).position_series{k};
+                tta_vals = tta_data.(group).tta_values{k};
+                
+                if ~isempty(pos) && ~isempty(tta_vals)
+                    for b = 1:n_bins
+                        in_bin = pos >= bin_edges(b) & pos < bin_edges(b+1);
+                        if sum(in_bin) > 0
+                            tta_binned(k, b) = nanmean(tta_vals(in_bin));
+                        end
+                    end
+                end
+            end
+            
+            % Plot individual trials
+            for k = 1:n_trials
+                if g == 1  % long trials - blue
+                    plot(bin_centers, tta_binned(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
+                else  % short trials - red
+                    plot(bin_centers, tta_binned(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
+                end
+            end
+            
+            % Compute and plot average
+            avg_tta_binned = nanmean(tta_binned, 1);
+            
+            if g == 1  % long trials - blue
+                plot(bin_centers, avg_tta_binned, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
+            else  % short trials - red
+                plot(bin_centers, avg_tta_binned, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
+            end
+        end
+        
+        hold off;
+        xlabel('Position (cm)');
+        ylabel('TTA - Const Vel (s)');
+        legend('show', 'Location', 'northeast');
+        grid on;
+        ylim([0 30]);
+        xlim([0 120]);
+        title('Constant Velocity TTA');
+        
+        % Plot 2: Histogram of Time-to-Goal Occupancy - MIDDLE
+        % Shows how much time animals spend at each TTG bin (to check for over-representation)
+        subplot(3, 1, 2, 'Parent', fig_tta);
+        hold on;
+        
+        % Define TTG bins (same as used in neural analysis)
+        ttg_bin_size = 0.25;  % 0.25s bins
+        max_ttg = 30;  % Show up to 30s
+        ttg_bin_edges = 0:ttg_bin_size:max_ttg;
+        ttg_bin_centers = ttg_bin_edges(1:end-1) + ttg_bin_size/2;
+        
+        for g = 1:2
+            group = group_names{g};
+            trials_struct = trial_groups.(group);
+            n_trials = length(trials_struct);
+            
+            % Collect all TTG samples across all trials
+            all_ttg_samples = [];
+            
+            for k = 1:n_trials
+                trial = trials_struct(k).trial;
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                time = trial.probe_t(motion_mask);
+                
+                if ~isempty(pos) && ~isempty(time) && length(time) > 1
+                    % For each sample, compute time-to-goal
+                    time_to_goal = time(end) - time;
+                    all_ttg_samples = [all_ttg_samples; time_to_goal(:)]; %#ok<AGROW>
+                end
+            end
+            
+            % Create histogram (occupancy in each TTG bin)
+            ttg_counts = histcounts(all_ttg_samples, ttg_bin_edges);
+            
+            % Convert to occupancy in seconds (total time spent in each bin)
+            % ttg_counts already represents total time in seconds
+            
+            % Plot
+            if g == 1  % long trials - blue
+                bar(ttg_bin_centers, ttg_counts, 'FaceColor', [0.5 0.5 1], 'EdgeColor', [0 0 0.8], ...
+                    'FaceAlpha', 0.6, 'BarWidth', 0.8, 'DisplayName', group_labels{g});
+            else  % short trials - red
+                bar(ttg_bin_centers, ttg_counts, 'FaceColor', [1 0.5 0.5], 'EdgeColor', [0.8 0 0], ...
+                    'FaceAlpha', 0.6, 'BarWidth', 0.8, 'DisplayName', group_labels{g});
+            end
+        end
+        
+        % Add horizontal dashed line at occupancy threshold
+        min_occupancy_threshold = 0.05;  % seconds
+        yline(min_occupancy_threshold, '--k', 'LineWidth', 1.5, 'DisplayName', 'Threshold (0.05s)');
+        
+        hold off;
+        xlabel('Time to Goal (s)');
+        ylabel('Occupancy (s)');
+        legend('show', 'Location', 'northeast');
+        grid on;
+        xlim([0 max_ttg]);
+        set(gca, 'XDir', 'reverse');  % Invert so 0 is on right (approaching goal)
+        title('Time-to-Goal Occupancy Distribution');
+        
+        % Plot 3: Time-to-goal (empirical) vs Position - BOTTOM
+        % FORMULA: TTG(x) = t_end - t(x)
+        % For each sample at position x and time t, compute actual time remaining to trial end
+        % Then bin by position and average within each bin
+        % This is the ground truth: actual time animals take from each position to goal
+        subplot(3, 1, 3, 'Parent', fig_tta);
+        hold on;
+        
+        for g = 1:2
+            group = group_names{g};
+            trials_struct = trial_groups.(group);
+            n_trials = length(trials_struct);
+            bin_centers = all_bin_centers_by_group.(group);
+            bin_edges = analyzer.bin_config.(group).edges;
+            n_bins = length(bin_centers);
+            
+            % Compute empirical time-to-goal: average actual time remaining from each position
+            time_to_goal_binned = nan(n_trials, n_bins);
+            
+            for k = 1:n_trials
+                trial = trials_struct(k).trial;
+                motion_mask = trial.motion_mask();
+                pos = trial.position(motion_mask);
+                time = trial.probe_t(motion_mask);
+                
+                if ~isempty(pos) && ~isempty(time) && length(time) > 1
+                    % For each sample, compute actual time remaining until end of trial
+                    time_to_goal = time(end) - time;
+                    
+                    % Bin the values
+                    for b = 1:n_bins
+                        in_bin = pos >= bin_edges(b) & pos < bin_edges(b+1);
+                        if sum(in_bin) > 0
+                            time_to_goal_binned(k, b) = nanmean(time_to_goal(in_bin));
+                        end
+                    end
+                end
+            end
+            
+            % Plot individual trials
+            for k = 1:n_trials
+                if g == 1  % long trials - blue
+                    plot(bin_centers, time_to_goal_binned(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
+                else  % short trials - red
+                    plot(bin_centers, time_to_goal_binned(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
+                end
+            end
+            
+            % Compute and plot average
+            avg_time_to_goal = nanmean(time_to_goal_binned, 1);
+            
+            if g == 1  % long trials - blue
+                plot(bin_centers, avg_time_to_goal, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
+            else  % short trials - red
+                plot(bin_centers, avg_time_to_goal, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
+            end
+        end
+        
+        hold off;
+        xlabel('Position (cm)');
+        ylabel('Time to Goal (s)');
+        legend('show', 'Location', 'northeast');
+        grid on;
+        ylim([0 30]);
+        xlim([0 120]);
+        title('Empirical Time to Goal');
+        
+        FigureTitle(fig_tta, sprintf('Time-to-Arrival Analysis - %s', probe_ids{pid}));
+        ctl.figs.save_fig_to_join();
+        
+        fprintf('  Time-to-arrival plots complete\n');
+    end
 
     % Determine session types based on actual trial data
     session_types = cell(length(sessions), 1);
@@ -499,10 +745,146 @@ for pid = 1:length(probe_ids)
             rate_maps_2d.pos_bin_edges_long = analyzer.bin_config.long.edges;
             rate_maps_2d.pos_bin_edges_short = analyzer.bin_config.short.edges;
             
+            % Compute time-to-goal data for each trial
+            ttg_data = struct();
+            ttg_bin_size = 0.25;  % 0.25s bins
+            
+            % First pass: find max TTG across all trials
+            max_ttg_observed = 0;
+            for g = 1:2
+                group = group_names{g};
+                trials = trial_groups.(group);
+                n_trials = length(trials);
+                
+                for t = 1:n_trials
+                    trial = trials(t).trial;
+                    trial_duration = trial.probe_t(end) - trial.probe_t(1);
+                    if trial_duration > max_ttg_observed
+                        max_ttg_observed = trial_duration;
+                    end
+                end
+            end
+            
+            % Round up to nearest second for initial binning
+            ttg_max_initial = ceil(max_ttg_observed);
+            
+            % Create initial bins to compute occupancy
+            ttg_bin_edges_initial = 0:ttg_bin_size:ttg_max_initial;
+            n_bins_initial = length(ttg_bin_edges_initial) - 1;
+            
+            % Second pass: compute occupancy in each TTG bin across all trials
+            total_occupancy = zeros(1, n_bins_initial);
+            
+            for g = 1:2
+                group = group_names{g};
+                trials = trial_groups.(group);
+                n_trials = length(trials);
+                
+                for t = 1:n_trials
+                    trial = trials(t).trial;
+                    motion_mask = trial.motion_mask();
+                    time = trial.probe_t(motion_mask);
+                    
+                    if ~isempty(time) && length(time) > 1
+                        % Compute time-to-goal for each time sample
+                        ttg_samples = time(end) - time;
+                        
+                        % Compute time spent in each bin (dt between samples)
+                        dt = [diff(time); 0];  % Time duration for each sample
+                        
+                        % Accumulate occupancy in each TTG bin
+                        for i = 1:length(ttg_samples)
+                            bin_idx = find(ttg_samples(i) >= ttg_bin_edges_initial(1:end-1) & ...
+                                          ttg_samples(i) < ttg_bin_edges_initial(2:end), 1);
+                            if ~isempty(bin_idx)
+                                total_occupancy(bin_idx) = total_occupancy(bin_idx) + dt(i);
+                            end
+                        end
+                    end
+                end
+            end
+            
+            % Find the maximum TTG where bins have at least 0.05s occupancy
+            min_occupancy_threshold = 0.05;  % seconds
+            valid_bins = find(total_occupancy >= min_occupancy_threshold);
+            
+            if ~isempty(valid_bins)
+                ttg_max = ttg_bin_edges_initial(max(valid_bins) + 1);  % Upper edge of last valid bin
+            else
+                % Fallback to full range if no bins meet threshold
+                ttg_max = ttg_max_initial;
+            end
+            
+            % Fixed binning (1s bins) up to occupancy-limited max
+            ttg_bin_edges = 0:ttg_bin_size:ttg_max;
+            ttg_bin_centers = ttg_bin_edges(1:end-1) + ttg_bin_size/2;
+            
+            % Adaptive binning (30 bins total, variable bin size)
+            n_adaptive_bins = 30;
+            ttg_bin_size_adaptive = ttg_max / n_adaptive_bins;
+            ttg_bin_edges_adaptive = 0:ttg_bin_size_adaptive:ttg_max;
+            ttg_bin_centers_adaptive = ttg_bin_edges_adaptive(1:end-1) + ttg_bin_size_adaptive/2;
+            
+            for g = 1:2
+                group = group_names{g};
+                trials = trial_groups.(group);
+                n_trials = length(trials);
+                
+                spike_ttg_all = cell(n_trials, 1);  % Time-to-goal for each spike (absolute)
+                spike_ttg_norm_all = cell(n_trials, 1);  % Time-to-goal normalized (0-100%)
+                trial_durations = zeros(n_trials, 1);  % Duration of each trial in seconds
+                global_indices = all_global_trial_indices_by_group.(group){c};
+                
+                for t = 1:n_trials
+                    trial = trials(t).trial;  % Extract the trial object from the struct
+                    
+                    % Get spike times for this cluster and trial
+                    all_spike_times = cluster.spike_times;
+                    trial_start = trial.probe_t(1);
+                    trial_end = trial.probe_t(end);
+                    trial_duration = trial_end - trial_start;
+                    trial_durations(t) = trial_duration;  % Store duration
+                    
+                    % Filter spike times within trial time window
+                    mask = all_spike_times >= trial_start & all_spike_times <= trial_end;
+                    spike_times = all_spike_times(mask);
+                    
+                    % Compute absolute time-to-goal for each spike: TTG = t_end - t_spike
+                    ttg_per_spike = trial_end - spike_times;
+                    
+                    % Compute normalized time-to-goal (0-100%): TTG_norm = TTG / trial_duration * 100
+                    ttg_norm_per_spike = (ttg_per_spike / trial_duration) * 100;
+                    
+                    % Keep only valid TTG values (0 to ttg_max) for absolute
+                    valid_idx = ttg_per_spike >= 0 & ttg_per_spike <= ttg_max;
+                    spike_ttg_all{t} = ttg_per_spike(valid_idx);
+                    
+                    % For normalized, keep all valid values (0-100%)
+                    valid_idx_norm = ttg_norm_per_spike >= 0 & ttg_norm_per_spike <= 100;
+                    spike_ttg_norm_all{t} = ttg_norm_per_spike(valid_idx_norm);
+                end
+                
+                % Store for this group - FIXED binning (absolute)
+                ttg_data.(group).spike_ttg = spike_ttg_all;
+                ttg_data.(group).global_trial_indices = global_indices;
+                ttg_data.(group).bin_edges = ttg_bin_edges;
+                ttg_data.(group).bin_centers = ttg_bin_centers;
+                ttg_data.(group).ttg_max = ttg_max;
+                
+                % Store for this group - NORMALIZED binning (0-100%)
+                n_norm_bins = 40;  % 40 bins = 2.5% per bin
+                ttg_norm_bin_edges = linspace(0, 100, n_norm_bins + 1);
+                ttg_norm_bin_centers = (ttg_norm_bin_edges(1:end-1) + ttg_norm_bin_edges(2:end)) / 2;
+                ttg_data.(group).spike_ttg_norm = spike_ttg_norm_all;
+                ttg_data.(group).bin_edges_norm = ttg_norm_bin_edges;
+                ttg_data.(group).bin_centers_norm = ttg_norm_bin_centers;
+                ttg_data.(group).trial_durations = trial_durations;  % Store trial durations for firing rate conversion
+            end
+            
             % Create combined figure using helper function
             fig_cluster = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
                                                        rate_data, group_names, group_labels, ...
-                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c});
+                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data);
             
             % Save using the figure management system
             if save_figs
