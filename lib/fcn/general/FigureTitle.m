@@ -44,12 +44,13 @@ classdef FigureTitle < handle
             VariableDefault('str', '');
             
             obj.h_fig = h_fig;
-            set(groot, 'CurrentFigure', obj.h_fig);
-            obj.h_ax = axes('position', [0, 0, 1, 1]);
+            % DO NOT set CurrentFigure - it can cause focus stealing
+            % set(groot, 'CurrentFigure', obj.h_fig);
+            obj.h_ax = axes('Parent', obj.h_fig, 'position', [0, 0, 1, 1]);
             
             axis off;
             set(obj.h_ax, 'xlim', [0, 1], 'ylim', [0, 1]);
-            obj.h_text = text(0.5, 0.97, str, 'horizontalalignment', 'center', 'interpreter', 'none', 'fontweight', 'bold', 'fontsize', 12);
+            obj.h_text = text(obj.h_ax, 0.5, 0.97, str, 'horizontalalignment', 'center', 'interpreter', 'none', 'fontweight', 'bold', 'fontsize', 12);
             
             obj.string = str;
             obj.y_position = 0.97;

@@ -15,16 +15,14 @@
 %   Spatial tuning significance is tested using a bin-shuffle approach analogous
 %   to velocity tuning in ShuffleTuning.m. The rate matrix (n_trials × n_bins) is
 %   completely shuffled to break trial-bin associations, and Skaggs information
-%   is computed on the shuffled data to create a null distribution.
+%   is computedromo on the shuffled data to create a null distribution.
 %
 % Requires:
 %   - lib/classes/analysis/SpatialTuningAnalyzer.m
 %   - lib/spatial_analysis/* helper functions
 
 %%
-% Prevent figures from popping up on screen and stealing focus
-% Reset any previously set CreateFcn that might cause errors
-set(groot, 'DefaultFigureCreateFcn', '');  % Clear any previous CreateFcn
+% Prevent figures from popping up on screen
 set(groot, 'DefaultFigureVisible', 'off');
 
 % Configuration
@@ -269,182 +267,56 @@ for pid = 1:length(probe_ids)
         ctl.figs.save_fig_to_join();
     end
     
-    % --- Plot Time-to-Goal analysis figure (3 rows × 1 column) ---
-    if save_figs
-        fprintf('  Creating time-to-goal analysis figure...\n');
-        fig_ttg_analysis = ctl.figs.a4figure('portrait');
+    % --- TTA figure removed per user request ---
+    % The third TTA figure with "Constant Velocity TTA with bins" has been removed.
+    % Time-to-goal analysis is still performed in individual cluster plots (Row 2).
+
+    % Determine session types based on actual trial data
+    session_types = cell(length(sessions), 1);
+    session_max_positions = zeros(length(sessions), 1);
+    
+    for s = 1:length(sessions)
+        session = sessions{s};
+        trials_in_session = session.trials;
+        session_max_pos = 0;
         
-        % Collect data for both groups
-        for g = 1:2
-            group = group_names{g};
-            trials_struct = trial_groups.(group);
-            n_trials = length(trials_struct);
-            
-            % Storage for plot 1: absolute time-to-goal vs position
-            ttg_vs_pos_trials{g} = [];
-            pos_bins{g} = all_bin_centers_by_group.(group);
-            
-            % Storage for plots 2 & 3: velocity and position vs relative TTG
-            vel_vs_ttg_trials{g} = [];
-            pos_vs_ttg_trials{g} = [];
-            
-            for k = 1:n_trials
-                trial = trials_struct(k).trial;
-                motion_mask = trial.motion_mask();
-                pos = trial.position(motion_mask);
-                vel = trial.velocity(motion_mask);
-                time = trial.probe_t(motion_mask);
-                
-                if ~isempty(pos) && ~isempty(time) && length(time) > 1
-                    % Compute absolute time-to-goal (seconds)
-                    time_to_goal = time(end) - time;
-                    
-                    % Plot 1: Bin by position and compute average TTG
-                    edges = analyzer.bin_config.(group).edges;
-                    n_bins = analyzer.bin_config.(group).n_bins;
-                    ttg_binned = nan(1, n_bins);
-                    for b = 1:n_bins
-                        in_bin = pos >= edges(b) & pos < edges(b+1);
-                        if sum(in_bin) > 0
-                            ttg_binned(b) = nanmean(time_to_goal(in_bin));
-                        end
-                    end
-                    ttg_vs_pos_trials{g}(k, :) = ttg_binned;
-                    
-                    % Plots 2 & 3: Normalize TTG to percentage (0-100%)
-                    trial_duration = time(end) - time(1);
-                    if trial_duration > 0
-                        ttg_percent = (time_to_goal / trial_duration) * 100;
-                        
-                        % Bin by TTG percentage (0-100%)
-                        ttg_bin_edges = 0:2:100;  % 2% bins
-                        ttg_bin_centers = ttg_bin_edges(1:end-1) + 1;
-                        n_ttg_bins = length(ttg_bin_centers);
-                        
-                        vel_binned = nan(1, n_ttg_bins);
-                        pos_binned = nan(1, n_ttg_bins);
-                        
-                        for b = 1:n_ttg_bins
-                            in_bin = ttg_percent >= ttg_bin_edges(b) & ttg_percent < ttg_bin_edges(b+1);
-                            if sum(in_bin) > 0
-                                vel_binned(b) = nanmean(vel(in_bin));
-                                pos_binned(b) = nanmean(pos(in_bin));
-                            end
-                        end
-                        
-                        vel_vs_ttg_trials{g}(k, :) = vel_binned;
-                        % Adjust position for short trials (add 60cm offset for display)
-                        if strcmp(group, 'short')
-                            pos_vs_ttg_trials{g}(k, :) = pos_binned + 60;
-                        else
-                            pos_vs_ttg_trials{g}(k, :) = pos_binned;
-                        end
-                    end
-                end
+        for t = 1:length(trials_in_session)
+            trial = trials_in_session{t}.to_aligned;
+            motion_mask = trial.motion_mask();
+            pos = trial.position(motion_mask);
+            if ~isempty(pos)
+                max_pos = max(pos);
+                session_max_pos = max(session_max_pos, max_pos);
             end
         end
         
-        % Plot 1: Absolute time-to-goal vs position
-        subplot(3, 1, 1, 'Parent', fig_ttg_analysis);
-        hold on;
-        for g = 1:2
-            group = group_names{g};
-            bin_centers = pos_bins{g};
-            ttg_data = ttg_vs_pos_trials{g};
-            
-            % Plot individual trials
-            for k = 1:size(ttg_data, 1)
-                if g == 1  % long trials - blue
-                    plot(bin_centers, ttg_data(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                else  % short trials - red
-                    plot(bin_centers, ttg_data(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                end
-            end
-            
-            % Plot mean with thick line
-            mean_ttg = nanmean(ttg_data, 1);
-            if g == 1  % long trials - blue
-                plot(bin_centers, mean_ttg, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            else  % short trials - red
-                plot(bin_centers, mean_ttg, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            end
+        session_max_positions(s) = session_max_pos;
+        if session_max_pos > 90
+            session_types{s} = 'long';
+        else
+            session_types{s} = 'short';
         end
-        hold off;
-        xlabel('Position (cm)');
-        ylabel('Time to Goal (s)');
-        legend('show', 'Location', 'northeast');
-        grid on;
-        xlim([0 120]);
-        title('Absolute Time-to-Goal vs Position');
-        
-        % Plot 2: Velocity vs relative time-to-goal (%)
-        subplot(3, 1, 2, 'Parent', fig_ttg_analysis);
-        hold on;
-        ttg_bin_centers = 1:2:99;  % 2% bins
-        for g = 1:2
-            vel_data = vel_vs_ttg_trials{g};
-            
-            % Plot individual trials
-            for k = 1:size(vel_data, 1)
-                if g == 1  % long trials - blue
-                    plot(ttg_bin_centers, vel_data(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                else  % short trials - red
-                    plot(ttg_bin_centers, vel_data(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                end
-            end
-            
-            % Plot mean with thick line
-            mean_vel = nanmean(vel_data, 1);
-            if g == 1  % long trials - blue
-                plot(ttg_bin_centers, mean_vel, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            else  % short trials - red
-                plot(ttg_bin_centers, mean_vel, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            end
+    end
+    
+    % Define colors for different sessions
+    cold_colors = {[0 0 0.8], [0 0.8 0.8]}; % dark blue, cyan
+    warm_colors = {[0.8 0 0], [1 0.5 0]}; % dark red, orange
+    
+    session_colors = cell(length(sessions), 1);
+    session_labels = {};
+    long_count = 0;
+    short_count = 0;
+    
+    for s = 1:length(sessions)
+        if strcmp(session_types{s}, 'long')
+            long_count = long_count + 1;
+            session_colors{s} = cold_colors{mod(long_count-1, length(cold_colors)) + 1};
+            session_labels{s} = sprintf('120cm Session %d', s);
+        else
+            short_count = short_count + 1;
+            session_colors{s} = warm_colors{mod(short_count-1, length(warm_colors)) + 1};
+            session_labels{s} = sprintf('60cm Session %d', s);
         end
-        hold off;
-        xlabel('Time to Goal (%)');
-        ylabel('Velocity (cm/s)');
-        legend('show', 'Location', 'northeast');
-        grid on;
-        xlim([0 100]);
-        set(gca, 'XDir', 'reverse');  % 100% is far from goal, 0% is at goal
-        title('Velocity vs Relative Time-to-Goal');
-        
-        % Plot 3: Position vs relative time-to-goal (%)
-        subplot(3, 1, 3, 'Parent', fig_ttg_analysis);
-        hold on;
-        for g = 1:2
-            pos_data = pos_vs_ttg_trials{g};
-            
-            % Plot individual trials
-            for k = 1:size(pos_data, 1)
-                if g == 1  % long trials - blue
-                    plot(ttg_bin_centers, pos_data(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                else  % short trials - red
-                    plot(ttg_bin_centers, pos_data(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                end
-            end
-            
-            % Plot mean with thick line
-            mean_pos = nanmean(pos_data, 1);
-            if g == 1  % long trials - blue
-                plot(ttg_bin_centers, mean_pos, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            else  % short trials - red
-                plot(ttg_bin_centers, mean_pos, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            end
-        end
-        hold off;
-        xlabel('Time to Goal (%)');
-        ylabel('Position (cm)');
-        legend('show', 'Location', 'northeast');
-        grid on;
-        xlim([0 100]);
-        ylim([0 120]);
-        set(gca, 'XDir', 'reverse');  % 100% is far from goal, 0% is at goal
-        title('Position vs Relative Time-to-Goal');
-        
-        FigureTitle(fig_ttg_analysis, sprintf('Time-to-Goal Analysis - %s', probe_ids{pid}));
-        ctl.figs.save_fig_to_join();
     end
 
     % Compute distribution comparisons only for clusters with significant spatial tuning
@@ -489,13 +361,10 @@ for pid = 1:length(probe_ids)
 
     % For each cluster, create a combined figure with spatial profile and x-normalized comparison
     if plot_single_cluster_fig
-        fprintf('  Creating individual cluster plots (%d clusters)...\n', n_clusters);
+        fprintf('  Creating individual cluster plots...\n');
         
         % Define colors for the two groups
         group_colors = struct('long', [0 0 0.8], 'short', [0.8 0 0]); % Blue for long, red for short
-        
-        % Initialize TTG field collection across all clusters
-        all_ttg_fields = cell(n_clusters, 1);
         
         % Load speed tuning curves for all clusters (combined long+short trials)
         tuning_curves = cell(n_clusters, 1);
@@ -533,11 +402,6 @@ for pid = 1:length(probe_ids)
         end
         
         for c = 1:n_clusters
-            % Show progress every 10 clusters to avoid cursor stealing
-            if mod(c, 10) == 1 || c == n_clusters
-                fprintf('    Processing cluster %d/%d...\n', c, n_clusters);
-            end
-            
             cluster = clusters(c);
             
             % Prepare rate data structure for this cluster
@@ -551,6 +415,26 @@ for pid = 1:length(probe_ids)
                 rate_data.(group).rate_per_trial_smooth = all_rate_per_trial_smooth_by_group.(group){c};
                 rate_data.(group).spike_positions = all_spike_positions_by_group.(group){c};
                 rate_data.(group).global_trial_indices = all_global_trial_indices_by_group.(group){c};
+                
+                % DEBUG: Check short trial data
+                if strcmp(group, 'short') && c == 1 && pid >= 2
+                    fprintf('    [DEBUG] Probe %d, Cluster %d (ID=%d), Group=%s\n', pid, c, cluster.id, group);
+                    fprintf('      spike_positions: class=%s, iscell=%d\n', class(rate_data.(group).spike_positions), iscell(rate_data.(group).spike_positions));
+                    if iscell(rate_data.(group).spike_positions)
+                        fprintf('      spike_positions: %d cells\n', length(rate_data.(group).spike_positions));
+                        for t = 1:min(3, length(rate_data.(group).spike_positions))
+                            if ~isempty(rate_data.(group).spike_positions{t})
+                                fprintf('        Trial %d: %d spikes\n', t, length(rate_data.(group).spike_positions{t}));
+                            else
+                                fprintf('        Trial %d: EMPTY\n', t);
+                            end
+                        end
+                    end
+                    fprintf('      global_trial_indices: class=%s, size=%s\n', class(rate_data.(group).global_trial_indices), mat2str(size(rate_data.(group).global_trial_indices)));
+                    if ~isempty(rate_data.(group).global_trial_indices)
+                        fprintf('      global_trial_indices: [%s]\n', mat2str(rate_data.(group).global_trial_indices(1:min(5, length(rate_data.(group).global_trial_indices)))));
+                    end
+                end
             end
             
             % Get statistics for this cluster (if available)
@@ -756,26 +640,9 @@ for pid = 1:length(probe_ids)
             end
             
             % Create combined figure using helper function
-            try
-                [fig_cluster, ttg_fields] = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
-                                                           rate_data, group_names, group_labels, ...
-                                                           group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data);
-                
-                % Store TTG field information for this cluster
-                all_ttg_fields{c} = ttg_fields;
-            catch ME
-                warning('Error creating figure for cluster %d: %s', cluster.id, ME.message);
-                continue;
-            end
-            
-            % Verify figure was created successfully
-            if isempty(fig_cluster) || ~isvalid(fig_cluster)
-                warning('Failed to create figure for cluster %d, skipping...', cluster.id);
-                continue;
-            end
-            
-            % Keep figure invisible to prevent focus stealing
-            set(fig_cluster, 'Visible', 'off');
+            fig_cluster = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
+                                                       rate_data, group_names, group_labels, ...
+                                                       group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data);
             
             % Save using the figure management system
             if save_figs
@@ -783,7 +650,6 @@ for pid = 1:length(probe_ids)
                 set(fig_cluster, 'PaperOrientation', 'landscape');
                 set(fig_cluster, 'PaperUnits', 'normalized');
                 set(fig_cluster, 'PaperPosition', [0 0 1 1]);
-                set(0, 'CurrentFigure', fig_cluster);  % Set as current figure for save_fig_to_join
                 ctl.figs.save_fig_to_join();
             else
                 close(fig_cluster);
@@ -1204,22 +1070,10 @@ for pid = 1:length(probe_ids)
                 % Also save distribution comparison results (KW tests)
                 gaussian_fits.dist_comparison_results = dist_comparison_results;
                 
-                % Also save TTG field information
-                gaussian_fits.ttg_fields = struct();
-                gaussian_fits.ttg_fields.cluster_ids = cluster_ids';
-                gaussian_fits.ttg_fields.fields = struct();
-                for c = 1:n_clusters
-                    cluster_id = cluster_ids(c);
-                    cluster_field = sprintf('cluster_%d', cluster_id);
-                    if ~isempty(all_ttg_fields{c})
-                        gaussian_fits.ttg_fields.fields.(cluster_field) = all_ttg_fields{c};
-                    end
-                end
-                
                 % Save to MAT file
                 mat_path = fullfile(ctl.figs.curr_dir, sprintf('%s_spatial_tuning_fits.mat', probe_ids{pid}));
                 save(mat_path, 'gaussian_fits', '-v7.3');
-                fprintf('    Saved spatial tuning fits, KW comparisons, and TTG fields to: %s\n', mat_path);
+                fprintf('    Saved spatial tuning fits and KW comparisons to: %s\n', mat_path);
             end
         end
     end

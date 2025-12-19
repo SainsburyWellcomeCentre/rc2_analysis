@@ -17,7 +17,7 @@ else
     error('Wrong argument to a4figure.m');
 end
 
-h_fig = figure();
+h_fig = figure('Visible', 'off');
 set(0, 'units', 'pixels');
 
 % make sure figure fits on the screen
