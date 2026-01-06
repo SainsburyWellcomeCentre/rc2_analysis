@@ -517,17 +517,16 @@ classdef SpatialTuningAnalyzer < handle
             end
         end
         
-        function [rate_map_2d, vel_bin_edges, trial_count_map] = compute_2d_position_velocity_tuning(obj, cluster, group, n_vel_bins, sigma_velocity, min_occupancy)
+        function [rate_map_2d, vel_bin_edges, trial_count_map] = compute_2d_position_velocity_tuning(obj, cluster, group, n_vel_bins, sigma_velocity)
             % Compute 2D position × velocity firing rate map with equal-occupancy velocity bins
             %
-            %   [rate_map_2d, vel_bin_edges, trial_count_map] = analyzer.compute_2d_position_velocity_tuning(cluster, group, n_vel_bins, sigma_velocity, min_occupancy)
+            %   [rate_map_2d, vel_bin_edges, trial_count_map] = analyzer.compute_2d_position_velocity_tuning(cluster, group, n_vel_bins, sigma_velocity)
             %
             %   Inputs:
             %       cluster         - Cluster object
             %       group           - 'long' or 'short'
             %       n_vel_bins      - Number of velocity bins (will have equal occupancy)
             %       sigma_velocity  - Smoothing sigma for velocity dimension (cm/s)
-            %       min_occupancy   - Minimum occupancy time (seconds) per trial to count as sampled
             %
             %   Outputs:
             %       rate_map_2d     - 2D firing rate map (position × velocity), median across trials
@@ -536,9 +535,6 @@ classdef SpatialTuningAnalyzer < handle
             
             if nargin < 5
                 sigma_velocity = 5;  % Default smoothing sigma for velocity (cm/s)
-            end
-            if nargin < 6
-                min_occupancy = 0.1;  % Default minimum occupancy (seconds)
             end
             
             % Get position bin configuration for this group
@@ -625,17 +621,16 @@ classdef SpatialTuningAnalyzer < handle
             trial_count_map = squeeze(sum(bin_sampled_per_trial, 1));
         end
         
-        function [rate_map_2d, accel_bin_edges, trial_count_map] = compute_2d_position_acceleration_tuning(obj, cluster, group, n_accel_bins, sigma_accel, min_occupancy)
+        function [rate_map_2d, accel_bin_edges, trial_count_map] = compute_2d_position_acceleration_tuning(obj, cluster, group, n_accel_bins, sigma_accel)
             % Compute 2D position × acceleration firing rate map with equal-occupancy acceleration bins
             %
-            %   [rate_map_2d, accel_bin_edges, trial_count_map] = analyzer.compute_2d_position_acceleration_tuning(cluster, group, n_accel_bins, sigma_accel, min_occupancy)
+            %   [rate_map_2d, accel_bin_edges, trial_count_map] = analyzer.compute_2d_position_acceleration_tuning(cluster, group, n_accel_bins, sigma_accel)
             %
             %   Inputs:
             %       cluster         - Cluster object
             %       group           - 'long' or 'short'
             %       n_accel_bins    - Number of acceleration bins (will have equal occupancy)
             %       sigma_accel     - Smoothing sigma for acceleration dimension (cm/s²)
-            %       min_occupancy   - Minimum occupancy time (seconds) per trial to count as sampled
             %
             %   Outputs:
             %       rate_map_2d     - 2D firing rate map (position × acceleration), median across trials
@@ -644,9 +639,6 @@ classdef SpatialTuningAnalyzer < handle
             
             if nargin < 5
                 sigma_accel = 10;  % Default smoothing sigma for acceleration (cm/s²) - reduced to preserve acceleration structure
-            end
-            if nargin < 6
-                min_occupancy = 0.1;  % Default minimum occupancy (seconds)
             end
             
             % Get position bin configuration for this group

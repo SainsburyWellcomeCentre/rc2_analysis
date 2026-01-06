@@ -4,7 +4,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %   [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
 %                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data)
 %
-%   Creates a 4-row, 4-column figure showing:
+%   Creates a 3-row, 4-column figure showing:
 %       Row 1:
 %           - Panel 1: Combined position-based raster for both long and short trials
 %           - Panel 2: Smoothed traces with median and IQR shading
@@ -13,18 +13,13 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %       Row 2:
 %           - Panel 5: Time-to-goal raster for both long and short trials
 %           - Panel 6: Time-to-goal firing rate with quartiles
-%           - Panel 7: (empty/reserved)
-%           - Panel 8: Normalized time-to-goal comparison
+%           - Panel 7: Speed tuning curve (combined long+short trials)
+%           - Panel 8: Speed tuning shuffle histogram
 %       Row 3:
-%           - Panel 9: Speed tuning curve (combined long+short trials)
-%           - Panel 10: Speed tuning shuffle histogram
-%           - Panel 11: Acceleration tuning curve (combined long+short trials)
-%           - Panel 12: Acceleration tuning shuffle histogram
-%       Row 4:
-%           - Panel 13: Velocity × Position contour (long trials)
-%           - Panel 14: Velocity × Position contour (short trials)
-%           - Panel 15: Acceleration × Position contour (long trials)
-%           - Panel 16: Acceleration × Position contour (short trials)
+%           - Panel 9: Velocity × Position contour (long trials)
+%           - Panel 10: Velocity × Position contour (short trials)
+%           - Panel 11: Velocity × Relative TTG contour (long trials)
+%           - Panel 12: Velocity × Relative TTG contour (short trials)
 %
 %   Inputs:
 %       cluster_id         - Numeric ID of the cluster
@@ -730,10 +725,22 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                  'HandleVisibility', 'off');
         end
         
+        % Determine Y-axis limit first to ensure fields are plotted correctly
+        y_max_limit = 10; % Default
+        if ~isempty(all_Q3_ttg)
+            max_Q3_ttg = max(all_Q3_ttg);
+            if ~isnan(max_Q3_ttg) && max_Q3_ttg > 0
+                y_max_limit = max_Q3_ttg * 1.2;
+            end
+        end
+        ylim([0, y_max_limit]);
+
         % Compute and mark firing fields for each group (simple peak detection)
         % Use the same field detection logic as spatial tuning
-        fieldFrac = 0.7;  % Same threshold as spatial analysis (70% of range from min to max)
-        minFieldBins = 4;  % Minimum 4 contiguous bins for a field
+        % Threshold: 70% of the range (min to max) of the smoothed median firing rate
+        % Minimum width: 4 contiguous bins (approx 10% of trial duration)
+        fieldFrac = 0.7;  
+        minFieldBins = 4;  
         
         for g = 1:length(group_names)
             group = group_names{g};
@@ -822,21 +829,22 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                     field_start = bin_centers(segBins(1));
                     field_end = bin_centers(segBins(end));
                     
-                    % Draw horizontal RED line for this field
+                    % Draw horizontal line for this field with condition-specific color
                     % Offset: short trials at 95%, long trials at 92%
                     if strcmp(group, 'short')
                         bar_y_frac = 0.95;
+                        field_color = [0.8, 0, 0];  % Red for short trials
                     else
                         bar_y_frac = 0.92;
+                        field_color = [0, 0, 0.8];  % Blue for long trials
                     end
                     
-                    % Get current y-axis limits
-                    curr_ylim = ylim;
-                    bar_y = bar_y_frac * curr_ylim(2);
+                    % Use the fixed y_max_limit for consistent plotting
+                    bar_y = bar_y_frac * y_max_limit;
                     
-                    % Plot in RED
+                    % Plot with condition-specific color
                     plot([field_start, field_end], [bar_y, bar_y], '-', ...
-                         'LineWidth', 4, 'Color', [1, 0, 0], 'HandleVisibility', 'off');
+                         'LineWidth', 4, 'Color', field_color, 'HandleVisibility', 'off');
                 end
             end
         end
@@ -847,31 +855,12 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         grid on;
         xlim([0, 100]);
         set(gca, 'XDir', 'reverse');  % 100% (far from goal) on left, 0% (at goal) on right
-        
-        % Set y-axis: start at 0, end at 120% of max Q3
-        if ~isempty(all_Q3_ttg)
-            max_Q3_ttg = max(all_Q3_ttg);
-            if ~isnan(max_Q3_ttg) && max_Q3_ttg > 0
-                ylim([0, max_Q3_ttg * 1.2]);
-            else
-                ylim([0, 10]);  % Fallback
-            end
-        end
-        
         set(gca, 'XTick', 0:20:100);
     end
     
-    %% Panel 7 (row 2, col 3): Empty panel (no Skaggs info for TTG)
-    % Intentionally left empty - no statistical testing for TTG tuning
-    % Fields are marked directly on Panel 6 (firing rate plot)
-    
-    %% Panel 8 (row 2, col 4): Empty (reserved for future use)
-    % Panels 5-7 in Row 2 show: normalized TTG raster, firing rate, and Skaggs info
-    % Panel 8 intentionally left empty - Row 2 uses only 3 columns
-    
-    %% Panel 9 (row 3, col 1): Speed tuning curve
+    %% Panel 7 (row 2, col 3): Speed tuning curve
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_tuning = subplot(4, 4, 9, 'Parent', fig);
+        ax_tuning = subplot(4, 4, 7, 'Parent', fig);
         
         % Extract tuning curve data
         fr = nanmean(tuning_data.tuning, 2);
@@ -931,9 +920,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         end
     end
     
-    %% Panel 10 (row 3, col 2): Speed tuning shuffle histogram
+    %% Panel 8 (row 2, col 4): Speed tuning shuffle histogram
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_hist = subplot(4, 4, 10, 'Parent', fig);
+        ax_hist = subplot(4, 4, 8, 'Parent', fig);
         
         % Create histogram of shuffled r values
         [n, c] = histcounts(tuning_data.shuffled.r_shuff, 50);
@@ -962,338 +951,253 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
-    %% Panel 11 (row 3, col 3): Acceleration tuning curve
-    if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_tuning = subplot(4, 4, 11, 'Parent', fig);
+    %% Panel 9 (row 3, col 1): Velocity × Position contour (long trials)
+    if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
+        ax_vel_long = subplot(4, 4, 9, 'Parent', fig);
+        hold(ax_vel_long, 'on');
         
-        % Extract tuning curve data
-        fr = nanmean(accel_tuning_data.tuning, 2);
-        sd = nanstd(accel_tuning_data.tuning, [], 2);
-        n = sum(~isnan(accel_tuning_data.tuning), 2);
-        x = accel_tuning_data.bin_centers;
+        % Get bin edges and data
+        pos_edges = rate_maps_2d.pos_bin_edges_long;
+        vel_edges = rate_maps_2d.vel_bin_edges_long;
+        rate_data = rate_maps_2d.vel_long;
         
-        % Determine if significant
-        is_significant = accel_tuning_data.shuffled.p < 0.05;
+        % Get colormap limits
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
+        cmap = jet(256);
         
-        % Set colors based on significance
-        if is_significant
-            data_color = 'k';
-            fit_color = 'k';
-        else
-            data_color = [0.6, 0.6, 0.6];
-            fit_color = [0.6, 0.6, 0.6];
-        end
-        
-        % Plot shuffled fits in background (light grey, dashed)
-        n_shuffs_to_plot = min(4, size(accel_tuning_data.shuffled.beta_shuff, 1));
-        hold on;
-        for i = 1:n_shuffs_to_plot
-            % Linear polynomial fit for shuffled data
-            if length(accel_tuning_data.shuffled.beta_shuff(i, :)) >= 2
-                x_fit = linspace(min(x), max(x), 100);
-                f = polyval(accel_tuning_data.shuffled.beta_shuff(i, :), x_fit);
-                plot(ax_accel_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+        % Create patches for each bin with variable height
+        for p = 1:length(pos_edges)-1
+            for v = 1:length(vel_edges)-1
+                rate_val = rate_data(p, v);
+                
+                % Skip NaN values
+                if isnan(rate_val)
+                    continue;
+                end
+                
+                % Map rate to color
+                if cmax > cmin
+                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                    color_idx = max(1, min(256, color_idx));
+                else
+                    color_idx = 1;
+                end
+                face_color = cmap(color_idx, :);
+                
+                % Determine alpha
+                if isfield(rate_maps_2d, 'vel_trial_counts_long') && isfield(rate_maps_2d, 'vel_n_trials_long')
+                    alpha_val = rate_maps_2d.vel_trial_counts_long(p, v) / rate_maps_2d.vel_n_trials_long;
+                else
+                    alpha_val = 1;
+                end
+                
+                % Create rectangle patch
+                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                patch(ax_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
         end
         
-        % Plot mean firing rate with error bars (SEM)
-        errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
-        
-        % Plot true fit (linear polynomial) - black if significant, gray if not
-        if isfield(accel_tuning_data.shuffled, 'beta') && length(accel_tuning_data.shuffled.beta) >= 2
-            x_fit = linspace(min(x), max(x), 100);
-            f = polyval(accel_tuning_data.shuffled.beta, x_fit);
-            plot(ax_accel_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        hold(ax_vel_long, 'off');
+        colormap(ax_vel_long, 'jet');
+        if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+            caxis(ax_vel_long, [cmin, cmax]);
+            colorbar(ax_vel_long);
         end
-        hold off;
+        set(gca, 'Color', [1 1 1]);
         
-        xlabel('Acceleration (cm/s^2)');
-        ylabel('Firing rate (Hz)');
-        grid on;
-        xlim([min(x)-5, max(x)+5]);
-        
-        % Add significance indicator
-        if is_significant
-            % Add asterisk in top-right if significant
-            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
-                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
-        else
-            % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
-                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
-        end
+        xlabel('Position (cm)');
+        ylabel('Velocity (cm/s)');
+        title('Vel x Pos (Long)');
     end
     
-    %% Panel 12 (row 3, col 4): Acceleration tuning shuffle histogram
-    if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_hist = subplot(4, 4, 12, 'Parent', fig);
+    %% Panel 10 (row 3, col 2): Velocity × Position contour (short trials)
+    if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
+        ax_vel_short = subplot(4, 4, 10, 'Parent', fig);
+        hold(ax_vel_short, 'on');
         
-        % Create histogram of shuffled r values
-        [n, c] = histcounts(accel_tuning_data.shuffled.r_shuff, 50);
-        bin_centers = (c(1:end-1) + c(2:end)) / 2;
-        bar(ax_accel_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
+        % Get bin edges and data
+        pos_edges = rate_maps_2d.pos_bin_edges_short;
+        vel_edges = rate_maps_2d.vel_bin_edges_short;
+        rate_data = rate_maps_2d.vel_short;
         
-        hold on;
-        % Plot observed r value as a dot
-        r_obs = accel_tuning_data.shuffled.r;
-        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
-        scatter(ax_accel_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
-        hold off;
+        % Get colormap limits
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
+        cmap = jet(256);
         
-        xlabel('r');
-        ylabel('Count');
-        xlim([-0.5, 0.5]);
-        set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
-        
-        % Add p-value text
-        if accel_tuning_data.shuffled.p < 0.001
-            p_str = 'p < 0.001';
-        else
-            p_str = sprintf('p = %.3f', accel_tuning_data.shuffled.p);
+        % Create patches for each bin with variable height
+        for p = 1:length(pos_edges)-1
+            for v = 1:length(vel_edges)-1
+                rate_val = rate_data(p, v);
+                
+                % Skip NaN values
+                if isnan(rate_val)
+                    continue;
+                end
+                
+                % Map rate to color
+                if cmax > cmin
+                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                    color_idx = max(1, min(256, color_idx));
+                else
+                    color_idx = 1;
+                end
+                face_color = cmap(color_idx, :);
+                
+                % Determine alpha
+                if isfield(rate_maps_2d, 'vel_trial_counts_short') && isfield(rate_maps_2d, 'vel_n_trials_short')
+                    alpha_val = rate_maps_2d.vel_trial_counts_short(p, v) / rate_maps_2d.vel_n_trials_short;
+                else
+                    alpha_val = 1;
+                end
+                
+                % Create rectangle patch
+                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
+                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                patch(ax_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+            end
         end
-        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
-             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        
+        hold(ax_vel_short, 'off');
+        colormap(ax_vel_short, 'jet');
+        if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+            caxis(ax_vel_short, [cmin, cmax]);
+            colorbar(ax_vel_short);
+        end
+        set(gca, 'Color', [1 1 1]);
+        
+        xlabel('Position (cm)');
+        ylabel('Velocity (cm/s)');
+        title('Vel x Pos (Short)');
     end
     
-    %% Row 4: 2D Contour Plots (Velocity × Position and Acceleration × Position)
-    % DISABLED: Constant Velocity TTA plots removed
-    if false && ~isempty(rate_maps_2d)
-        % Panel 13: Velocity × Position (long trials) with trial-based transparency
-        if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
-            ax_vel_long = subplot(4, 4, 13, 'Parent', fig);
-            hold(ax_vel_long, 'on');
-            
-            % Get bin edges and data
-            pos_edges = rate_maps_2d.pos_bin_edges_long;
-            vel_edges = rate_maps_2d.vel_bin_edges_long;
-            rate_data = rate_maps_2d.vel_long;
-            
-            % Get colormap limits
-            cmin = min(rate_data(:));
-            cmax = max(rate_data(:));
-            cmap = jet(256);
-            
-            % Create patches for each bin with variable height
-            for p = 1:length(pos_edges)-1
-                for v = 1:length(vel_edges)-1
-                    rate_val = rate_data(p, v);
-                    
-                    % Skip NaN values
-                    if isnan(rate_val)
-                        continue;
-                    end
-                    
-                    % Map rate to color
-                    if cmax > cmin
-                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                        color_idx = max(1, min(256, color_idx));
-                    else
-                        color_idx = 1;
-                    end
-                    face_color = cmap(color_idx, :);
-                    
-                    % Determine alpha
-                    if isfield(rate_maps_2d, 'vel_trial_counts_long') && isfield(rate_maps_2d, 'vel_n_trials_long')
-                        alpha_val = rate_maps_2d.vel_trial_counts_long(p, v) / rate_maps_2d.vel_n_trials_long;
-                    else
-                        alpha_val = 1;
-                    end
-                    
-                    % Create rectangle patch
-                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                    y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                    patch(ax_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+    %% Panel 11 (row 3, col 3): Velocity × Relative TTG contour (long trials)
+    if isfield(rate_maps_2d, 'ttg_vel_long') && ~isempty(rate_maps_2d.ttg_vel_long)
+        ax_ttg_vel_long = subplot(4, 4, 11, 'Parent', fig);
+        hold(ax_ttg_vel_long, 'on');
+        
+        % Get bin edges and data
+        ttg_edges = rate_maps_2d.ttg_bin_edges_long;
+        vel_edges = rate_maps_2d.vel_bin_edges_long;
+        rate_data = rate_maps_2d.ttg_vel_long;
+        
+        % Get colormap limits
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
+        cmap = jet(256);
+        
+        % Create patches for each bin with variable height
+        for t = 1:length(ttg_edges)-1
+            for v = 1:length(vel_edges)-1
+                rate_val = rate_data(t, v);
+                
+                % Skip NaN values
+                if isnan(rate_val)
+                    continue;
                 end
+                
+                % Map rate to color
+                if cmax > cmin
+                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                    color_idx = max(1, min(256, color_idx));
+                else
+                    color_idx = 1;
+                end
+                face_color = cmap(color_idx, :);
+                
+                % Determine alpha
+                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_vel_n_trials_long')
+                    alpha_val = rate_maps_2d.ttg_vel_trial_counts_long(t, v) / rate_maps_2d.ttg_vel_n_trials_long;
+                else
+                    alpha_val = 1;
+                end
+                
+                % Create rectangle patch
+                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
+                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                patch(ax_ttg_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
-            
-            hold(ax_vel_long, 'off');
-            colormap(ax_vel_long, 'jet');
-            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
-                caxis(ax_vel_long, [cmin, cmax]);
-            end
-            set(gca, 'Color', [1 1 1]);
-            
-            xlabel('Position (cm)');
-            ylabel('Velocity (cm/s)');
         end
         
-        % Panel 14: Velocity × Position (short trials) with trial-based transparency
-        if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
-            ax_vel_short = subplot(4, 4, 14, 'Parent', fig);
-            hold(ax_vel_short, 'on');
-            
-            % Get bin edges and data
-            pos_edges = rate_maps_2d.pos_bin_edges_short;
-            vel_edges = rate_maps_2d.vel_bin_edges_short;
-            rate_data = rate_maps_2d.vel_short;
-            
-            % Get colormap limits
-            cmin = min(rate_data(:));
-            cmax = max(rate_data(:));
-            cmap = jet(256);
-            
-            % Create patches for each bin with variable height
-            for p = 1:length(pos_edges)-1
-                for v = 1:length(vel_edges)-1
-                    rate_val = rate_data(p, v);
-                    
-                    % Skip NaN values
-                    if isnan(rate_val)
-                        continue;
-                    end
-                    
-                    % Map rate to color
-                    if cmax > cmin
-                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                        color_idx = max(1, min(256, color_idx));
-                    else
-                        color_idx = 1;
-                    end
-                    face_color = cmap(color_idx, :);
-                    
-                    % Determine alpha
-                    if isfield(rate_maps_2d, 'vel_trial_counts_short') && isfield(rate_maps_2d, 'vel_n_trials_short')
-                        alpha_val = rate_maps_2d.vel_trial_counts_short(p, v) / rate_maps_2d.vel_n_trials_short;
-                    else
-                        alpha_val = 1;
-                    end
-                    
-                    % Create rectangle patch
-                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                    y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                    patch(ax_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-                end
-            end
-            
-            hold(ax_vel_short, 'off');
-            colormap(ax_vel_short, 'jet');
-            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
-                caxis(ax_vel_short, [cmin, cmax]);
-            end
-            set(gca, 'Color', [1 1 1]);
-            
-            xlabel('Position (cm)');
-            ylabel('Velocity (cm/s)');
+        hold(ax_ttg_vel_long, 'off');
+        colormap(ax_ttg_vel_long, 'jet');
+        if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+            caxis(ax_ttg_vel_long, [cmin, cmax]);
+            colorbar(ax_ttg_vel_long);
         end
+        set(gca, 'Color', [1 1 1]);
         
-        % Panel 15: Acceleration × Position (long trials) with trial-based transparency
-        if isfield(rate_maps_2d, 'accel_long') && ~isempty(rate_maps_2d.accel_long)
-            ax_accel_long = subplot(4, 4, 15, 'Parent', fig);
-            hold(ax_accel_long, 'on');
-            
-            % Get bin edges and data
-            pos_edges = rate_maps_2d.pos_bin_edges_long;
-            accel_edges = rate_maps_2d.accel_bin_edges_long;
-            rate_data = rate_maps_2d.accel_long;
-            
-            % Get colormap limits
-            cmin = min(rate_data(:));
-            cmax = max(rate_data(:));
-            cmap = jet(256);
-            
-            % Create patches for each bin with variable height
-            for p = 1:length(pos_edges)-1
-                for a = 1:length(accel_edges)-1
-                    rate_val = rate_data(p, a);
-                    
-                    % Skip NaN values
-                    if isnan(rate_val)
-                        continue;
-                    end
-                    
-                    % Map rate to color
-                    if cmax > cmin
-                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                        color_idx = max(1, min(256, color_idx));
-                    else
-                        color_idx = 1;
-                    end
-                    face_color = cmap(color_idx, :);
-                    
-                    % Determine alpha
-                    if isfield(rate_maps_2d, 'accel_trial_counts_long') && isfield(rate_maps_2d, 'accel_n_trials_long')
-                        alpha_val = rate_maps_2d.accel_trial_counts_long(p, a) / rate_maps_2d.accel_n_trials_long;
-                    else
-                        alpha_val = 1;
-                    end
-                    
-                    % Create rectangle patch
-                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                    y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                    patch(ax_accel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-                end
-            end
-            
-            hold(ax_accel_long, 'off');
-            colormap(ax_accel_long, 'jet');
-            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
-                caxis(ax_accel_long, [cmin, cmax]);
-            end
-            set(gca, 'Color', [1 1 1]);
-            
-            xlabel('Position (cm)');
-            ylabel('Accel (cm/s^2)');
-        end
-        
-        % Panel 16: Acceleration × Position (short trials) with trial-based transparency
-        if isfield(rate_maps_2d, 'accel_short') && ~isempty(rate_maps_2d.accel_short)
-            ax_accel_short = subplot(4, 4, 16, 'Parent', fig);
-            hold(ax_accel_short, 'on');
-            
-            % Get bin edges and data
-            pos_edges = rate_maps_2d.pos_bin_edges_short;
-            accel_edges = rate_maps_2d.accel_bin_edges_short;
-            rate_data = rate_maps_2d.accel_short;
-            
-            % Get colormap limits
-            cmin = min(rate_data(:));
-            cmax = max(rate_data(:));
-            cmap = jet(256);
-            
-            % Create patches for each bin with variable height
-            for p = 1:length(pos_edges)-1
-                for a = 1:length(accel_edges)-1
-                    rate_val = rate_data(p, a);
-                    
-                    % Skip NaN values
-                    if isnan(rate_val)
-                        continue;
-                    end
-                    
-                    % Map rate to color
-                    if cmax > cmin
-                        color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                        color_idx = max(1, min(256, color_idx));
-                    else
-                        color_idx = 1;
-                    end
-                    face_color = cmap(color_idx, :);
-                    
-                    % Determine alpha
-                    if isfield(rate_maps_2d, 'accel_trial_counts_short') && isfield(rate_maps_2d, 'accel_n_trials_short')
-                        alpha_val = rate_maps_2d.accel_trial_counts_short(p, a) / rate_maps_2d.accel_n_trials_short;
-                    else
-                        alpha_val = 1;
-                    end
-                    
-                    % Create rectangle patch
-                    x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                    y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                    patch(ax_accel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-                end
-            end
-            
-            hold(ax_accel_short, 'off');
-            colormap(ax_accel_short, 'jet');
-            if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
-                caxis(ax_accel_short, [cmin, cmax]);
-            end
-            set(gca, 'Color', [1 1 1]);
-            
-            xlabel('Position (cm)');
-            ylabel('Accel (cm/s^2)');
-        end
+        xlabel('Time to Goal (%)');
+        ylabel('Velocity (cm/s)');
+        set(gca, 'XDir', 'reverse');
+        title('Vel x TTG (Long)');
     end
+    
+    %% Panel 12 (row 3, col 4): Velocity × Relative TTG contour (short trials)
+    if isfield(rate_maps_2d, 'ttg_vel_short') && ~isempty(rate_maps_2d.ttg_vel_short)
+        ax_ttg_vel_short = subplot(4, 4, 12, 'Parent', fig);
+        hold(ax_ttg_vel_short, 'on');
+        
+        % Get bin edges and data
+        ttg_edges = rate_maps_2d.ttg_bin_edges_short;
+        vel_edges = rate_maps_2d.vel_bin_edges_short;
+        rate_data = rate_maps_2d.ttg_vel_short;
+        
+        % Get colormap limits
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
+        cmap = jet(256);
+        
+        % Create patches for each bin with variable height
+        for t = 1:length(ttg_edges)-1
+            for v = 1:length(vel_edges)-1
+                rate_val = rate_data(t, v);
+                
+                % Skip NaN values
+                if isnan(rate_val)
+                    continue;
+                end
+                
+                % Map rate to color
+                if cmax > cmin
+                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
+                    color_idx = max(1, min(256, color_idx));
+                else
+                    color_idx = 1;
+                end
+                face_color = cmap(color_idx, :);
+                
+                % Determine alpha
+                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_vel_n_trials_short')
+                    alpha_val = rate_maps_2d.ttg_vel_trial_counts_short(t, v) / rate_maps_2d.ttg_vel_n_trials_short;
+                else
+                    alpha_val = 1;
+                end
+                
+                % Create rectangle patch
+                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
+                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
+                patch(ax_ttg_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
+            end
+        end
+        
+        hold(ax_ttg_vel_short, 'off');
+        colormap(ax_ttg_vel_short, 'jet');
+        if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
+            caxis(ax_ttg_vel_short, [cmin, cmax]);
+            colorbar(ax_ttg_vel_short);
+        end
+        set(gca, 'Color', [1 1 1]);
+        
+        xlabel('Time to Goal (%)');
+        ylabel('Velocity (cm/s)');
+        set(gca, 'XDir', 'reverse');
+        title('Vel x TTG (Short)');
+    end
+    
+
     
     % Overall figure title (replace underscores with spaces to prevent subscript rendering)
     probe_id_display = strrep(probe_id, '_', ' ');
@@ -1305,13 +1209,16 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         ax = all_axes(ax_idx);
         pos = get(ax, 'Position');
         if ~isempty(stats)
-            % With statistics: gentle compression with good spacing
-            pos(4) = pos(4) * 0.88;  % Minimal compression for better readability
-            pos(2) = pos(2) * 0.92 + 0.03;  % Shift up slightly for title space
+            % With statistics: reduce height to increase gap between rows
+            pos(4) = pos(4) * 0.75;  % Reduce height to 75% to prevent overlap
+            % Adjust vertical position to distribute space
+            % We want to shift rows slightly to center them in their allocated space
+            % But simple scaling of pos(2) might be enough if we shrink height enough
+            pos(2) = pos(2) * 0.95 + 0.04;  % Shift up slightly
         else
-            % Without statistics: maintain readability with minimal adjustment
-            pos(4) = pos(4) * 0.90;  % Minimal compression
-            pos(2) = pos(2) * 0.90 + 0.02;  % Shift up slightly
+            % Without statistics
+            pos(4) = pos(4) * 0.80;  % Reduce height
+            pos(2) = pos(2) * 0.95 + 0.03;  % Shift up slightly
         end
         set(ax, 'Position', pos);
     end

@@ -22,7 +22,7 @@ set(groot, 'DefaultFigureVisible', 'off');
 % Configuration
 experiment_groups        = {'ambient_light'};
 save_figs                = true;
-overwrite                = false;
+overwrite                = true;
 figure_dir               = {'spatial_firing_rate_pooled', 'ambient_light'};
 
 % Analysis parameters (must match those used in spatial_firing_rate_profile.m)
@@ -158,6 +158,20 @@ for pid = 1:length(probe_ids)
     end
     pooled_data.(condition).rate_per_trial_long = [pooled_data.(condition).rate_per_trial_long; rate_per_trial_long_to_add];
     pooled_data.(condition).rate_per_trial_short = [pooled_data.(condition).rate_per_trial_short; rate_per_trial_short_to_add];
+    
+    % Load TTG data if available
+    ttg_cache_filename = sprintf('%s_ttg_cache.mat', probe_id);
+    ttg_cache_filepath = fullfile(base_cache_dir, ttg_cache_filename);
+    if exist(ttg_cache_filepath, 'file')
+        ttg_cached = load(ttg_cache_filepath);
+        if ~isfield(pooled_data.(condition), 'ttg_rates_long')
+            pooled_data.(condition).ttg_rates_long = [];
+            pooled_data.(condition).ttg_rates_short = [];
+            pooled_data.(condition).ttg_norm_bin_centers = ttg_cached.ttg_norm_bin_centers;
+        end
+        pooled_data.(condition).ttg_rates_long = [pooled_data.(condition).ttg_rates_long; ttg_cached.all_ttg_rates.long];
+        pooled_data.(condition).ttg_rates_short = [pooled_data.(condition).ttg_rates_short; ttg_cached.all_ttg_rates.short];
+    end
     
     fprintf('    Added %d clusters to condition %s pool\n', n_clusters, condition);
 end
@@ -599,6 +613,250 @@ if save_figs
     ctl.figs.save_fig_to_join();
 else
     close(fig_combined);
+end
+
+% Create pooled TTG heatmaps if data is available
+fprintf('\n=== Creating pooled TTG heatmaps ===\n');
+has_ttg_data = false;
+for cond_idx = 1:length(conditions)
+    condition = conditions{cond_idx};
+    if isfield(pooled_data.(condition), 'ttg_rates_long') && ~isempty(pooled_data.(condition).ttg_rates_long)
+        has_ttg_data = true;
+        break;
+    end
+end
+
+if has_ttg_data
+    fig_ttg_pooled = ctl.figs.a4figure('landscape');
+    
+    for cond_idx = 1:length(conditions)
+        condition = conditions{cond_idx};
+        condition_label = condition_labels{cond_idx};
+        
+        if ~isfield(pooled_data.(condition), 'ttg_rates_long') || isempty(pooled_data.(condition).ttg_rates_long)
+            fprintf('  No TTG data for condition %s, skipping\n', condition);
+            continue;
+        end
+        
+        fprintf('  Creating TTG heatmap for %s...\n', condition_label);
+        
+        % Get TTG data for this condition
+        ttg_rate_mat_long = pooled_data.(condition).ttg_rates_long;
+        ttg_rate_mat_short = pooled_data.(condition).ttg_rates_short;
+        ttg_bin_centers = pooled_data.(condition).ttg_norm_bin_centers;
+        n_clusters_ttg = size(ttg_rate_mat_long, 1);
+        
+        % Sort clusters by peak position in long trials (TTG)
+        peak_positions_ttg = zeros(n_clusters_ttg, 1);
+        for c = 1:n_clusters_ttg
+            [~, max_idx] = max(ttg_rate_mat_long(c, :));
+            peak_positions_ttg(c) = ttg_bin_centers(max_idx);
+        end
+        [~, sort_idx_ttg] = sort(peak_positions_ttg);
+        
+        % Apply sorting
+        ttg_rate_mat_long = ttg_rate_mat_long(sort_idx_ttg, :);
+        ttg_rate_mat_short = ttg_rate_mat_short(sort_idx_ttg, :);
+        
+        % Plot long and short TTG in columns
+        for g = 1:2
+            if g == 1
+                ttg_rate_mat = ttg_rate_mat_long;
+                group_label = 'Long Trials';
+            else
+                ttg_rate_mat = ttg_rate_mat_short;
+                group_label = 'Short Trials';
+            end
+            
+            % Min-max normalization per cluster
+            min_vals = min(ttg_rate_mat, [], 2);
+            max_vals = max(ttg_rate_mat, [], 2);
+            norm_ttg_rate_mat = (ttg_rate_mat - min_vals) ./ (max_vals - min_vals);
+            norm_ttg_rate_mat(isnan(norm_ttg_rate_mat) | isinf(norm_ttg_rate_mat)) = 0;
+            
+            % Create subplot (2 rows for 2 conditions, 2 columns for long/short)
+            subplot(2, 2, (cond_idx-1)*2 + g, 'Parent', fig_ttg_pooled);
+            imagesc(ttg_bin_centers, 1:n_clusters_ttg, norm_ttg_rate_mat);
+            colormap(gca, 'jet');
+            xlabel('Normalized Time-to-Goal (%)', 'FontSize', 9);
+            if g == 1
+                ylabel(sprintf('%s\n(n=%d)', condition_label, n_clusters_ttg), 'FontSize', 9);
+            else
+                set(gca, 'YTickLabel', []);
+            end
+            set(gca, 'YTick', []);
+            set(gca, 'XDir', 'reverse');  % 100% on left, 0% on right
+            set(gca, 'FontSize', 8);
+            xlim([min(ttg_bin_centers), max(ttg_bin_centers)]);
+            
+            % Add column title only for first row
+            if cond_idx == 1
+                title(group_label, 'FontSize', 10);
+            end
+        end
+        
+        fprintf('    Created TTG heatmap for %s with %d clusters\n', condition_label, n_clusters_ttg);
+    end
+    
+    % Adjust subplot positions to make them larger
+    all_axes = findall(fig_ttg_pooled, 'Type', 'axes');
+    for ax_idx = 1:length(all_axes)
+        ax = all_axes(ax_idx);
+        pos = get(ax, 'Position');
+        
+        % Increase width and height
+        pos(3) = pos(3) * 1.15;  % Width
+        pos(4) = pos(4) * 1.1;   % Height
+        
+        % Adjust positioning
+        if pos(1) > 0.5  % Right column
+            pos(1) = 0.52;
+        else  % Left column
+            pos(1) = pos(1) - 0.02;
+        end
+        pos(2) = pos(2) - 0.03;
+        
+        set(ax, 'Position', pos);
+    end
+    
+    % Add overall figure title
+    FigureTitle(fig_ttg_pooled, 'Pooled TTG Heatmaps (All Regions)');
+    
+    if save_figs
+        ctl.figs.save_fig_to_join();
+    else
+        close(fig_ttg_pooled);
+    end
+    
+    % Create filtered TTG heatmaps (peaks between 10% and 90% in long condition)
+    fprintf('\n=== Creating filtered TTG heatmaps (peaks 10-90%%) ===\n');
+    fig_ttg_filtered = ctl.figs.a4figure('landscape');
+    
+    for cond_idx = 1:length(conditions)
+        condition = conditions{cond_idx};
+        condition_label = condition_labels{cond_idx};
+        
+        if ~isfield(pooled_data.(condition), 'ttg_rates_long') || isempty(pooled_data.(condition).ttg_rates_long)
+            fprintf('  No TTG data for condition %s, skipping\n', condition);
+            continue;
+        end
+        
+        fprintf('  Creating filtered TTG heatmap for %s...\n', condition_label);
+        
+        % Get TTG data for this condition
+        ttg_rate_mat_long = pooled_data.(condition).ttg_rates_long;
+        ttg_rate_mat_short = pooled_data.(condition).ttg_rates_short;
+        ttg_bin_centers = pooled_data.(condition).ttg_norm_bin_centers;
+        n_clusters_ttg = size(ttg_rate_mat_long, 1);
+        
+        % Find peak positions and filter for 10% <= peak <= 90%
+        peak_positions_ttg = zeros(n_clusters_ttg, 1);
+        for c = 1:n_clusters_ttg
+            [~, max_idx] = max(ttg_rate_mat_long(c, :));
+            peak_positions_ttg(c) = ttg_bin_centers(max_idx);
+        end
+        
+        % Filter for peaks between 10% and 90%
+        filter_mask = (peak_positions_ttg >= 10) & (peak_positions_ttg <= 90);
+        n_filtered = sum(filter_mask);
+        
+        fprintf('    %s: %d/%d clusters with peaks between 10-90%%\n', condition_label, n_filtered, n_clusters_ttg);
+        
+        if n_filtered == 0
+            fprintf('    No clusters match filter, skipping\n');
+            % Create empty subplots for this row
+            for g = 1:2
+                subplot(2, 2, (cond_idx-1)*2 + g, 'Parent', fig_ttg_filtered);
+                axis off;
+                text(0.5, 0.5, sprintf('No clusters\n%s\n(10-90%% peaks)', condition_label), ...
+                     'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+                     'VerticalAlignment', 'middle', 'FontSize', 9);
+            end
+            continue;
+        end
+        
+        % Apply filter
+        ttg_rate_mat_long_filt = ttg_rate_mat_long(filter_mask, :);
+        ttg_rate_mat_short_filt = ttg_rate_mat_short(filter_mask, :);
+        peak_positions_filt = peak_positions_ttg(filter_mask);
+        
+        % Sort by peak position
+        [~, sort_idx_filt] = sort(peak_positions_filt);
+        ttg_rate_mat_long_filt = ttg_rate_mat_long_filt(sort_idx_filt, :);
+        ttg_rate_mat_short_filt = ttg_rate_mat_short_filt(sort_idx_filt, :);
+        
+        % Plot long and short TTG in columns
+        for g = 1:2
+            if g == 1
+                ttg_rate_mat_filt = ttg_rate_mat_long_filt;
+                group_label = 'Long Trials';
+            else
+                ttg_rate_mat_filt = ttg_rate_mat_short_filt;
+                group_label = 'Short Trials';
+            end
+            
+            % Min-max normalization per cluster
+            min_vals = min(ttg_rate_mat_filt, [], 2);
+            max_vals = max(ttg_rate_mat_filt, [], 2);
+            norm_ttg_rate_mat_filt = (ttg_rate_mat_filt - min_vals) ./ (max_vals - min_vals);
+            norm_ttg_rate_mat_filt(isnan(norm_ttg_rate_mat_filt) | isinf(norm_ttg_rate_mat_filt)) = 0;
+            
+            % Create subplot (2 rows for 2 conditions, 2 columns for long/short)
+            subplot(2, 2, (cond_idx-1)*2 + g, 'Parent', fig_ttg_filtered);
+            imagesc(ttg_bin_centers, 1:n_filtered, norm_ttg_rate_mat_filt);
+            colormap(gca, 'jet');
+            xlabel('Normalized Time-to-Goal (%)', 'FontSize', 9);
+            if g == 1
+                ylabel(sprintf('%s\nPeaks 10-90%%\n(n=%d)', condition_label, n_filtered), 'FontSize', 8);
+            else
+                set(gca, 'YTickLabel', []);
+            end
+            set(gca, 'YTick', []);
+            set(gca, 'XDir', 'reverse');  % 100% on left, 0% on right
+            set(gca, 'FontSize', 8);
+            xlim([min(ttg_bin_centers), max(ttg_bin_centers)]);
+            
+            % Add column title only for first row
+            if cond_idx == 1
+                title(group_label, 'FontSize', 10);
+            end
+        end
+        
+        fprintf('    Created filtered TTG heatmap for %s with %d clusters\n', condition_label, n_filtered);
+    end
+    
+    % Adjust subplot positions to make them larger
+    all_axes = findall(fig_ttg_filtered, 'Type', 'axes');
+    for ax_idx = 1:length(all_axes)
+        ax = all_axes(ax_idx);
+        pos = get(ax, 'Position');
+        
+        % Increase width and height
+        pos(3) = pos(3) * 1.15;  % Width
+        pos(4) = pos(4) * 1.1;   % Height
+        
+        % Adjust positioning
+        if pos(1) > 0.5  % Right column
+            pos(1) = 0.52;
+        else  % Left column
+            pos(1) = pos(1) - 0.02;
+        end
+        pos(2) = pos(2) - 0.03;
+        
+        set(ax, 'Position', pos);
+    end
+    
+    % Add overall figure title
+    FigureTitle(fig_ttg_filtered, 'Pooled TTG Heatmaps - Filtered (Peaks 10-90%)');
+    
+    if save_figs
+        ctl.figs.save_fig_to_join();
+    else
+        close(fig_ttg_filtered);
+    end
+else
+    fprintf('  No TTG data found. TTG cache files may not exist.\n');
+    fprintf('  Re-run spatial_firing_rate_profile.m to generate TTG caches.\n');
 end
 
 % Join figures if requested
