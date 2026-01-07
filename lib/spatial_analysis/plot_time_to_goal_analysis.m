@@ -122,17 +122,6 @@ for g = 1:2
                 bin_width_percent = ttg_bin_edges(2) - ttg_bin_edges(1);  % 2%
                 occ_per_bin = trial_duration * (bin_width_percent / 100);  % Constant occupancy in seconds
                 
-                % Debug: Check motion mask and data availability
-                full_duration = trial.probe_t(end) - trial.probe_t(1);
-                sampling_rate = length(trial.probe_t) / full_duration;
-                expected_samples = full_duration * sampling_rate;
-                coverage_pct = (length(time) / expected_samples) * 100;
-                
-                fprintf('      Trial %d (Group: %s): motion_mask has %d samples, motion duration=%.3fs, full duration=%.3fs (%.1f%% coverage)\n', ...
-                    k, group, length(time), trial_duration, full_duration, coverage_pct);
-                fprintf('        TTG time-based range: [%.1f%%, %.1f%%], constant occupancy per bin: %.4fs\n', ...
-                    min(ttg_percent), max(ttg_percent), occ_per_bin);
-                
                 for b = 1:n_ttg_bins
                     % Find samples in this TTG time bin
                     in_bin = ttg_percent >= ttg_bin_edges(b) & ttg_percent < ttg_bin_edges(b+1);

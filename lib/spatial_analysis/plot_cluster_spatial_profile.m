@@ -1,8 +1,8 @@
-function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data)
+function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data)
+%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats)
 %
 %   Creates a 3-row, 4-column figure showing:
 %       Row 1:
@@ -13,7 +13,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %       Row 2:
 %           - Panel 5: Time-to-goal raster for both long and short trials
 %           - Panel 6: Time-to-goal firing rate with quartiles
-%           - Panel 7: Speed tuning curve (combined long+short trials)
+%           - Panel 7: TTG information shuffle distribution histograms
 %           - Panel 8: Speed tuning shuffle histogram
 %       Row 3:
 %           - Panel 9: Velocity × Position contour (long trials)
@@ -33,12 +33,13 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %       group_labels       - Cell array with descriptive labels for legend
 %       group_colors       - Struct with RGB colors for each group
 %       probe_id           - String identifier for the probe (for title)
-%       stats              - (Optional) Struct with statistical test results per group
+%       stats              - (Optional) Struct with spatial tuning statistical test results per group
 %       tuning_data        - (Optional) Struct with speed tuning curve data (from data.load_tuning_curves)
 %       accel_tuning_data  - (Optional) Struct with acceleration tuning curve data (from data.load_tuning_curves_acceleration)
 %       rate_maps_2d       - (Optional) Struct with 2D rate maps for position×velocity and position×acceleration
 %       dist_comparison    - (Optional) Struct with distribution comparison results (.absolute and .relative)
 %       ttg_data           - (Optional) Struct with time-to-goal data per group
+%       ttg_stats          - (Optional) Struct with TTG tuning statistical test results per group
 %
 %   Outputs:
 %       fig - Figure handle
@@ -52,6 +53,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     ttg_fields = struct();
     
     % Handle missing arguments
+    if nargin < 14
+        ttg_stats = [];
+    end
     if nargin < 13
         ttg_data = [];
     end
@@ -307,30 +311,6 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         end
     end
     
-    % Add absolute position distribution comparison result
-    if ~isempty(dist_comparison) && isfield(dist_comparison, 'absolute') && isstruct(dist_comparison.absolute)
-        if isfield(dist_comparison.absolute, 'same_distribution') && ~isnan(dist_comparison.absolute.same_distribution)
-            text_x_pos = 0.02;
-            text_y_pos = 0.95;
-            
-            if dist_comparison.absolute.same_distribution
-                abs_str = 'Abs: Same';
-            else
-                abs_str = 'Abs: Different';
-            end
-            if isfield(dist_comparison.absolute, 'p_value')
-                if dist_comparison.absolute.p_value < 0.001
-                    abs_str = sprintf('%s (p<0.001)', abs_str);
-                else
-                    abs_str = sprintf('%s (p=%.3f)', abs_str, dist_comparison.absolute.p_value);
-                end
-            end
-            text(text_x_pos, text_y_pos, abs_str, 'Units', 'normalized', ...
-                 'FontSize', 9, 'FontWeight', 'bold', 'Color', [0 0 0], ...
-                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
-        end
-    end
-    
     hold off;
     xlabel('Position (cm)');
     ylabel('Firing rate (Hz)');
@@ -431,60 +411,174 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     x_norm = linspace(0, 1, 100);
     x_percent = x_norm * 100;  % For display as percentage
     
-    for g = 1:length(group_names)
-        group = group_names{g};
+    % Plot downsampled long data with individual trials
+    if isfield(rate_data, 'long_downsampled')
+        group = 'long_downsampled';
+        pos = rate_data.(group).bin_centers(:);
+        Q1_smooth = rate_data.(group).Q1_smooth(:);
+        Q2_smooth = rate_data.(group).Q2_smooth(:);
+        Q3_smooth = rate_data.(group).Q3_smooth(:);
+        rate_per_trial_smooth = rate_data.(group).rate_per_trial_smooth;
         
-        if ~isfield(rate_data, group)
-            continue;
+        % Skip if all NaN
+        if ~all(isnan(Q2_smooth))
+            % Ensure pos and Q2_smooth have same length
+            n_bins_data = length(Q2_smooth);
+            if length(pos) ~= n_bins_data
+                % Trim or pad pos to match Q2_smooth
+                if length(pos) > n_bins_data
+                    pos = pos(1:n_bins_data);
+                else
+                    % Pad with extrapolated values
+                    pos_step = pos(end) - pos(end-1);
+                    n_pad = n_bins_data - length(pos);
+                    pos = [pos; (pos(end) + (1:n_pad)' * pos_step)];
+                end
+            end
+            
+            % Normalize position (start=0, end=1)
+            pos_norm = (pos - min(pos)) / (max(pos) - min(pos));
+            
+            % Keep only finite points
+            idx = isfinite(pos_norm) & isfinite(Q2_smooth);
+            
+            if sum(idx) >= 2
+                pos_n = pos_norm(idx);
+                Q1_n = Q1_smooth(idx);
+                Q2_n = Q2_smooth(idx);
+                Q3_n = Q3_smooth(idx);
+                
+                % Interpolate to common grid
+                Q1_i = interp1(pos_n, Q1_n, x_norm, 'linear', 'extrap');
+                Q2_i = interp1(pos_n, Q2_n, x_norm, 'linear', 'extrap');
+                Q3_i = interp1(pos_n, Q3_n, x_norm, 'linear', 'extrap');
+                
+                color = group_colors.long;  % Use long color (blue)
+                
+                % Plot individual trials as thin lines
+                n_trials = size(rate_per_trial_smooth, 1);
+                n_bins_trial = size(rate_per_trial_smooth, 2);
+                for t = 1:n_trials
+                    trial_rate = rate_per_trial_smooth(t, :);
+                    % Create position array matching trial_rate dimensions
+                    if length(pos_norm) == n_bins_trial
+                        pos_norm_trial = pos_norm(:)';  % Ensure row vector
+                    else
+                        % If mismatch, use first n_bins_trial elements or pad
+                        pos_norm_trial = pos_norm(1:min(n_bins_trial, length(pos_norm)));
+                        pos_norm_trial = pos_norm_trial(:)';  % Ensure row vector
+                        if length(pos_norm_trial) < n_bins_trial
+                            % Pad if needed
+                            pos_norm_trial = [pos_norm_trial, nan(1, n_bins_trial - length(pos_norm_trial))];
+                        end
+                    end
+                    idx_trial = isfinite(pos_norm_trial) & isfinite(trial_rate);
+                    if sum(idx_trial) >= 2
+                        trial_rate_i = interp1(pos_norm_trial(idx_trial), trial_rate(idx_trial), x_norm, 'linear', 'extrap');
+                        plot(x_percent, trial_rate_i, '-', 'LineWidth', 0.5, 'Color', [color, 0.3], ...
+                             'HandleVisibility', 'off');
+                    end
+                end
+                
+                % Plot Q1-Q3 shaded area
+                fill_x = [x_percent, fliplr(x_percent)];
+                fill_y = [Q1_i, fliplr(Q3_i)];
+                fill(fill_x, fill_y, color, 'FaceAlpha', 0.2, 'EdgeColor', 'none', ...
+                     'HandleVisibility', 'off');
+                
+                % Plot median as thick solid line
+                plot(x_percent, Q2_i, '-', 'LineWidth', 2, 'Color', color, ...
+                     'HandleVisibility', 'off');
+            end
         end
-        
+    end
+    
+    % Plot short data with individual trials
+    if isfield(rate_data, 'short')
+        group = 'short';
         pos = bin_centers_by_group.(group)(:);
         Q1_smooth = rate_data.(group).Q1_smooth(:);
         Q2_smooth = rate_data.(group).Q2_smooth(:);
         Q3_smooth = rate_data.(group).Q3_smooth(:);
+        rate_per_trial_smooth = rate_data.(group).rate_per_trial_smooth;
         
         % Skip if all NaN
-        if all(isnan(Q2_smooth))
-            continue;
+        if ~all(isnan(Q2_smooth))
+            % Ensure pos and Q2_smooth have same length
+            n_bins_data = length(Q2_smooth);
+            if length(pos) ~= n_bins_data
+                % Trim or pad pos to match Q2_smooth
+                if length(pos) > n_bins_data
+                    pos = pos(1:n_bins_data);
+                else
+                    % Pad with extrapolated values
+                    pos_step = pos(end) - pos(end-1);
+                    n_pad = n_bins_data - length(pos);
+                    pos = [pos; (pos(end) + (1:n_pad)' * pos_step)];
+                end
+            end
+            
+            % Normalize position (start=0, end=1)
+            pos_norm = (pos - min(pos)) / (max(pos) - min(pos));
+            
+            % Keep only finite points
+            idx = isfinite(pos_norm) & isfinite(Q2_smooth);
+            
+            if sum(idx) >= 2
+                pos_n = pos_norm(idx);
+                Q1_n = Q1_smooth(idx);
+                Q2_n = Q2_smooth(idx);
+                Q3_n = Q3_smooth(idx);
+                
+                % Interpolate to common grid
+                Q1_i = interp1(pos_n, Q1_n, x_norm, 'linear', 'extrap');
+                Q2_i = interp1(pos_n, Q2_n, x_norm, 'linear', 'extrap');
+                Q3_i = interp1(pos_n, Q3_n, x_norm, 'linear', 'extrap');
+                
+                color = group_colors.(group);
+                
+                % Plot individual trials as thin lines
+                n_trials = size(rate_per_trial_smooth, 1);
+                n_bins_trial = size(rate_per_trial_smooth, 2);
+                for t = 1:n_trials
+                    trial_rate = rate_per_trial_smooth(t, :);
+                    % Create position array matching trial_rate dimensions
+                    if length(pos_norm) == n_bins_trial
+                        pos_norm_trial = pos_norm(:)';  % Ensure row vector
+                    else
+                        % If mismatch, use first n_bins_trial elements or pad
+                        pos_norm_trial = pos_norm(1:min(n_bins_trial, length(pos_norm)));
+                        pos_norm_trial = pos_norm_trial(:)';  % Ensure row vector
+                        if length(pos_norm_trial) < n_bins_trial
+                            % Pad if needed
+                            pos_norm_trial = [pos_norm_trial, nan(1, n_bins_trial - length(pos_norm_trial))];
+                        end
+                    end
+                    idx_trial = isfinite(pos_norm_trial) & isfinite(trial_rate);
+                    if sum(idx_trial) >= 2
+                        trial_rate_i = interp1(pos_norm_trial(idx_trial), trial_rate(idx_trial), x_norm, 'linear', 'extrap');
+                        plot(x_percent, trial_rate_i, '-', 'LineWidth', 0.5, 'Color', [color, 0.3], ...
+                             'HandleVisibility', 'off');
+                    end
+                end
+                
+                % Plot Q1-Q3 shaded area
+                fill_x = [x_percent, fliplr(x_percent)];
+                fill_y = [Q1_i, fliplr(Q3_i)];
+                fill(fill_x, fill_y, color, 'FaceAlpha', 0.2, 'EdgeColor', 'none', ...
+                     'HandleVisibility', 'off');
+                
+                % Plot median as thick solid line
+                plot(x_percent, Q2_i, '-', 'LineWidth', 2, 'Color', color, ...
+                     'HandleVisibility', 'off');
+            end
         end
-        
-        % Normalize position (start=0, end=1)
-        pos_norm = (pos - min(pos)) / (max(pos) - min(pos));
-        
-        % Keep only finite points
-        idx = isfinite(pos_norm) & isfinite(Q2_smooth);
-        
-        if sum(idx) < 2
-            continue;
-        end
-        
-        pos_n = pos_norm(idx);
-        Q1_n = Q1_smooth(idx);
-        Q2_n = Q2_smooth(idx);
-        Q3_n = Q3_smooth(idx);
-        
-        % Interpolate to common grid
-        Q1_i = interp1(pos_n, Q1_n, x_norm, 'linear', 'extrap');
-        Q2_i = interp1(pos_n, Q2_n, x_norm, 'linear', 'extrap');
-        Q3_i = interp1(pos_n, Q3_n, x_norm, 'linear', 'extrap');
-        
-        color = group_colors.(group);
-        
-        % Plot Q1-Q3 shaded area
-        fill_x = [x_percent, fliplr(x_percent)];
-        fill_y = [Q1_i, fliplr(Q3_i)];
-        fill(fill_x, fill_y, color, 'FaceAlpha', 0.2, 'EdgeColor', 'none', ...
-             'HandleVisibility', 'off');
-        
-        % Plot median as solid line
-        plot(x_percent, Q2_i, '-', 'LineWidth', 2, 'Color', color, ...
-             'HandleVisibility', 'off');
     end
     
-    % Compute correlation between long and short medians
-    if isfield(rate_data, 'long') && isfield(rate_data, 'short')
-        pos_long = bin_centers_by_group.long(:);
-        Q2_long = rate_data.long.Q2_smooth(:);
+    % Compute correlation between downsampled long and short medians
+    if isfield(rate_data, 'long_downsampled') && isfield(rate_data, 'short')
+        pos_long = rate_data.long_downsampled.bin_centers(:);
+        Q2_long = rate_data.long_downsampled.Q2_smooth(:);
         pos_short = bin_centers_by_group.short(:);
         Q2_short = rate_data.short.Q2_smooth(:);
         
@@ -498,30 +592,6 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             Q2_long_i = interp1(pos_long_norm(idxL), Q2_long(idxL), x_norm, 'linear', 'extrap');
             Q2_short_i = interp1(pos_short_norm(idxS), Q2_short(idxS), x_norm, 'linear', 'extrap');
             r = corr(Q2_long_i(:), Q2_short_i(:), 'rows', 'complete');
-        end
-    end
-    
-    % Add relative position distribution comparison result
-    if ~isempty(dist_comparison) && isfield(dist_comparison, 'relative') && isstruct(dist_comparison.relative)
-        if isfield(dist_comparison.relative, 'same_distribution') && ~isnan(dist_comparison.relative.same_distribution)
-            text_x_pos = 0.02;
-            text_y_pos = 0.95;
-            
-            if dist_comparison.relative.same_distribution
-                rel_str = 'Rel: Same';
-            else
-                rel_str = 'Rel: Different';
-            end
-            if isfield(dist_comparison.relative, 'p_value')
-                if dist_comparison.relative.p_value < 0.001
-                    rel_str = sprintf('%s (p<0.001)', rel_str);
-                else
-                    rel_str = sprintf('%s (p=%.3f)', rel_str, dist_comparison.relative.p_value);
-                end
-            end
-            text(text_x_pos, text_y_pos, rel_str, 'Units', 'normalized', ...
-                 'FontSize', 9, 'FontWeight', 'bold', 'Color', [0 0 0], ...
-                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
         end
     end
     
@@ -858,97 +928,145 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         set(gca, 'XTick', 0:20:100);
     end
     
-    %% Panel 7 (row 2, col 3): Speed tuning curve
-    if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_tuning = subplot(4, 4, 7, 'Parent', fig);
-        
-        % Extract tuning curve data
-        fr = nanmean(tuning_data.tuning, 2);
-        sd = nanstd(tuning_data.tuning, [], 2);
-        n = sum(~isnan(tuning_data.tuning), 2);
-        x = tuning_data.bin_centers;
-        
-        % Determine if significant
-        is_significant = tuning_data.shuffled.p < 0.05;
-        
-        % Set colors based on significance
-        if is_significant
-            data_color = 'k';
-            fit_color = 'k';
-        else
-            data_color = [0.6, 0.6, 0.6];
-            fit_color = [0.6, 0.6, 0.6];
-        end
-        
-        % Plot shuffled fits in background (light grey, dashed)
-        n_shuffs_to_plot = min(4, size(tuning_data.shuffled.beta_shuff, 1));
+    %% Panel 7 (row 2, col 3): TTG information shuffle distribution histograms
+    if ~isempty(ttg_stats)
+        subplot(4, 4, 7, 'Parent', fig);
         hold on;
-        for i = 1:n_shuffs_to_plot
-            % Linear polynomial fit for shuffled data
-            if length(tuning_data.shuffled.beta_shuff(i, :)) >= 2
-                x_fit = linspace(min(x), max(x), 100);
-                f = polyval(tuning_data.shuffled.beta_shuff(i, :), x_fit);
-                plot(ax_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+        
+        % Collect all info values to determine common x-axis
+        all_info = [];
+        if isfield(ttg_stats, 'long') && isfield(ttg_stats.long, 'infoNull')
+            all_info = [all_info, ttg_stats.long.infoNull(:)', ttg_stats.long.info];
+        end
+        if isfield(ttg_stats, 'short') && isfield(ttg_stats.short, 'infoNull')
+            all_info = [all_info, ttg_stats.short.infoNull(:)', ttg_stats.short.info];
+        end
+        
+        % Remove NaN values before computing edges
+        all_info = all_info(~isnan(all_info));
+        
+        if ~isempty(all_info) && (max(all_info) > min(all_info))
+            % Create common bin edges
+            edges = linspace(min(all_info), max(all_info), 31);
+            bin_centers = (edges(1:end-1) + edges(2:end)) / 2;
+            
+            % Plot long trials histogram if available
+            if isfield(ttg_stats, 'long') && isfield(ttg_stats.long, 'infoNull') && isfield(ttg_stats.long, 'info')
+                infoNull_long = ttg_stats.long.infoNull;
+                infoObs_long = ttg_stats.long.info;
+                pVal_long = ttg_stats.long.pVal;
+                
+                % Plot histogram with vertical bars
+                [n_long, ~] = histcounts(infoNull_long, edges);
+                bar(bin_centers, n_long, 'FaceColor', [0.6, 0.8, 1.0], 'EdgeColor', 'none', 'BarWidth', 0.8, 'FaceAlpha', 0.7);
+                
+                % Mark observed value with dot (interpolate histogram height at observed position)
+                y_long = interp1(bin_centers, n_long, infoObs_long, 'linear', 0);
+                scatter(infoObs_long, y_long, 100, [0, 0, 0.8], 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+                
+                % Add p-value text for long trials
+                if pVal_long < 0.001
+                    p_str_long = 'Long: p < 0.001';
+                else
+                    p_str_long = sprintf('Long: p = %.3f', pVal_long);
+                end
+                text(0.98, 0.95, p_str_long, 'Units', 'normalized', 'FontSize', 9, 'Color', [0, 0, 0.8], ...
+                     'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
             end
-        end
-        
-        % Plot mean firing rate with error bars (SEM)
-        errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
-        
-        % Plot true fit (linear polynomial) - black if significant, gray if not
-        if isfield(tuning_data.shuffled, 'beta') && length(tuning_data.shuffled.beta) >= 2
-            x_fit = linspace(min(x), max(x), 100);
-            f = polyval(tuning_data.shuffled.beta, x_fit);
-            plot(ax_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
-        end
-        hold off;
-        
-        xlabel('Speed (cm/s)');
-        ylabel('Firing rate (Hz)');
-        grid on;
-        xlim([-5, max(x)+5]);
-        
-        % Add significance indicator
-        if is_significant
-            % Add asterisk in top-right if significant
-            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
-                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            
+            % Plot short trials histogram if available
+            if isfield(ttg_stats, 'short') && isfield(ttg_stats.short, 'infoNull') && isfield(ttg_stats.short, 'info')
+                infoNull_short = ttg_stats.short.infoNull;
+                infoObs_short = ttg_stats.short.info;
+                pVal_short = ttg_stats.short.pVal;
+                
+                % Plot histogram with vertical bars (overlapping with long)
+                [n_short, ~] = histcounts(infoNull_short, edges);
+                bar(bin_centers, n_short, 'FaceColor', [1.0, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 0.6, 'FaceAlpha', 0.7);
+                
+                % Mark observed value with dot (interpolate histogram height at observed position)
+                y_short = interp1(bin_centers, n_short, infoObs_short, 'linear', 0);
+                scatter(infoObs_short, y_short, 100, [0.8, 0, 0], 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+                
+                % Add p-value text for short trials
+                if pVal_short < 0.001
+                    p_str_short = 'Short: p < 0.001';
+                else
+                    p_str_short = sprintf('Short: p = %.3f', pVal_short);
+                end
+                text(0.98, 0.85, p_str_short, 'Units', 'normalized', 'FontSize', 9, 'Color', [0.8, 0, 0], ...
+                     'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+            end
+            
+            xlabel('TTG Info (bits/spike)', 'FontSize', 9);
+            ylabel('Count', 'FontSize', 9);
+            box off;
+            grid on;
         else
-            % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
-                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            text(0.5, 0.5, 'No shuffle data', 'HorizontalAlignment', 'center', 'FontSize', 10);
+            axis off;
         end
+        
+        hold off;
     end
     
-    %% Panel 8 (row 2, col 4): Speed tuning shuffle histogram
-    if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_hist = subplot(4, 4, 8, 'Parent', fig);
+    %% Panel 8 (row 2, col 4): Kruskal-Wallis test results summary
+    if ~isempty(dist_comparison) && isstruct(dist_comparison)
+        ax_text = subplot(4, 4, 8, 'Parent', fig);
+        axis(ax_text, 'off');
         
-        % Create histogram of shuffled r values
-        [n, c] = histcounts(tuning_data.shuffled.r_shuff, 50);
-        bin_centers = (c(1:end-1) + c(2:end)) / 2;
-        bar(ax_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
+        % Prepare text for each test
+        test_names = {'Absolute (60-120cm)', 'Relative (normalized)', 'Absolute Shifted (0-60cm)', 'TTG'};
+        test_fields = {'absolute', 'relative', 'absolute_shifted', 'ttg'};
         
-        hold on;
-        % Plot observed r value as a dot
-        r_obs = tuning_data.shuffled.r;
-        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
-        scatter(ax_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
-        hold off;
+        % Starting y position
+        y_pos = 0.95;
+        line_spacing = 0.20;
         
-        xlabel('r');
-        ylabel('Count');
-        xlim([-0.5, 0.5]);
-        set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
+        % Title
+        text(0.5, y_pos, 'Kruskal-Wallis Tests', 'Units', 'normalized', ...
+            'FontSize', 9, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+        y_pos = y_pos - line_spacing;
         
-        % Add p-value text
-        if tuning_data.shuffled.p < 0.001
-            p_str = 'p < 0.001';
-        else
-            p_str = sprintf('p = %.3f', tuning_data.shuffled.p);
+        % Display each test result
+        for i = 1:length(test_fields)
+            field = test_fields{i};
+            if isfield(dist_comparison, field) && isstruct(dist_comparison.(field))
+                result = dist_comparison.(field);
+                
+                % Check for valid result
+                if isfield(result, 'p_value') && ~isnan(result.p_value)
+                    % Determine if distributions are same or different
+                    if result.same_distribution
+                        result_str = 'same';
+                        color = [0.8, 0, 0];  % Red for same (user cares about this)
+                    else
+                        result_str = 'diff';
+                        color = [0.5, 0.5, 0.5];  % Gray for different
+                    end
+                    
+                    % Display test name and result
+                    text(0.05, y_pos, test_names{i}, 'Units', 'normalized', ...
+                        'FontSize', 7.5, 'HorizontalAlignment', 'left', 'FontWeight', 'bold');
+                    text(0.95, y_pos, result_str, 'Units', 'normalized', ...
+                        'FontSize', 7.5, 'HorizontalAlignment', 'right', 'Color', color, 'FontWeight', 'bold');
+                else
+                    % No valid result
+                    text(0.05, y_pos, test_names{i}, 'Units', 'normalized', ...
+                        'FontSize', 7.5, 'HorizontalAlignment', 'left', 'FontWeight', 'bold');
+                    text(0.95, y_pos, 'N/A', 'Units', 'normalized', ...
+                        'FontSize', 7.5, 'HorizontalAlignment', 'right', 'Color', [0.5, 0.5, 0.5]);
+                end
+            else
+                % Field doesn't exist
+                text(0.05, y_pos, test_names{i}, 'Units', 'normalized', ...
+                    'FontSize', 7.5, 'HorizontalAlignment', 'left', 'FontWeight', 'bold');
+                text(0.95, y_pos, 'N/A', 'Units', 'normalized', ...
+                    'FontSize', 7.5, 'HorizontalAlignment', 'right', 'Color', [0.5, 0.5, 0.5]);
+            end
+            
+            y_pos = y_pos - line_spacing;
         end
-        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
-             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
     %% Panel 9 (row 3, col 1): Velocity × Position contour (long trials)

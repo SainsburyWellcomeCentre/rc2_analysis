@@ -428,9 +428,37 @@ for pid = 1:length(probe_ids)
                 bin_centers_long = all_bin_centers_by_group.long;
                 bin_centers_short = all_bin_centers_by_group.short;
                 
+                % Compute downsampled long data for relative comparison
+                [rate_long_ds_smooth, ~, ~, ~, bin_centers_long_ds, ~] = ...
+                    compute_downsampled_long_rates(trial_groups, clusters(c), bin_size_cm, gauss_sigma_cm);
+                
+                % Extract TTG data for this cluster (if available)
+                % Note: ttg_data is computed later in the loop, so we'll need to recompute it here
+                % or extract it from the already computed data
+                ttg_rate_long = [];
+                ttg_rate_short = [];
+                
+                % Recompute TTG data just for comparison
+                try
+                    [ttg_data_for_comparison, ~] = compute_time_to_goal_tuning(clusters(c), trial_groups, ...
+                        group_names, all_global_trial_indices_by_group, c);
+                    if isfield(ttg_data_for_comparison, 'long') && isfield(ttg_data_for_comparison.long, 'rate_per_trial_smooth')
+                        ttg_rate_long = ttg_data_for_comparison.long.rate_per_trial_smooth;
+                    end
+                    if isfield(ttg_data_for_comparison, 'short') && isfield(ttg_data_for_comparison.short, 'rate_per_trial_smooth')
+                        ttg_rate_short = ttg_data_for_comparison.short.rate_per_trial_smooth;
+                    end
+                catch
+                    % If TTG computation fails, leave empty
+                    ttg_rate_long = [];
+                    ttg_rate_short = [];
+                end
+                
                 % Perform distribution comparison using Kruskal-Wallis test
+                % Pass downsampled long data for relative comparison
                 dist_comparison_results{c} = compare_spatial_distributions(...
-                    rate_long, rate_short, bin_centers_long, bin_centers_short);
+                    rate_long, rate_short, bin_centers_long, bin_centers_short, ttg_rate_long, ttg_rate_short, ...
+                    rate_long_ds_smooth, bin_centers_long_ds);
             catch ME
                 fprintf('    Warning: Could not compute distribution comparison for cluster %d\n', cluster_ids(c));
                 fprintf('    Error: %s\n', ME.message);
@@ -496,6 +524,11 @@ for pid = 1:length(probe_ids)
             
             cluster = clusters(c);
             
+            % Compute downsampled long data (for fair relative comparison)
+            % This removes every other bin BEFORE smoothing and rate calculation
+            [rate_long_ds_smooth, Q1_long_ds, Q2_long_ds, Q3_long_ds, bin_centers_long_ds, edges_long_ds] = ...
+                compute_downsampled_long_rates(trial_groups, cluster, bin_size_cm, gauss_sigma_cm);
+            
             % Prepare rate data structure for this cluster
             rate_data = struct();
             for g = 1:2
@@ -508,6 +541,15 @@ for pid = 1:length(probe_ids)
                 rate_data.(group).spike_positions = all_spike_positions_by_group.(group){c};
                 rate_data.(group).global_trial_indices = all_global_trial_indices_by_group.(group){c};
             end
+            
+            % Add downsampled long data to rate_data
+            rate_data.long_downsampled = struct();
+            rate_data.long_downsampled.Q1_smooth = Q1_long_ds;
+            rate_data.long_downsampled.Q2_smooth = Q2_long_ds;
+            rate_data.long_downsampled.Q3_smooth = Q3_long_ds;
+            rate_data.long_downsampled.rate_per_trial_smooth = rate_long_ds_smooth;
+            rate_data.long_downsampled.bin_centers = bin_centers_long_ds;
+            rate_data.long_downsampled.edges = edges_long_ds;
             
             % Get statistics for this cluster (if available)
             cluster_stats = [];
@@ -576,6 +618,12 @@ for pid = 1:length(probe_ids)
             % Compute time-to-goal data for each trial using refactored function
             [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(cluster, trial_groups, ...
                 group_names, all_global_trial_indices_by_group, c);
+            
+            % Compute TTG tuning statistics (significance testing)
+            ttg_stats = [];
+            if run_statistics
+                ttg_stats = compute_ttg_tuning_statistics(ttg_data, group_names, analyzer.stats_params);
+            end
             
             % Store median TTG rates for later heatmap plotting
             for g = 1:2
@@ -664,12 +712,17 @@ for pid = 1:length(probe_ids)
             try
                 [fig_cluster, ttg_fields] = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
                                                            rate_data, group_names, group_labels, ...
-                                                           group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data);
+                                                           group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data, ttg_stats);
                 
                 % Store TTG field information for this cluster
                 all_ttg_fields{c} = ttg_fields;
             catch ME
                 warning('Error creating figure for cluster %d: %s', cluster.id, ME.message);
+                fprintf('Error occurred at: %s\n', ME.stack(1).name);
+                fprintf('Line: %d\n', ME.stack(1).line);
+                if length(ME.stack) > 1
+                    fprintf('Called from: %s (line %d)\n', ME.stack(2).name, ME.stack(2).line);
+                end
                 continue;
             end
             
