@@ -162,9 +162,6 @@ classdef RasterDisplayFigure < handle
         
             h_raster = Raster(spike_times, obj.h_section(x_i, y_i).h_ax(1), obj.raster_marker_type); %#ok<*PROPLC>
             h_motion = TracePlot(velocity_traces, common_t, obj.h_section(x_i, y_i).h_ax(2));
-%             h_rates = TracePlot(spike_rates, common_t, obj.h_section(x_i, y_i).h_ax(3));
-            h_psth = PSTH(obj.h_section(x_i, y_i).h_ax(3));
-            h_psth.plot(cat(1, spike_times{:}), common_t);
             
             h_raster.ylabel('Bout #');
             h_raster.xlabel('');
@@ -173,13 +170,32 @@ classdef RasterDisplayFigure < handle
             h_motion.ylim([0, nan]);
             h_motion.ylabel('cm/s');
             h_motion.xlabel('');
-            h_psth.ylabel('Spike count');
-            h_psth.xlabel('');
-%             h_rates.mean_colour('k');
-%             h_rates.add_sem([0.6, 0.6, 0.6]);
-%             h_rates.ylabel('Hz');
             
-            for i = 1 : 3
+            % Add firing rate lines on the same axis with right y-axis
+            yyaxis(obj.h_section(x_i, y_i).h_ax(2), 'right');
+            hold(obj.h_section(x_i, y_i).h_ax(2), 'on');
+            
+            % Calculate max and median firing rates across all trials
+            max_firing_rate = max(spike_rates, [], 2);
+            median_firing_rate = median(spike_rates, 2);
+            
+            % Apply slight smoothing (moving average with window of 5 samples)
+            window_size = 5;
+            max_firing_rate_smoothed = movmean(max_firing_rate, window_size, 'omitnan');
+            median_firing_rate_smoothed = movmean(median_firing_rate, window_size, 'omitnan');
+            
+            % Plot max firing rate (thin black line)
+            plot(obj.h_section(x_i, y_i).h_ax(2), common_t, max_firing_rate_smoothed, 'k-', 'LineWidth', 1);
+            % Plot median firing rate (thick black line)
+            plot(obj.h_section(x_i, y_i).h_ax(2), common_t, median_firing_rate_smoothed, 'k-', 'LineWidth', 2);
+            
+            ylabel(obj.h_section(x_i, y_i).h_ax(2), 'Hz');
+            ylim(obj.h_section(x_i, y_i).h_ax(2), [0, inf]);
+            
+            % Switch back to left y-axis to keep velocity properties
+            yyaxis(obj.h_section(x_i, y_i).h_ax(2), 'left');
+            
+            for i = 1 : 2
                 set(obj.h_section(x_i, y_i).h_ax(i), 'xlim', common_t([1, end]));%[-0.2, 0.5])
             end
             
@@ -187,14 +203,11 @@ classdef RasterDisplayFigure < handle
             
             % Set ylabels after any axis modifications
             ylabel(obj.h_section(x_i, y_i).h_ax(2), 'cm/s', 'interpreter', 'none', 'fontsize', 8);
-            ylabel(obj.h_section(x_i, y_i).h_ax(3), 'Spike count', 'interpreter', 'none', 'fontsize', 8);
             
             obj.h_raster{x_i, y_i} = h_raster;
             obj.h_motion{x_i, y_i} = h_motion;
-            obj.h_psth{x_i, y_i} = h_psth;
-%             obj.h_rates{x_i, y_i} = h_rates;
             
-            obj.max_spike_rate = max([obj.max_spike_rate, max(nanmean(spike_rates, 2))]);
+            obj.max_spike_rate = max([obj.max_spike_rate, max(max_firing_rate_smoothed)]);
             
         end
         
@@ -204,8 +217,8 @@ classdef RasterDisplayFigure < handle
         %%sync_sections Loops through axes and makes sure axes of the same
         %%type have same y limits 
         
-            m = inf*[1, 1, 1];
-            M = -inf*[1, 1, 1];
+            m = inf*[1, 1];
+            M = -inf*[1, 1];
             for x_i = 1 : size(obj.h_section, 1)
                 for y_i = 1 : size(obj.h_section, 2)
                     if isempty(obj.h_section(x_i, y_i)); continue; end

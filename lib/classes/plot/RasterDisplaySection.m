@@ -33,7 +33,7 @@ classdef RasterDisplaySection < handle
             
             figure(h_fig);
             
-            for i = 1 : 3
+            for i = 1 : 2
                 obj.h_ax(i) = axes('units', 'centimeters');
                 axis normal
             end
@@ -52,11 +52,11 @@ classdef RasterDisplaySection < handle
             y_spacing = pos(4)/10;
             
             ax_width = pos(3) - 2*x_spacing;
-            ax_height = (pos(4) - 4*y_spacing)/3;
+            ax_height = (pos(4) - 3*y_spacing)/2;
             
-            for i = 1 : 3
+            for i = 1 : 2
                 obj.h_ax(i).Position = [pos(1) + x_spacing, ...
-                    pos(2) + (4-i)*y_spacing + (3-i)*ax_height, ...
+                    pos(2) + (3-i)*y_spacing + (2-i)*ax_height, ...
                     ax_width, ...
                     ax_height];
             end

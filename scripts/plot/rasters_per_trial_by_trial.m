@@ -4,6 +4,11 @@ close all;
 %
 %   This script creates raster plots where each page shows one trial,
 %   with all clusters displayed together in the same raster plot.
+
+%   The time axis is aligned to solenoid timing:
+%       - t=0 is when solenoid goes DOWN
+%       - Display range: from -5s (before solenoid down) to +10s after solenoid goes UP
+%       - This means the displayed time range varies per trial
 %
 %   Specify options:
 %
@@ -17,17 +22,6 @@ close all;
 %                               or a cell array of strings specifying
 %                               multiple trial groups.
 %
-%       raster_trigger:         For each of the entries in
-%                               'trial_group_labels', a string specifying which
-%                               aspect of the trials to trigger on. Should
-%                               be either 'motion' (onset of motion) or
-%                               'mismatch' (onset of a mismatch event).
-%
-%       limits:                 time in seconds around the event to display
-%                               for the raster. e.g. [-1, 1] will display
-%                               the rasters from 1 second before to 1
-%                               second after the event.
-%
 %       common_fs:              sampling frequency to compute the
 %                               firing rate convolutions for each cluster
 %                               (e.g. 60Hz) 
@@ -38,25 +32,15 @@ close all;
 %                               whether to overwrite 
 %       
 %       figure_dir:             cell array of strings specifying which
-%                               directory to save pdf's.
-%
-%       min_bout_duration:      the minimum duration in s for a motion bout to be included
-%
-%       include_200ms:          whether or not to include the first 200ms
-%                               after the solenoid goes low to look for
-%                               motion onset  
+%                               directory to save pdf's.  
 
 %%
-experiment_groups       = {'training_running'};
+experiment_groups       = {'ambient_light'};
 trial_group_labels      = {'RT'};
-raster_trigger          = {'motion'};
-limits                  = [-5, 10];
 common_fs               = 60;
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'rasters_by_trial', 'training_running'};
-min_bout_duration       = 2;
-include_200ms           = true;
+figure_dir              = {'rasters_by_trial', 'ambient_light'};
 
 %%
 ctl                     = RC2Analysis();
@@ -81,27 +65,28 @@ for ii = 1 : length(probe_ids)
         
         trial = all_trials{trial_idx};
         
-        % Get motion onset times for this trial
-        if strcmp(raster_trigger{1}, 'motion')
-            options.min_bout_duration = min_bout_duration;
-            options.include_200ms = include_200ms;
-            
-            % Get motion bouts for this specific trial
-            bouts = trial.motion_bouts(options.include_200ms, true);
-            motion_times = cellfun(@(x)(x.start_time), bouts);
-            
-            % Filter bouts by minimum duration
-            bout_durations = cellfun(@(x)(x.duration), bouts);
-            valid_bouts = bout_durations >= options.min_bout_duration;
-            motion_times = motion_times(valid_bouts);
-            
-        elseif strcmp(raster_trigger{1}, 'mismatch')
-            motion_times = trial.mismatch_onset_t;
+        % Find solenoid timing for this trial
+        % Solenoid goes down (high to low): diff(solenoid > 2.5) == -1
+        % Solenoid goes up (low to high): diff(solenoid > 2.5) == 1
+        sol_down_idx = find(diff(trial.solenoid > 2.5) == -1, 1);
+        sol_up_idx = find(diff(trial.solenoid > 2.5) == 1, 1);
+        
+        if isempty(sol_down_idx) || isempty(sol_up_idx)
+            warning('Trial %d: Could not find solenoid transitions, skipping...', trial.trial_id);
+            continue;
         end
         
-        if isempty(motion_times)
-            continue; % Skip trials with no events
-        end
+        % Get absolute times for solenoid events
+        sol_down_time = trial.probe_t(sol_down_idx);
+        sol_up_time = trial.probe_t(sol_up_idx);
+        
+        % Use the entire trial time range, but make it relative to solenoid down
+        % So t=0 is at solenoid down
+        trial_start_time = trial.probe_t(1);
+        trial_end_time = trial.probe_t(end);
+        
+        % Set limits relative to solenoid down (t=0)
+        limits = [trial_start_time - sol_down_time, trial_end_time - sol_down_time];
         
         % Create one raster display object for this trial (with 1 section)
         r = RasterDisplayFigure(1);
@@ -116,9 +101,9 @@ for ii = 1 : length(probe_ids)
             
             % Create RasterData for this cluster and trial
             rd = RasterData(cluster, limits);
-            rd.trigger_times = motion_times;
+            rd.trigger_times = sol_down_time;  % Set t=0 at solenoid down
             
-            % Get spike data for this cluster around motion times
+            % Get spike data for this cluster around solenoid down time
             spike_times = rd.spike_array();
             spike_rates = rd.spike_convolutions();
             
@@ -127,13 +112,21 @@ for ii = 1 : length(probe_ids)
             all_spike_rates = [all_spike_rates, spike_rates];
         end
         
-        % Get velocity traces for this trial around motion times
-        % This would need to be implemented based on your data structure
-        % For now, we'll use placeholder data
-        velocity_traces = nan(length(rd.common_t), length(motion_times));
+        % Get velocity trace for this trial
+        % Extract velocity from trial and interpolate to common time points
+        trial_velocity = trial.velocity;
+        trial_times = trial.probe_t;
+        
+        velocity_trace = nan(length(rd.common_t), 1);  % Single column vector
+        
+        % Interpolate entire trial velocity to common time points (relative to solenoid down)
+        common_times_absolute = rd.common_t + sol_down_time;
+        velocity_trace(:, 1) = interp1(trial_times, trial_velocity, common_times_absolute, 'linear', nan);
         
         % fill the section with the combined data
-        r.fill_data(1, 1, all_spike_times, velocity_traces, all_spike_rates, rd.common_t, sprintf('Trial %i - All Clusters', trial.trial_id));
+        sol_duration = sol_up_time - sol_down_time;
+        title_str = sprintf('Trial %i - All Clusters (Solenoid down at t=0, up at t=%.2fs)', trial.trial_id, sol_duration);
+        r.fill_data(1, 1, all_spike_times, velocity_trace, all_spike_rates, rd.common_t, title_str);
         
         % set the limits and synchronize the axes of all the sections
         r.x_lim(limits);
@@ -147,4 +140,4 @@ for ii = 1 : length(probe_ids)
     
     ctl.figs.join_figs(sprintf('%s.pdf', probe_ids{ii}), overwrite);
     ctl.figs.clear_figs();
-end 
+end
