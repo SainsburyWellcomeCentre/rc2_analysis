@@ -35,8 +35,8 @@ figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
 re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
-plot_velocity_tuning     = false;   % Set to false to skip velocity tuning plots
-plot_acceleration_tuning = false;   % Set to false to skip acceleration tuning plots
+plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
+plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
 
 % Parallel processing configuration
 use_parallel            = true;   % Set to false to disable parallel processing entirely
@@ -126,6 +126,12 @@ for pid = 1:length(probe_ids)
         
         % Run full analysis
         analyzer.analyze_all_clusters();
+        
+        % Compute TTG analysis
+        analyzer.compute_ttg_analysis();
+        
+        % Compute distribution comparisons
+        analyzer.compute_distribution_comparisons();
         
         % Print summary
         analyzer.print_summary();
@@ -403,73 +409,16 @@ for pid = 1:length(probe_ids)
         ctl.figs.save_fig_to_join();
     end
     
-    % Compute distribution comparisons only for clusters with significant spatial tuning
-    fprintf('  Computing distribution comparisons using Kruskal-Wallis test...\n');
-    dist_comparison_results = cell(n_clusters, 1);
-    
-    for c = 1:n_clusters
-        % Check if this cluster has significant spatial tuning in at least one condition
-        cluster_field = sprintf('cluster_%d', cluster_ids(c));
-        is_spatially_tuned = false;
-        
-        if ~isempty(spatial_tuning_stats) && isfield(spatial_tuning_stats, cluster_field)
-            cluster_stats = spatial_tuning_stats.(cluster_field);
-            if (isfield(cluster_stats, 'long') && isfield(cluster_stats.long, 'isSpatiallyTuned') && cluster_stats.long.isSpatiallyTuned) || ...
-               (isfield(cluster_stats, 'short') && isfield(cluster_stats.short, 'isSpatiallyTuned') && cluster_stats.short.isSpatiallyTuned)
-                is_spatially_tuned = true;
-            end
-        end
-        
-        % Only perform distribution comparison if spatially tuned
-        if is_spatially_tuned
-            try
-                rate_long = all_rate_per_trial_by_group.long{c};
-                rate_short = all_rate_per_trial_by_group.short{c};
-                bin_centers_long = all_bin_centers_by_group.long;
-                bin_centers_short = all_bin_centers_by_group.short;
-                
-                % Compute downsampled long data for relative comparison
-                [rate_long_ds_smooth, ~, ~, ~, bin_centers_long_ds, ~] = ...
-                    compute_downsampled_long_rates(trial_groups, clusters(c), bin_size_cm, gauss_sigma_cm);
-                
-                % Extract TTG data for this cluster (if available)
-                % Note: ttg_data is computed later in the loop, so we'll need to recompute it here
-                % or extract it from the already computed data
-                ttg_rate_long = [];
-                ttg_rate_short = [];
-                
-                % Recompute TTG data just for comparison
-                try
-                    [ttg_data_for_comparison, ~] = compute_time_to_goal_tuning(clusters(c), trial_groups, ...
-                        group_names, all_global_trial_indices_by_group, c);
-                    if isfield(ttg_data_for_comparison, 'long') && isfield(ttg_data_for_comparison.long, 'rate_per_trial_smooth')
-                        ttg_rate_long = ttg_data_for_comparison.long.rate_per_trial_smooth;
-                    end
-                    if isfield(ttg_data_for_comparison, 'short') && isfield(ttg_data_for_comparison.short, 'rate_per_trial_smooth')
-                        ttg_rate_short = ttg_data_for_comparison.short.rate_per_trial_smooth;
-                    end
-                catch
-                    % If TTG computation fails, leave empty
-                    ttg_rate_long = [];
-                    ttg_rate_short = [];
-                end
-                
-                % Perform distribution comparison using Kruskal-Wallis test
-                % Pass downsampled long data for relative comparison
-                dist_comparison_results{c} = compare_spatial_distributions(...
-                    rate_long, rate_short, bin_centers_long, bin_centers_short, ttg_rate_long, ttg_rate_short, ...
-                    rate_long_ds_smooth, bin_centers_long_ds);
-            catch ME
-                fprintf('    Warning: Could not compute distribution comparison for cluster %d\n', cluster_ids(c));
-                fprintf('    Error: %s\n', ME.message);
-                dist_comparison_results{c} = [];
-            end
-        else
-            % Skip non-spatially tuned clusters
-            dist_comparison_results{c} = [];
-        end
+    % Use cached distribution comparisons
+    dist_comparison_results = analyzer.distribution_comparisons;
+    if ~isempty(dist_comparison_results)
+        n_non_empty = sum(~cellfun(@isempty, dist_comparison_results));
+        fprintf('  Using cached distribution comparisons (%d/%d clusters have results)\n', ...
+            n_non_empty, length(dist_comparison_results));
+    else
+        fprintf('  WARNING: No distribution comparisons found in cache!\n');
+        dist_comparison_results = cell(n_clusters, 1);
     end
-    fprintf('  Distribution comparisons complete\n');
 
     % For each cluster, create a combined figure with spatial profile and x-normalized comparison
     if plot_single_cluster_fig
@@ -615,15 +564,11 @@ for pid = 1:length(probe_ids)
             rate_maps_2d.pos_bin_edges_long = analyzer.bin_config.long.edges;
             rate_maps_2d.pos_bin_edges_short = analyzer.bin_config.short.edges;
             
-            % Compute time-to-goal data for each trial using refactored function
-            [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(cluster, trial_groups, ...
-                group_names, all_global_trial_indices_by_group, c);
-            
-            % Compute TTG tuning statistics (significance testing)
-            ttg_stats = [];
-            if run_statistics
-                ttg_stats = compute_ttg_tuning_statistics(ttg_data, group_names, analyzer.stats_params);
-            end
+            % Get cached TTG data
+            cluster_field = sprintf('cluster_%d', cluster.id);
+            ttg_data = analyzer.ttg_analysis.(cluster_field).ttg_data;
+            ttg_norm_bin_centers = analyzer.ttg_analysis.(cluster_field).ttg_norm_bin_centers;
+            ttg_stats = analyzer.ttg_analysis.(cluster_field).ttg_stats;
             
             % Store median TTG rates for later heatmap plotting
             for g = 1:2
@@ -707,6 +652,82 @@ for pid = 1:length(probe_ids)
                     rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
                 end
             end
+            
+            % --- Compute 2D Relative TTG x Acceleration maps ---
+            if plot_acceleration_tuning
+                for g = 1:2
+                    group = group_names{g};
+                    
+                    % Get acceleration bin edges (computed earlier)
+                    if strcmp(group, 'long')
+                        accel_edges = rate_maps_2d.accel_bin_edges_long;
+                    else
+                        accel_edges = rate_maps_2d.accel_bin_edges_short;
+                    end
+                    n_accel_bins = length(accel_edges) - 1;
+                    
+                    % Get TTG data
+                    ttg_edges = ttg_data.(group).bin_edges_norm;
+                    n_ttg_bins = length(ttg_edges) - 1;
+                    rate_per_trial_smooth = ttg_data.(group).rate_per_trial_smooth;
+                    
+                    trials = trial_groups.(group);
+                    n_trials = length(trials);
+                    
+                    % Initialize 2D arrays
+                    rate_maps_per_trial = nan(n_trials, n_ttg_bins, n_accel_bins);
+                    bin_sampled_per_trial = zeros(n_trials, n_ttg_bins, n_accel_bins);
+                    
+                    for t = 1:n_trials
+                        trial = trials(t).trial;
+                        motion_mask = trial.motion_mask();
+                        
+                        % Get data during motion
+                        time = trial.probe_t(motion_mask);
+                        acceleration = trial.acceleration(motion_mask);
+                        
+                        if isempty(time) || length(time) < 2
+                            continue;
+                        end
+                        
+                        % Compute normalized TTG
+                        trial_duration = trial.probe_t(end) - trial.probe_t(1);
+                        ttg = trial.probe_t(end) - time;
+                        ttg_norm = (ttg / trial_duration) * 100;
+                        
+                        % Initialize map for this trial
+                        rate_map_trial = nan(n_ttg_bins, n_accel_bins);
+                        
+                        % For each TTG bin
+                        for b = 1:n_ttg_bins
+                            % Find times in this TTG bin
+                            in_bin = ttg_norm >= ttg_edges(b) & ttg_norm < ttg_edges(b+1);
+                            
+                            if any(in_bin)
+                                % Get accelerations in this bin
+                                accel_in_bin = acceleration(in_bin);
+                                
+                                % Assign to acceleration bins
+                                for a = 1:n_accel_bins
+                                    in_accel_bin = accel_in_bin >= accel_edges(a) & accel_in_bin < accel_edges(a+1);
+                                    
+                                    if any(in_accel_bin)
+                                        bin_sampled_per_trial(t, b, a) = 1;
+                                        rate_map_trial(b, a) = rate_per_trial_smooth(t, b);
+                                    end
+                                end
+                            end
+                        end
+                        rate_maps_per_trial(t, :, :) = rate_map_trial;
+                    end
+                    
+                    % Compute median and counts
+                    rate_maps_2d.(['ttg_accel_' group]) = squeeze(nanmedian(rate_maps_per_trial, 1));
+                    rate_maps_2d.(['ttg_accel_trial_counts_' group]) = squeeze(sum(bin_sampled_per_trial, 1));
+                    rate_maps_2d.(['ttg_accel_n_trials_' group]) = n_trials;
+                    rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
+                end
+            end
 
             % Create combined figure using helper function
             try
@@ -737,8 +758,8 @@ for pid = 1:length(probe_ids)
             
             % Save using the figure management system
             if save_figs
-                % Convert to a4figure format for PDF joining
-                set(fig_cluster, 'PaperOrientation', 'landscape');
+                % Convert to a4figure format for PDF joining (portrait for 5-row layout)
+                set(fig_cluster, 'PaperOrientation', 'portrait');
                 set(fig_cluster, 'PaperUnits', 'normalized');
                 set(fig_cluster, 'PaperPosition', [0 0 1 1]);
                 set(0, 'CurrentFigure', fig_cluster);  % Set as current figure for save_fig_to_join

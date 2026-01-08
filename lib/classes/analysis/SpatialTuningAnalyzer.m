@@ -751,18 +751,18 @@ classdef SpatialTuningAnalyzer < handle
                 cluster_id = cluster.id;
                 cluster_field = sprintf('cluster_%d', cluster_id);
                 
-                % Get global trial indices for this cluster
+                % Get global trial indices for this cluster (wrap in cell for indexing)
                 all_global_trial_indices_by_group = struct();
                 for g = 1:2
                     group = obj.group_names{g};
                     all_global_trial_indices_by_group.(group) = ...
-                        obj.firing_rates.(group).global_trial_indices{c};
+                        {obj.firing_rates.(group).global_trial_indices{c}};
                 end
                 
-                % Compute TTG data
+                % Compute TTG data (use cluster_idx = 1 since we wrapped data in cell)
                 [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(...
                     cluster, obj.trial_groups, obj.group_names, ...
-                    all_global_trial_indices_by_group, c);
+                    all_global_trial_indices_by_group, 1);
                 
                 % Compute TTG statistics
                 ttg_stats = [];
@@ -803,6 +803,10 @@ classdef SpatialTuningAnalyzer < handle
             % Initialize storage
             obj.distribution_comparisons = cell(n_clusters, 1);
             
+            % Counter for successful comparisons
+            n_spatially_tuned = 0;
+            n_successful = 0;
+            
             % Process each cluster
             for c = 1:n_clusters
                 cluster = obj.clusters(c);
@@ -816,6 +820,7 @@ classdef SpatialTuningAnalyzer < handle
                     if (isfield(cluster_stats, 'long') && cluster_stats.long.isSpatiallyTuned) || ...
                        (isfield(cluster_stats, 'short') && cluster_stats.short.isSpatiallyTuned)
                         is_spatially_tuned = true;
+                        n_spatially_tuned = n_spatially_tuned + 1;
                     end
                 end
                 
@@ -835,8 +840,8 @@ classdef SpatialTuningAnalyzer < handle
                         
                         % Compute downsampled long data
                         [rate_long_ds_smooth, ~, ~, ~, bin_centers_long_ds, edges_long_ds] = ...
-                            compute_downsampled_long_rates(obj.trial_groups.long, cluster, ...
-                                obj.gauss_sigma_cm, obj.bin_size_cm);
+                            compute_downsampled_long_rates(obj.trial_groups, cluster, ...
+                                obj.bin_size_cm, obj.gauss_sigma_cm);
                         
                         % Perform comparison
                         results = compare_spatial_distributions(...
@@ -846,6 +851,7 @@ classdef SpatialTuningAnalyzer < handle
                             rate_long_ds_smooth, bin_centers_long_ds);
                         
                         obj.distribution_comparisons{c} = results;
+                        n_successful = n_successful + 1;
                     catch ME
                         warning('Failed to compute distribution comparison for cluster %d: %s', ...
                             cluster_id, ME.message);
@@ -856,7 +862,8 @@ classdef SpatialTuningAnalyzer < handle
                 end
             end
             
-            fprintf('  Distribution comparisons complete\n');
+            fprintf('  Distribution comparisons complete: %d spatially tuned, %d successful comparisons\n', ...
+                n_spatially_tuned, n_successful);
         end
         
         function save_cache(obj, cache_filepath)
@@ -900,6 +907,10 @@ classdef SpatialTuningAnalyzer < handle
             bin_size_cm = obj.bin_size_cm;
             gauss_sigma_cm = obj.gauss_sigma_cm;
             
+            % New cached data
+            ttg_analysis = obj.ttg_analysis;
+            distribution_comparisons = obj.distribution_comparisons;
+            
             save(cache_filepath, 'all_rate_smooth_by_group', ...
                  'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
                  'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
@@ -908,7 +919,8 @@ classdef SpatialTuningAnalyzer < handle
                  'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
                  'spatial_tuning_stats', ...
                  'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
-                 'bin_size_cm', 'gauss_sigma_cm', '-v7.3');
+                 'bin_size_cm', 'gauss_sigma_cm', ...
+                 'ttg_analysis', 'distribution_comparisons', '-v7.3');
         end
         
         function load_cache(obj, cache_filepath)
@@ -937,6 +949,10 @@ classdef SpatialTuningAnalyzer < handle
             obj.tuning_stats = loaded_vars.spatial_tuning_stats;
             obj.bin_size_cm = loaded_vars.bin_size_cm;
             obj.gauss_sigma_cm = loaded_vars.gauss_sigma_cm;
+            
+            % Load TTG analysis and distribution comparisons
+            obj.ttg_analysis = loaded_vars.ttg_analysis;
+            obj.distribution_comparisons = loaded_vars.distribution_comparisons;
             
             % Reconstruct bin configuration from loaded parameters
             obj.setup_bins();
