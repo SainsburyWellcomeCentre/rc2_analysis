@@ -7,12 +7,12 @@ classdef ShuffleTuning < handle
 %         tuning        - # bins x # trials giving firing rate in a velocity bin for each trial
 %         n_bins        - # bins
 %         n_trials      - # trials
-%         rsq           - the R^2 of a linear fit to the data
-%         beta          - the parameters of the linear fit
+%         rsq           - the R^2 of a cubic fit to the data
+%         beta          - the parameters of the cubic fit (4 values)
 %         r             - the r value of the fit
 %         
 %         rsq_shuff     - n_reps x 1 vector, R^2 values for shuffled data
-%         beta_shuff    - n_reps x 2 vector, parameters of each shuffled fit
+%         beta_shuff    - n_reps x 4 vector, parameters of each shuffled fit
 %         r_shuff       - n_reps x 1 vector, correlation 
 %         shuff_tuning  - # bins x n_reps containing average for each shuffle
 %         shuff_sd      - # bins x n_reps containing SD for each shuffle
@@ -113,7 +113,7 @@ classdef ShuffleTuning < handle
             
             % preallocate arrays
             obj.rsq_shuff = nan(1, obj.n_reps);
-            obj.beta_shuff = nan(obj.n_reps, 2);
+            obj.beta_shuff = nan(obj.n_reps, 4);
             obj.shuff_tuning = nan(obj.n_bins, obj.n_reps);
             obj.shuff_sd = nan(obj.n_bins, obj.n_reps);
             obj.shuff_n = nan(obj.n_bins, obj.n_reps);
@@ -157,21 +157,21 @@ classdef ShuffleTuning < handle
     methods (Static = true)
         
         function [rsq, beta, r] = get_rsq(x, tuning)
-        %%get_rsq Performs a linear fit to the tuning matrix
+        %%get_rsq Performs a cubic fit to the tuning matrix
         %
         %   [R_sq, BETA, R] = get_rsp(VELOCITY, FIRING_RATE)
         %   takes a # bins x # trials FIRING_RATE matrix and # biins x #
         %   trials VELOCITY matrix (velocities at which FIRING_RATE
-        %   measured) and performs linear fit and correlation.
+        %   measured) and performs cubic fit and correlation.
         %
-        %   R_sq & BETA are the R^2 and parameters of the lienar fit
+        %   R_sq & BETA are the R^2 and parameters of the cubic fit
         %   and R is the correlation between VELOCITY and FIRING_RATE.
         
             x(isnan(tuning)) = [];
             tuning(isnan(tuning)) = [];
             
-            beta = polyfit(x, tuning, 1);
-            yfit =  beta(1)*x + beta(2);
+            beta = polyfit(x, tuning, 3);
+            yfit = beta(1)*x.^3 + beta(2)*x.^2 + beta(3)*x + beta(4);
             yresid = tuning - yfit;
             SSresid = sum(yresid.^2);
             SStotal = (length(tuning)-1) * var(tuning);

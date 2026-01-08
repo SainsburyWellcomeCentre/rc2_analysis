@@ -64,6 +64,8 @@ classdef SpatialTuningAnalyzer < handle
         cluster_ids         % Array of cluster IDs
         firing_rates        % Struct: long/short -> matrices for all clusters
         tuning_stats        % Struct: cluster_id -> long/short -> stats
+        ttg_analysis        % Struct: per-cluster TTG data and statistics
+        distribution_comparisons % Cell array: per-cluster Kruskal-Wallis results
     end
     
     methods
@@ -723,6 +725,138 @@ classdef SpatialTuningAnalyzer < handle
             
             % Count how many trials sampled each bin
             trial_count_map = squeeze(sum(bin_sampled_per_trial, 1));
+        end
+        
+        function compute_ttg_analysis(obj)
+            % Compute time-to-goal analysis for all clusters
+            %
+            %   analyzer.compute_ttg_analysis()
+            %
+            %   Computes TTG tuning and statistics for each cluster.
+            %   Results are stored in obj.ttg_analysis.
+            
+            if isempty(obj.trial_groups)
+                error('Trial groups not initialized. Run collect_trials() first.');
+            end
+            
+            n_clusters = length(obj.clusters);
+            fprintf('  Computing TTG analysis for %d clusters...\n', n_clusters);
+            
+            % Initialize storage
+            obj.ttg_analysis = struct();
+            
+            % Process each cluster
+            for c = 1:n_clusters
+                cluster = obj.clusters(c);
+                cluster_id = cluster.id;
+                cluster_field = sprintf('cluster_%d', cluster_id);
+                
+                % Get global trial indices for this cluster
+                all_global_trial_indices_by_group = struct();
+                for g = 1:2
+                    group = obj.group_names{g};
+                    all_global_trial_indices_by_group.(group) = ...
+                        obj.firing_rates.(group).global_trial_indices{c};
+                end
+                
+                % Compute TTG data
+                [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(...
+                    cluster, obj.trial_groups, obj.group_names, ...
+                    all_global_trial_indices_by_group, c);
+                
+                % Compute TTG statistics
+                ttg_stats = [];
+                if obj.stats_params.run_statistics
+                    ttg_stats = compute_ttg_tuning_statistics(...
+                        ttg_data, obj.group_names, obj.stats_params);
+                end
+                
+                % Store results
+                obj.ttg_analysis.(cluster_field) = struct(...
+                    'ttg_data', ttg_data, ...
+                    'ttg_norm_bin_centers', ttg_norm_bin_centers, ...
+                    'ttg_stats', ttg_stats);
+            end
+            
+            fprintf('  TTG analysis complete\n');
+        end
+        
+        function compute_distribution_comparisons(obj)
+            % Compute Kruskal-Wallis distribution comparisons for all clusters
+            %
+            %   analyzer.compute_distribution_comparisons()
+            %
+            %   Compares spatial distributions between long and short trials
+            %   using Kruskal-Wallis test. Results stored in obj.distribution_comparisons.
+            
+            if isempty(obj.firing_rates)
+                error('Firing rates not computed. Run analyze_all_clusters() first.');
+            end
+            
+            if isempty(obj.ttg_analysis)
+                error('TTG analysis not computed. Run compute_ttg_analysis() first.');
+            end
+            
+            n_clusters = length(obj.clusters);
+            fprintf('  Computing distribution comparisons for %d clusters...\n', n_clusters);
+            
+            % Initialize storage
+            obj.distribution_comparisons = cell(n_clusters, 1);
+            
+            % Process each cluster
+            for c = 1:n_clusters
+                cluster = obj.clusters(c);
+                cluster_id = cluster.id;
+                cluster_field = sprintf('cluster_%d', cluster_id);
+                
+                % Check if spatially tuned
+                is_spatially_tuned = false;
+                if ~isempty(obj.tuning_stats) && isfield(obj.tuning_stats, cluster_field)
+                    cluster_stats = obj.tuning_stats.(cluster_field);
+                    if (isfield(cluster_stats, 'long') && cluster_stats.long.isSpatiallyTuned) || ...
+                       (isfield(cluster_stats, 'short') && cluster_stats.short.isSpatiallyTuned)
+                        is_spatially_tuned = true;
+                    end
+                end
+                
+                % Only compare if spatially tuned
+                if is_spatially_tuned
+                    try
+                        % Get rate data
+                        rate_per_trial_long = obj.firing_rates.long.rate_per_trial{c};
+                        rate_per_trial_short = obj.firing_rates.short.rate_per_trial{c};
+                        bin_centers_long = obj.bin_config.long.centers;
+                        bin_centers_short = obj.bin_config.short.centers;
+                        
+                        % Get TTG rates
+                        ttg_data = obj.ttg_analysis.(cluster_field).ttg_data;
+                        ttg_rate_long = ttg_data.long.rate_per_trial_smooth;
+                        ttg_rate_short = ttg_data.short.rate_per_trial_smooth;
+                        
+                        % Compute downsampled long data
+                        [rate_long_ds_smooth, ~, ~, ~, bin_centers_long_ds, edges_long_ds] = ...
+                            compute_downsampled_long_rates(obj.trial_groups.long, cluster, ...
+                                obj.gauss_sigma_cm, obj.bin_size_cm);
+                        
+                        % Perform comparison
+                        results = compare_spatial_distributions(...
+                            rate_per_trial_long, rate_per_trial_short, ...
+                            bin_centers_long, bin_centers_short, ...
+                            ttg_rate_long, ttg_rate_short, ...
+                            rate_long_ds_smooth, bin_centers_long_ds);
+                        
+                        obj.distribution_comparisons{c} = results;
+                    catch ME
+                        warning('Failed to compute distribution comparison for cluster %d: %s', ...
+                            cluster_id, ME.message);
+                        obj.distribution_comparisons{c} = [];
+                    end
+                else
+                    obj.distribution_comparisons{c} = [];
+                end
+            end
+            
+            fprintf('  Distribution comparisons complete\n');
         end
         
         function save_cache(obj, cache_filepath)
