@@ -1564,9 +1564,14 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                 end
                 face_color = cmap(color_idx, :);
                 
-                % Determine alpha
-                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_vel_n_trials_long')
-                    alpha_val = rate_maps_2d.ttg_vel_trial_counts_long(t, v) / rate_maps_2d.ttg_vel_n_trials_long;
+                % Determine alpha: proportion of trials in this TTG bin that had this velocity
+                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_long')
+                    ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_long(t);
+                    if ttg_occupancy > 0
+                        alpha_val = rate_maps_2d.ttg_vel_trial_counts_long(t, v) / ttg_occupancy;
+                    else
+                        alpha_val = 0;
+                    end
                 else
                     alpha_val = 1;
                 end
@@ -1626,9 +1631,14 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                 end
                 face_color = cmap(color_idx, :);
                 
-                % Determine alpha
-                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_vel_n_trials_short')
-                    alpha_val = rate_maps_2d.ttg_vel_trial_counts_short(t, v) / rate_maps_2d.ttg_vel_n_trials_short;
+                % Determine alpha: proportion of trials in this TTG bin that had this velocity
+                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_short')
+                    ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_short(t);
+                    if ttg_occupancy > 0
+                        alpha_val = rate_maps_2d.ttg_vel_trial_counts_short(t, v) / ttg_occupancy;
+                    else
+                        alpha_val = 0;
+                    end
                 else
                     alpha_val = 1;
                 end
@@ -1688,9 +1698,14 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                 end
                 face_color = cmap(color_idx, :);
                 
-                % Determine alpha
-                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_accel_n_trials_long')
-                    alpha_val = rate_maps_2d.ttg_accel_trial_counts_long(t, a) / rate_maps_2d.ttg_accel_n_trials_long;
+                % Determine alpha: proportion of trials in this TTG bin that had this acceleration
+                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_long')
+                    ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_long(t);
+                    if ttg_occupancy > 0
+                        alpha_val = rate_maps_2d.ttg_accel_trial_counts_long(t, a) / ttg_occupancy;
+                    else
+                        alpha_val = 0;
+                    end
                 else
                     alpha_val = 1;
                 end
@@ -1750,9 +1765,14 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
                 end
                 face_color = cmap(color_idx, :);
                 
-                % Determine alpha
-                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_accel_n_trials_short')
-                    alpha_val = rate_maps_2d.ttg_accel_trial_counts_short(t, a) / rate_maps_2d.ttg_accel_n_trials_short;
+                % Determine alpha: proportion of trials in this TTG bin that had this acceleration
+                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_short')
+                    ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_short(t);
+                    if ttg_occupancy > 0
+                        alpha_val = rate_maps_2d.ttg_accel_trial_counts_short(t, a) / ttg_occupancy;
+                    else
+                        alpha_val = 0;
+                    end
                 else
                     alpha_val = 1;
                 end

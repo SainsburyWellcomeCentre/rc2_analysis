@@ -46,7 +46,7 @@ function rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, trial_groups, rate_
             n_trials = length(trials);
             
             % Compute map
-            [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
+            [rate_map, trial_counts, ttg_bin_occupancy] = compute_ttg_kinematic_map_for_group(...
                 trials, ttg_edges, n_ttg_bins, vel_edges, n_vel_bins, ...
                 rate_per_trial_smooth, 'velocity');
             
@@ -54,6 +54,7 @@ function rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, trial_groups, rate_
             rate_maps_2d.(['ttg_vel_' group]) = rate_map;
             rate_maps_2d.(['ttg_vel_trial_counts_' group]) = trial_counts;
             rate_maps_2d.(['ttg_vel_n_trials_' group]) = n_trials;
+            rate_maps_2d.(['ttg_vel_ttg_occupancy_' group]) = ttg_bin_occupancy;
             rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
         end
     end
@@ -80,7 +81,7 @@ function rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, trial_groups, rate_
             n_trials = length(trials);
             
             % Compute map
-            [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
+            [rate_map, trial_counts, ttg_bin_occupancy] = compute_ttg_kinematic_map_for_group(...
                 trials, ttg_edges, n_ttg_bins, accel_edges, n_accel_bins, ...
                 rate_per_trial_smooth, 'acceleration');
             
@@ -88,13 +89,14 @@ function rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, trial_groups, rate_
             rate_maps_2d.(['ttg_accel_' group]) = rate_map;
             rate_maps_2d.(['ttg_accel_trial_counts_' group]) = trial_counts;
             rate_maps_2d.(['ttg_accel_n_trials_' group]) = n_trials;
+            rate_maps_2d.(['ttg_accel_ttg_occupancy_' group]) = ttg_bin_occupancy;
             rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
         end
     end
 end
 
 
-function [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
+function [rate_map, trial_counts, ttg_bin_occupancy] = compute_ttg_kinematic_map_for_group(...
     trials, ttg_edges, n_ttg_bins, kinematic_edges, n_kinematic_bins, ...
     rate_per_trial_smooth, kinematic_type)
 % COMPUTE_TTG_KINEMATIC_MAP_FOR_GROUP Compute 2D rate map for one group
@@ -111,30 +113,38 @@ function [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
 % OUTPUTS:
 %   rate_map            - 2D rate map (n_ttg_bins × n_kinematic_bins)
 %   trial_counts        - Number of trials contributing to each bin
+%   ttg_bin_occupancy   - Number of trials visiting each TTG bin (1 × n_ttg_bins)
 
     n_trials = length(trials);
     rate_maps_per_trial = nan(n_trials, n_ttg_bins, n_kinematic_bins);
     bin_sampled_per_trial = zeros(n_trials, n_ttg_bins, n_kinematic_bins);
+    ttg_bin_occupancy_per_trial = zeros(n_trials, n_ttg_bins);  % Track TTG bin occupancy separately
     
     for t = 1:n_trials
         trial = trials(t).trial;
         motion_mask = trial.motion_mask();
         
         % Get data during motion
-        time = trial.probe_t(motion_mask);
+        motion_times = trial.probe_t(motion_mask);
         if strcmp(kinematic_type, 'velocity')
             kinematic_data = trial.velocity(motion_mask);
         else
             kinematic_data = trial.acceleration(motion_mask);
         end
         
-        if isempty(time) || length(time) < 2
+        n_motion_samples = length(motion_times);
+        if n_motion_samples < 2
             continue;
         end
         
-        % Compute normalized TTG
-        trial_duration = trial.probe_t(end) - trial.probe_t(1);
-        ttg = trial.probe_t(end) - time;
+        % Create continuous time from number of samples (removes stationary gaps)
+        % This matches the approach in compute_time_to_goal_tuning.m
+        sampling_rate = 10000;  % Hz
+        trial_duration = n_motion_samples / sampling_rate;  % Total motion duration in seconds
+        continuous_time = linspace(0, trial_duration, n_motion_samples)';
+        
+        % Compute normalized TTG using continuous time
+        ttg = trial_duration - continuous_time;
         ttg_norm = (ttg / trial_duration) * 100;
         
         % Initialize map for this trial
@@ -145,6 +155,9 @@ function [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
             in_ttg_bin = ttg_norm >= ttg_edges(b) & ttg_norm < ttg_edges(b+1);
             
             if any(in_ttg_bin)
+                % Mark this TTG bin as occupied in this trial
+                ttg_bin_occupancy_per_trial(t, b) = 1;
+                
                 kinematic_in_bin = kinematic_data(in_ttg_bin);
                 
                 % Assign to kinematic bins
@@ -165,4 +178,7 @@ function [rate_map, trial_counts] = compute_ttg_kinematic_map_for_group(...
     % Compute median and counts
     rate_map = squeeze(nanmedian(rate_maps_per_trial, 1));
     trial_counts = squeeze(sum(bin_sampled_per_trial, 1));
+    
+    % Compute TTG bin occupancy (how many trials visited each TTG bin)
+    ttg_bin_occupancy = sum(ttg_bin_occupancy_per_trial, 1);  % Vector of length n_ttg_bins
 end

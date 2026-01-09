@@ -42,7 +42,7 @@ overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
-re_run_analysis          = true;  % Set to true to recompute all metrics, false to load cached data
+re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
 plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
 plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
 

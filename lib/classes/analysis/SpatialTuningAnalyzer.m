@@ -583,37 +583,40 @@ classdef SpatialTuningAnalyzer < handle
                 
                 % Get position and velocity during motion
                 motion_mask = trial.motion_mask();
-                tvec = trial.probe_t(motion_mask);
                 position = trial.position(motion_mask);
                 velocity = trial.velocity(motion_mask);
                 
-                % Initialize 2D rate map for this trial
-                rate_map_trial = nan(n_pos_bins, n_vel_bins);
-                
-                % For each position bin, assign the spatial firing rate to the appropriate velocity bin
-                for p = 1:n_pos_bins
-                    % Find times when animal was in this position bin
-                    in_pos_bin = position >= pos_edges(p) & position < pos_edges(p+1);
-                    
-                    if any(in_pos_bin)
-                        % Get velocities when in this position bin
-                        vel_in_bin = velocity(in_pos_bin);
-                        
-                        % Assign to velocity bins
-                        for v = 1:n_vel_bins
-                            in_vel_bin = vel_in_bin >= vel_bin_edges(v) & vel_in_bin < vel_bin_edges(v+1);
-                            
-                            % Mark as sampled if this position×velocity combination occurred
-                            if any(in_vel_bin)
-                                bin_sampled_per_trial(t, p, v) = 1;
-                                % Assign the spatial firing rate (already smoothed)
-                                rate_map_trial(p, v) = spatial_rate_smooth(p);
-                            end
-                        end
-                    end
+                if isempty(position)
+                    continue;
                 end
                 
-                rate_maps_per_trial(t, :, :) = rate_map_trial;
+                % Vectorized binning: assign each timepoint to position and velocity bins
+                % discretize returns 0 for out-of-range, so we need to handle edges carefully
+                pos_bin_idx = discretize(position, pos_edges);
+                vel_bin_idx = discretize(velocity, vel_bin_edges);
+                
+                % Remove NaN and out-of-range indices
+                valid_idx = ~isnan(pos_bin_idx) & ~isnan(vel_bin_idx) & ...
+                            pos_bin_idx > 0 & pos_bin_idx <= n_pos_bins & ...
+                            vel_bin_idx > 0 & vel_bin_idx <= n_vel_bins;
+                
+                if ~any(valid_idx)
+                    continue;
+                end
+                
+                pos_bin_idx = pos_bin_idx(valid_idx);
+                vel_bin_idx = vel_bin_idx(valid_idx);
+                
+                % Vectorized approach: for each unique (pos, vel) bin combination,
+                % mark as sampled and assign the spatial firing rate
+                unique_bins = unique([pos_bin_idx(:), vel_bin_idx(:)], 'rows');
+                
+                for i = 1:size(unique_bins, 1)
+                    p = unique_bins(i, 1);
+                    v = unique_bins(i, 2);
+                    bin_sampled_per_trial(t, p, v) = 1;
+                    rate_maps_per_trial(t, p, v) = spatial_rate_smooth(p);
+                end
             end
             
             % Compute median firing rate across trials
@@ -687,37 +690,39 @@ classdef SpatialTuningAnalyzer < handle
                 
                 % Get position and acceleration during motion
                 motion_mask = trial.motion_mask();
-                tvec = trial.probe_t(motion_mask);
                 position = trial.position(motion_mask);
                 acceleration = trial.acceleration(motion_mask);
                 
-                % Initialize 2D rate map for this trial
-                rate_map_trial = nan(n_pos_bins, n_accel_bins);
-                
-                % For each position bin, assign the spatial firing rate to the appropriate acceleration bin
-                for p = 1:n_pos_bins
-                    % Find times when animal was in this position bin
-                    in_pos_bin = position >= pos_edges(p) & position < pos_edges(p+1);
-                    
-                    if any(in_pos_bin)
-                        % Get accelerations when in this position bin
-                        accel_in_bin = acceleration(in_pos_bin);
-                        
-                        % Assign to acceleration bins
-                        for a = 1:n_accel_bins
-                            in_accel_bin = accel_in_bin >= accel_bin_edges(a) & accel_in_bin < accel_bin_edges(a+1);
-                            
-                            % Mark as sampled if this position×acceleration combination occurred
-                            if any(in_accel_bin)
-                                bin_sampled_per_trial(t, p, a) = 1;
-                                % Assign the spatial firing rate (already smoothed)
-                                rate_map_trial(p, a) = spatial_rate_smooth(p);
-                            end
-                        end
-                    end
+                if isempty(position)
+                    continue;
                 end
                 
-                rate_maps_per_trial(t, :, :) = rate_map_trial;
+                % Vectorized binning: assign each timepoint to position and acceleration bins
+                pos_bin_idx = discretize(position, pos_edges);
+                accel_bin_idx = discretize(acceleration, accel_bin_edges);
+                
+                % Remove NaN and out-of-range indices
+                valid_idx = ~isnan(pos_bin_idx) & ~isnan(accel_bin_idx) & ...
+                            pos_bin_idx > 0 & pos_bin_idx <= n_pos_bins & ...
+                            accel_bin_idx > 0 & accel_bin_idx <= n_accel_bins;
+                
+                if ~any(valid_idx)
+                    continue;
+                end
+                
+                pos_bin_idx = pos_bin_idx(valid_idx);
+                accel_bin_idx = accel_bin_idx(valid_idx);
+                
+                % Vectorized approach: for each unique (pos, accel) bin combination,
+                % mark as sampled and assign the spatial firing rate
+                unique_bins = unique([pos_bin_idx(:), accel_bin_idx(:)], 'rows');
+                
+                for i = 1:size(unique_bins, 1)
+                    p = unique_bins(i, 1);
+                    a = unique_bins(i, 2);
+                    bin_sampled_per_trial(t, p, a) = 1;
+                    rate_maps_per_trial(t, p, a) = spatial_rate_smooth(p);
+                end
             end
             
             % Compute median firing rate across trials
