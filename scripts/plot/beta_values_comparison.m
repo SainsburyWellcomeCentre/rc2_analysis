@@ -46,209 +46,23 @@ for pid = 1:length(probe_ids)
     
     fprintf('  Found %d clusters\n', length(clusters));
     
-    % Initialize storage for this probe (3 betas per cluster)
-    n_clusters = length(clusters);
-    beta_velocity = nan(n_clusters, 3);  % 3 coefficients from 2nd order polynomial
-    beta_acceleration = nan(n_clusters, 3);
+    % Load and classify velocity tuning
+    [beta_velocity, sig_velocity, is_linear_velocity] = load_and_classify_tuning(...
+        data, clusters, trial_group_label, 'velocity', p_thresh);
     
-    sig_velocity = false(n_clusters, 1);
-    sig_acceleration = false(n_clusters, 1);
-    is_linear_velocity = false(n_clusters, 1);
-    is_linear_acceleration = false(n_clusters, 1);
-    
-    % Load tuning data for each cluster
-    for c = 1:n_clusters
-        cluster_id = clusters(c).id;
-        
-        try
-            % Load velocity tuning
-            tuning_vel = data.load_tuning_curves(cluster_id, trial_group_label);
-            if isstruct(tuning_vel) && isfield(tuning_vel, 'shuffled') && ...
-               isstruct(tuning_vel.shuffled) && isfield(tuning_vel.shuffled, 'beta') && ...
-               length(tuning_vel.shuffled.beta) >= 3
-                beta_velocity(c, :) = tuning_vel.shuffled.beta;  % All 3 coefficients
-                sig_velocity(c) = tuning_vel.shuffled.p < p_thresh;
-                
-                % F-test to determine if quadratic is better than linear
-                % Use raw data from tuning structure
-                if sig_velocity(c) && isfield(tuning_vel, 'tuning') && isfield(tuning_vel, 'bin_centers')
-                    x_data = tuning_vel.bin_centers(:);
-                    y_data = nanmean(tuning_vel.tuning, 2);  % Average firing rate per bin
-                    
-                    % Remove NaN values
-                    valid_idx = ~isnan(x_data) & ~isnan(y_data);
-                    x_data = x_data(valid_idx);
-                    y_data = y_data(valid_idx);
-                    n = length(y_data);
-                    
-                    if n > 3
-                        % Linear fit
-                        beta_lin = polyfit(x_data, y_data, 1);
-                        yfit_lin = polyval(beta_lin, x_data);
-                        ss_res_lin = sum((y_data - yfit_lin).^2);
-                        
-                        % Quadratic fit (already computed)
-                        yfit_quad = polyval(tuning_vel.shuffled.beta, x_data);
-                        ss_res_quad = sum((y_data - yfit_quad).^2);
-                        
-                        % F-test for nested models
-                        df1 = 1;  % difference in parameters (3 - 2)
-                        df2 = n - 3;  % residual degrees of freedom for quadratic
-                        
-                        if ss_res_quad > 0 && df2 > 0
-                            F = ((ss_res_lin - ss_res_quad) / df1) / (ss_res_quad / df2);
-                            p_quadratic = 1 - fcdf(F, df1, df2);
-                            
-                            % If p > 0.05, quadratic doesn't significantly improve fit
-                            is_linear_velocity(c) = (p_quadratic > 0.05);
-                        end
-                    end
-                end
-            end
-        catch ME
-            fprintf('  Warning: Could not load velocity tuning for cluster %d: %s\n', cluster_id, ME.message);
-        end
-        
-        try
-            % Load acceleration tuning (returns cell array {all, acc, dec})
-            % Use index 1 for "all" acceleration data
-            tuning_acc = data.load_tuning_curves_acceleration(cluster_id, trial_group_label);
-            
-            if iscell(tuning_acc) && length(tuning_acc) >= 1
-                % Acceleration "all" (index 1)
-                if isstruct(tuning_acc{1}) && isfield(tuning_acc{1}, 'shuffled') && ...
-                   isstruct(tuning_acc{1}.shuffled) && isfield(tuning_acc{1}.shuffled, 'beta') && ...
-                   length(tuning_acc{1}.shuffled.beta) >= 3
-                    beta_acceleration(c, :) = tuning_acc{1}.shuffled.beta;  % All 3 coefficients
-                    sig_acceleration(c) = tuning_acc{1}.shuffled.p < p_thresh;
-                    
-                    % F-test to determine if quadratic is better than linear
-                    if sig_acceleration(c) && isfield(tuning_acc{1}, 'tuning') && isfield(tuning_acc{1}, 'bin_centers')
-                        x_data = tuning_acc{1}.bin_centers(:);
-                        y_data = nanmean(tuning_acc{1}.tuning, 2);  % Average firing rate per bin
-                        
-                        % Remove NaN values
-                        valid_idx = ~isnan(x_data) & ~isnan(y_data);
-                        x_data = x_data(valid_idx);
-                        y_data = y_data(valid_idx);
-                        n = length(y_data);
-                        
-                        if n > 3
-                            % Linear fit
-                            beta_lin = polyfit(x_data, y_data, 1);
-                            yfit_lin = polyval(beta_lin, x_data);
-                            ss_res_lin = sum((y_data - yfit_lin).^2);
-                            
-                            % Quadratic fit (already computed)
-                            yfit_quad = polyval(tuning_acc{1}.shuffled.beta, x_data);
-                            ss_res_quad = sum((y_data - yfit_quad).^2);
-                            
-                            % F-test for nested models
-                            df1 = 1;  % difference in parameters (3 - 2)
-                            df2 = n - 3;  % residual degrees of freedom for quadratic
-                            
-                            if ss_res_quad > 0 && df2 > 0
-                                F = ((ss_res_lin - ss_res_quad) / df1) / (ss_res_quad / df2);
-                                p_quadratic = 1 - fcdf(F, df1, df2);
-                                
-                                % If p > 0.05, quadratic doesn't significantly improve fit
-                                is_linear_acceleration(c) = (p_quadratic > 0.05);
-                            end
-                        end
-                    end
-                end
-            end
-        catch ME
-            fprintf('  Warning: Could not load acceleration tuning for cluster %d: %s\n', cluster_id, ME.message);
-        end
-    end
-    
-    % X positions for the 3 beta coefficients
-    x_positions = [1, 2, 3];  % beta0, beta1, beta2
+    % Load and classify acceleration tuning
+    [beta_acceleration, sig_acceleration, is_linear_acceleration] = load_and_classify_tuning(...
+        data, clusters, trial_group_label, 'acceleration', p_thresh);
     
     % Plot velocity tuning (left column)
     subplot(n_rows, n_cols, (pid-1)*n_cols + 1);
-    hold on;
-    for c = 1:n_clusters
-        % Reverse order: polyfit gives [x², x¹, x⁰], we want [x⁰, x¹, x²]
-        beta_values = beta_velocity(c, [3, 2, 1]);
-        
-        % Skip if all values are NaN
-        if all(isnan(beta_values))
-            continue;
-        end
-        
-        % Set color based on significance and linearity
-        if sig_velocity(c)
-            if is_linear_velocity(c)
-                line_color = [0, 0.6, 0.3];  % Green for significant linear
-                marker_face = [0, 0.6, 0.3];
-            else
-                line_color = [0.5, 0, 0.5];  % Purple for significant quadratic
-                marker_face = [0.5, 0, 0.5];
-            end
-        else
-            line_color = [0.7, 0.7, 0.7];  % Gray for not significant
-            marker_face = [0.7, 0.7, 0.7];
-        end
-        
-        % Plot line connecting the points
-        plot(x_positions, beta_values, '-o', ...
-            'Color', line_color, ...
-            'MarkerFaceColor', marker_face, ...
-            'MarkerEdgeColor', line_color, ...
-            'MarkerSize', 4, ...
-            'LineWidth', 1);
-    end
-    hold off;
-    xlim([0.5, 3.5]);
-    set(gca, 'XTick', [1, 2, 3], 'XTickLabel', {'\beta_0', '\beta_1', '\beta_2'});
-    set(gca, 'YScale', 'log');
-    ylabel('Beta value (log scale)');
-    title(sprintf('%s - Velocity (n=%d)', probe_ids{pid}, n_clusters), 'Interpreter', 'none');
-    grid on;
+    plot_beta_coefficients_subplot(beta_velocity, sig_velocity, is_linear_velocity, ...
+        sprintf('%s - Velocity (n=%d)', probe_ids{pid}, length(clusters)));
     
     % Plot acceleration tuning (right column)
     subplot(n_rows, n_cols, (pid-1)*n_cols + 2);
-    hold on;
-    for c = 1:n_clusters
-        % Reverse order: polyfit gives [x², x¹, x⁰], we want [x⁰, x¹, x²]
-        beta_values = beta_acceleration(c, [3, 2, 1]);
-        
-        % Skip if all values are NaN
-        if all(isnan(beta_values))
-            continue;
-        end
-        
-        % Set color based on significance and linearity
-        if sig_acceleration(c)
-            if is_linear_acceleration(c)
-                line_color = [0, 0.6, 0.3];  % Green for significant linear
-                marker_face = [0, 0.6, 0.3];
-            else
-                line_color = [0.5, 0, 0.5];  % Purple for significant quadratic
-                marker_face = [0.5, 0, 0.5];
-            end
-        else
-            line_color = [0.7, 0.7, 0.7];  % Gray for not significant
-            marker_face = [0.7, 0.7, 0.7];
-        end
-        
-        % Plot line connecting the points
-        plot(x_positions, beta_values, '-o', ...
-            'Color', line_color, ...
-            'MarkerFaceColor', marker_face, ...
-            'MarkerEdgeColor', line_color, ...
-            'MarkerSize', 4, ...
-            'LineWidth', 1);
-    end
-    hold off;
-    xlim([0.5, 3.5]);
-    set(gca, 'XTick', [1, 2, 3], 'XTickLabel', {'\beta_0', '\beta_1', '\beta_2'});
-    set(gca, 'YScale', 'log');
-    ylabel('Beta value (log scale)');
-    title(sprintf('%s - Acceleration (n=%d)', probe_ids{pid}, n_clusters), 'Interpreter', 'none');
-    grid on;
+    plot_beta_coefficients_subplot(beta_acceleration, sig_acceleration, is_linear_acceleration, ...
+        sprintf('%s - Acceleration (n=%d)', probe_ids{pid}, length(clusters)));
     
     fprintf('  Completed probe %d/%d\n', pid, length(probe_ids));
 end
@@ -274,129 +88,20 @@ probe_stats = struct();
 for pid = 1:length(probe_ids)
     data = ctl.load_formatted_data(probe_ids{pid});
     clusters = data.selected_clusters();
-    n_clusters = length(clusters);
     
-    n_vel_tuned = 0;
-    n_acc_tuned = 0;
-    n_vel_linear = 0;
-    n_vel_quadratic = 0;
-    n_acc_linear = 0;
-    n_acc_quadratic = 0;
-    
-    for c = 1:n_clusters
-        cluster_id = clusters(c).id;
-        
-        try
-            tuning_vel = data.load_tuning_curves(cluster_id, trial_group_label);
-            if isstruct(tuning_vel) && isfield(tuning_vel, 'shuffled') && ...
-               isstruct(tuning_vel.shuffled) && isfield(tuning_vel.shuffled, 'p')
-                if tuning_vel.shuffled.p < p_thresh
-                    n_vel_tuned = n_vel_tuned + 1;
-                    
-                    % Classify as linear or quadratic using F-test
-                    if isfield(tuning_vel, 'tuning') && isfield(tuning_vel, 'bin_centers')
-                        x_data = tuning_vel.bin_centers(:);
-                        y_data = nanmean(tuning_vel.tuning, 2);
-                        
-                        % Remove NaN values
-                        valid_idx = ~isnan(x_data) & ~isnan(y_data);
-                        x_data = x_data(valid_idx);
-                        y_data = y_data(valid_idx);
-                        n = length(y_data);
-                        
-                        if n > 3
-                            % Linear fit
-                            beta_lin = polyfit(x_data, y_data, 1);
-                            yfit_lin = polyval(beta_lin, x_data);
-                            ss_res_lin = sum((y_data - yfit_lin).^2);
-                            
-                            % Quadratic fit
-                            yfit_quad = polyval(tuning_vel.shuffled.beta, x_data);
-                            ss_res_quad = sum((y_data - yfit_quad).^2);
-                            
-                            % F-test
-                            df1 = 1;
-                            df2 = n - 3;
-                            
-                            if ss_res_quad > 0 && df2 > 0
-                                F = ((ss_res_lin - ss_res_quad) / df1) / (ss_res_quad / df2);
-                                p_quadratic = 1 - fcdf(F, df1, df2);
-                                
-                                if p_quadratic > 0.05
-                                    n_vel_linear = n_vel_linear + 1;
-                                else
-                                    n_vel_quadratic = n_vel_quadratic + 1;
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        catch
-        end
-        
-        try
-            tuning_acc = data.load_tuning_curves_acceleration(cluster_id, trial_group_label);
-            if iscell(tuning_acc) && length(tuning_acc) >= 1
-                if isstruct(tuning_acc{1}) && isfield(tuning_acc{1}, 'shuffled') && ...
-                   isstruct(tuning_acc{1}.shuffled) && isfield(tuning_acc{1}.shuffled, 'p')
-                    if tuning_acc{1}.shuffled.p < p_thresh
-                        n_acc_tuned = n_acc_tuned + 1;
-                        
-                        % Classify as linear or quadratic using F-test
-                        if isfield(tuning_acc{1}, 'tuning') && isfield(tuning_acc{1}, 'bin_centers')
-                            x_data = tuning_acc{1}.bin_centers(:);
-                            y_data = nanmean(tuning_acc{1}.tuning, 2);
-                            
-                            % Remove NaN values
-                            valid_idx = ~isnan(x_data) & ~isnan(y_data);
-                            x_data = x_data(valid_idx);
-                            y_data = y_data(valid_idx);
-                            n = length(y_data);
-                            
-                            if n > 3
-                                % Linear fit
-                                beta_lin = polyfit(x_data, y_data, 1);
-                                yfit_lin = polyval(beta_lin, x_data);
-                                ss_res_lin = sum((y_data - yfit_lin).^2);
-                                
-                                % Quadratic fit
-                                yfit_quad = polyval(tuning_acc{1}.shuffled.beta, x_data);
-                                ss_res_quad = sum((y_data - yfit_quad).^2);
-                                
-                                % F-test
-                                df1 = 1;
-                                df2 = n - 3;
-                                
-                                if ss_res_quad > 0 && df2 > 0
-                                    F = ((ss_res_lin - ss_res_quad) / df1) / (ss_res_quad / df2);
-                                    p_quadratic = 1 - fcdf(F, df1, df2);
-                                    
-                                    if p_quadratic > 0.05
-                                        n_acc_linear = n_acc_linear + 1;
-                                    else
-                                        n_acc_quadratic = n_acc_quadratic + 1;
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        catch
-        end
-    end
+    % Compute statistics using helper function
+    stats = compute_tuning_statistics(data, clusters, trial_group_label, p_thresh);
     
     probe_stats(pid).probe_id = probe_ids{pid};
-    probe_stats(pid).n_clusters = n_clusters;
-    probe_stats(pid).n_vel_tuned = n_vel_tuned;
-    probe_stats(pid).n_acc_tuned = n_acc_tuned;
-    probe_stats(pid).pct_vel_tuned = (n_vel_tuned / n_clusters) * 100;
-    probe_stats(pid).pct_acc_tuned = (n_acc_tuned / n_clusters) * 100;
-    probe_stats(pid).n_vel_linear = n_vel_linear;
-    probe_stats(pid).n_vel_quadratic = n_vel_quadratic;
-    probe_stats(pid).n_acc_linear = n_acc_linear;
-    probe_stats(pid).n_acc_quadratic = n_acc_quadratic;
+    probe_stats(pid).n_clusters = stats.n_clusters;
+    probe_stats(pid).n_vel_tuned = stats.n_vel_tuned;
+    probe_stats(pid).n_acc_tuned = stats.n_acc_tuned;
+    probe_stats(pid).pct_vel_tuned = (stats.n_vel_tuned / stats.n_clusters) * 100;
+    probe_stats(pid).pct_acc_tuned = (stats.n_acc_tuned / stats.n_clusters) * 100;
+    probe_stats(pid).n_vel_linear = stats.n_vel_linear;
+    probe_stats(pid).n_vel_quadratic = stats.n_vel_quadratic;
+    probe_stats(pid).n_acc_linear = stats.n_acc_linear;
+    probe_stats(pid).n_acc_quadratic = stats.n_acc_quadratic;
 end
 
 % Write summary to text file
