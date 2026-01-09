@@ -950,9 +950,20 @@ classdef SpatialTuningAnalyzer < handle
             obj.bin_size_cm = loaded_vars.bin_size_cm;
             obj.gauss_sigma_cm = loaded_vars.gauss_sigma_cm;
             
-            % Load TTG analysis and distribution comparisons
-            obj.ttg_analysis = loaded_vars.ttg_analysis;
-            obj.distribution_comparisons = loaded_vars.distribution_comparisons;
+            % Load TTG analysis and distribution comparisons (if present in cache)
+            if isfield(loaded_vars, 'ttg_analysis')
+                obj.ttg_analysis = loaded_vars.ttg_analysis;
+            else
+                fprintf('  Warning: ttg_analysis not found in cache, will need to recompute\n');
+                obj.ttg_analysis = struct();
+            end
+            
+            if isfield(loaded_vars, 'distribution_comparisons')
+                obj.distribution_comparisons = loaded_vars.distribution_comparisons;
+            else
+                fprintf('  Warning: distribution_comparisons not found in cache, will need to recompute\n');
+                obj.distribution_comparisons = [];
+            end
             
             % Reconstruct bin configuration from loaded parameters
             obj.setup_bins();

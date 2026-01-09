@@ -2,7 +2,15 @@
 % For experiment group 'training_running', bin position into 2-cm bins,
 % normalize spike counts by occupancy, and smooth with a Gaussian kernel (8-cm s.d.)
 %
-% REFACTORED VERSION using SpatialTuningAnalyzer class
+% REFACTORED VERSION using SpatialTuningAnalyzer class and modular helper functions
+%
+% HELPER FUNCTIONS (in lib/spatial_analysis/):
+%   - manage_spatial_analysis_cache.m: Load/save cache with consistent logic
+%   - extract_plotting_data_from_analyzer.m: Extract organized plotting data
+%   - plot_average_velocity_occupancy_profiles.m: Create velocity/occupancy plots
+%   - load_tuning_curves_for_clusters.m: Load velocity/acceleration tuning curves
+%   - prepare_cluster_data_for_plotting.m: Prepare rate and 2D map data per cluster
+%   - compute_ttg_kinematic_maps.m: Compute 2D TTG × velocity/acceleration maps
 %
 % SMOOTHING APPROACH:
 %   Spike counts and occupancy are smoothed SEPARATELY before computing rates.
@@ -34,7 +42,7 @@ overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
-re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
+re_run_analysis          = true;  % Set to true to recompute all metrics, false to load cached data
 plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
 plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
 
@@ -104,300 +112,33 @@ for pid = 1:length(probe_ids)
     analyzer.stats_params.pThresh = pThresh;
     analyzer.stats_params.run_statistics = run_statistics;
     
-    % Try to load cached data if not re-running analysis
-    if ~re_run_analysis && exist(cache_filepath, 'file')
-        fprintf('  Loading cached analysis data from: %s\n', cache_filename);
-        analyzer.load_cache(cache_filepath);
-        fprintf('  Loaded cached data for %d clusters\n', length(analyzer.cluster_ids));
-        
-        % Still need trial_groups for plotting
-        analyzer.collect_trials();
-        
-        % Bin config is reconstructed in load_cache, but verify it exists
-        if isempty(analyzer.bin_config)
-            analyzer.setup_bins();
-        end
-    else
-        if ~re_run_analysis
-            fprintf('  No cache found, computing analysis...\n');
-        else
-            fprintf('  Re-running analysis (re_run_analysis=true)...\n');
-        end
-        
-        % Run full analysis
-        analyzer.analyze_all_clusters();
-        
-        % Compute TTG analysis
-        analyzer.compute_ttg_analysis();
-        
-        % Compute distribution comparisons
-        analyzer.compute_distribution_comparisons();
-        
-        % Print summary
-        analyzer.print_summary();
-        
-        % Save cache
-        fprintf('  Saving analysis data to cache: %s\n', cache_filename);
-        analyzer.save_cache(cache_filepath);
-        fprintf('  Cache saved successfully\n');
-    end
+    % Manage cache loading/saving with helper function
+    analyzer = manage_spatial_analysis_cache(analyzer, cache_filepath, re_run_analysis);
     
-    % Extract data for plotting (convert to old format for compatibility)
-    cluster_ids = analyzer.cluster_ids;
-    n_clusters = length(cluster_ids);
-    group_names = analyzer.group_names;
-    group_labels = analyzer.group_labels;
-    trial_groups = analyzer.trial_groups;
+    % Extract data for plotting using helper function
+    plot_data = extract_plotting_data_from_analyzer(analyzer);
     
-    all_bin_centers_by_group = struct();
-    all_edges_by_group = struct();
-    all_Q1_rate_smooth_by_group = struct();
-    all_Q2_rate_smooth_by_group = struct();
-    all_Q3_rate_smooth_by_group = struct();
-    all_avg_velocity_by_group = struct();
-    all_occ_by_group = struct();
-    all_rate_per_trial_by_group = struct();
-    all_rate_per_trial_smooth_by_group = struct();
-    all_spike_positions_by_group = struct();
-    all_global_trial_indices_by_group = struct();
-    spatial_tuning_stats = analyzer.tuning_stats;
+    % Unpack commonly used variables
+    cluster_ids = plot_data.cluster_ids;
+    n_clusters = plot_data.n_clusters;
+    group_names = plot_data.group_names;
+    group_labels = plot_data.group_labels;
+    trial_groups = plot_data.trial_groups;
+    all_bin_centers_by_group = plot_data.bin_centers;
+    all_edges_by_group = plot_data.edges;
+    all_Q2_rate_smooth_by_group = plot_data.Q2_rate_smooth;
+    spatial_tuning_stats = plot_data.spatial_tuning_stats;
+    dist_comparison_results = plot_data.dist_comparison_results;
     
-    % Initialize storage for TTG rates
+    % Initialize TTG rate storage for heatmap plotting
     all_ttg_rates = struct('long', [], 'short', []);
     ttg_norm_bin_centers = [];
-
-    for g = 1:2
-        group = group_names{g};
-        all_bin_centers_by_group.(group) = analyzer.bin_config.(group).plot_centers;
-        all_edges_by_group.(group) = analyzer.bin_config.(group).edges;
-        all_Q1_rate_smooth_by_group.(group) = analyzer.firing_rates.(group).Q1_smooth;
-        all_Q2_rate_smooth_by_group.(group) = analyzer.firing_rates.(group).Q2_smooth;
-        all_Q3_rate_smooth_by_group.(group) = analyzer.firing_rates.(group).Q3_smooth;
-        all_avg_velocity_by_group.(group) = analyzer.firing_rates.(group).avg_velocity;
-        all_occ_by_group.(group) = analyzer.firing_rates.(group).occupancy;
-        all_rate_per_trial_by_group.(group) = analyzer.firing_rates.(group).rate_per_trial;
-        all_rate_per_trial_smooth_by_group.(group) = analyzer.firing_rates.(group).rate_per_trial_smooth;
-        all_spike_positions_by_group.(group) = analyzer.firing_rates.(group).spike_positions;
-        all_global_trial_indices_by_group.(group) = analyzer.firing_rates.(group).global_trial_indices;
-    end
     
     % --- Plot average running and occupancy profiles for each group ---
     if save_figs
         fprintf('  Creating average running and occupancy profiles...\n');
-        fig_profiles = ctl.figs.a4figure('landscape');
-        
-        % Reconstruct per-trial velocity and occupancy data for plotting
-        trial_vel_by_group = struct();
-        trial_occ_by_group = struct();
-        
-        % Collect data for heatmaps (preserving chronological order)
-        all_idx_vec = [];
-        for g = 1:2
-            trials_struct = trial_groups.(group_names{g});
-            for k = 1:length(trials_struct)
-                if isfield(trials_struct(k), 'global_trial_idx')
-                    all_idx_vec(end+1, 1) = double(trials_struct(k).global_trial_idx); %#ok<AGROW>
-                end
-            end
-        end
-        all_idx_vec = all_idx_vec(isfinite(all_idx_vec));
-        
-        if isempty(all_idx_vec)
-             % Fallback if global indices are missing
-             max_global_idx = 0;
-             for g = 1:2
-                 max_global_idx = max_global_idx + length(trial_groups.(group_names{g}));
-             end
-        else
-            max_global_idx = max(all_idx_vec);
-        end
-        
-        trial_cells = cell(max_global_idx, 1);
-        
-        for g = 1:2
-            group = group_names{g};
-            trials_struct = trial_groups.(group);
-            edges = analyzer.bin_config.(group).edges;
-            bin_centers = analyzer.bin_config.(group).centers;
-            n_bins = analyzer.bin_config.(group).n_bins;
-            
-            n_trials = length(trials_struct);
-            vel_per_trial = nan(n_trials, n_bins);
-            occ_per_trial = nan(n_trials, n_bins);
-            
-            for k = 1:n_trials
-                trial = trials_struct(k).trial;
-                [~, occ, vel, ~] = compute_trial_firing_rate(trial, clusters(1), edges);
-                vel_per_trial(k, :) = vel;
-                occ_per_trial(k, :) = occ;
-                
-                % Store for heatmap
-                trial_info = struct();
-                trial_info.group = group;
-                if isfield(trials_struct(k), 'global_trial_idx')
-                    trial_info.global_idx = double(trials_struct(k).global_trial_idx);
-                else
-                    % Fallback logic if needed
-                    trial_info.global_idx = k; 
-                end
-                
-                if strcmp(group, 'long')
-                    trial_info.color = [0 0 0.8];  % blue
-                    trial_info.bin_centers = bin_centers;
-                else
-                    trial_info.color = [0.8 0 0];  % red
-                    trial_info.bin_centers = bin_centers + 60;
-                end
-                trial_info.vel = vel;
-                trial_info.occ = occ;
-                
-                if trial_info.global_idx > 0 && trial_info.global_idx <= max_global_idx
-                    trial_cells{trial_info.global_idx} = trial_info;
-                end
-            end
-            
-            trial_vel_by_group.(group) = vel_per_trial;
-            trial_occ_by_group.(group) = occ_per_trial;
-        end
-        
-        % Collapse non-empty cells
-        trial_cells = trial_cells(~cellfun(@isempty, trial_cells));
-        all_trials_data = vertcat(trial_cells{:});
-        n_total_trials = length(all_trials_data);
-        
-        % Common bins for heatmaps (0 to 120 cm)
-        pos_bin_centers_common = 0:2:120;
-        
-        % Average velocity plot with individual trials
-        subplot(2, 2, 1, 'Parent', fig_profiles);
-        hold on;
-        for g = 1:2
-            group = group_names{g};
-            bin_centers = all_bin_centers_by_group.(group);
-            
-            % Plot individual trials with thin, semi-transparent lines
-            vel_trials = trial_vel_by_group.(group);
-            for k = 1:size(vel_trials, 1)
-                if g == 1  % long trials - blue
-                    plot(bin_centers, vel_trials(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                else  % short trials - red
-                    plot(bin_centers, vel_trials(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                end
-            end
-            
-            % Plot average with thick line
-            avg_vel = nanmean(all_avg_velocity_by_group.(group), 1);
-            if g == 1  % long trials - blue
-                plot(bin_centers, avg_vel, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            else  % short trials - red
-                plot(bin_centers, avg_vel, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            end
-        end
-        hold off;
-        xlabel('Position (cm)');
-        ylabel('Avg Velocity (cm/s)');
-        % legend('show', 'Location', 'northeastoutside');
-        grid on;
-        
-        % Velocity Heatmap
-        subplot(2, 2, 2, 'Parent', fig_profiles);
-        vel_heatmap = nan(n_total_trials, length(pos_bin_centers_common));
-        for t = 1:n_total_trials
-             centers = all_trials_data(t).bin_centers;
-             values = all_trials_data(t).vel;
-             % Interpolate to common bins
-             vel_heatmap(t, :) = interp1(centers, values, pos_bin_centers_common, 'linear', nan);
-        end
-        
-        vel_min = nanmin(vel_heatmap(:));
-        vel_max = nanmax(vel_heatmap(:));
-        if isnan(vel_min) || isnan(vel_max) || vel_max == vel_min
-            vel_min = 0; vel_max = 1;
-        end
-        vel_norm = (vel_heatmap - vel_min) / (vel_max - vel_min);
-        vel_norm(isnan(vel_norm)) = 0;
-        
-        rgb_image_vel = ones(size(vel_norm, 1), size(vel_norm, 2), 3);
-        for t = 1:n_total_trials
-            base_color = all_trials_data(t).color;
-            for c = 1:3
-                rgb_image_vel(t, :, c) = 1 - vel_norm(t, :) * (1 - base_color(c));
-            end
-        end
-        
-        image(pos_bin_centers_common, 1:n_total_trials, rgb_image_vel);
-        set(gca, 'YDir', 'reverse');
-        ylabel('Trial #');
-        xlabel('Position (cm)');
-        xlim([min(pos_bin_centers_common), max(pos_bin_centers_common)]);
-        title('Velocity Heatmap');
-        
-        % Average occupancy plot with individual trials
-        subplot(2, 2, 3, 'Parent', fig_profiles);
-        hold on;
-        for g = 1:2
-            group = group_names{g};
-            bin_centers = all_bin_centers_by_group.(group);
-            
-            % Plot individual trials with thin, semi-transparent lines
-            occ_trials = trial_occ_by_group.(group);
-            for k = 1:size(occ_trials, 1)
-                if g == 1  % long trials - blue
-                    plot(bin_centers, occ_trials(k, :), 'Color', [0.5 0.5 1], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                else  % short trials - red
-                    plot(bin_centers, occ_trials(k, :), 'Color', [1 0.5 0.5], 'LineWidth', 0.5, 'HandleVisibility', 'off');
-                end
-            end
-            
-            % Plot average with thick line
-            avg_occ = nanmean(all_occ_by_group.(group), 1);
-            if g == 1  % long trials - blue
-                plot(bin_centers, avg_occ, 'Color', [0 0 0.8], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            else  % short trials - red
-                plot(bin_centers, avg_occ, 'Color', [0.8 0 0], 'LineWidth', 2, 'DisplayName', group_labels{g});
-            end
-        end
-        hold off;
-        xlabel('Position (cm)');
-        ylabel('Occupancy (s)');
-        % legend('show', 'Location', 'northeastoutside');
-        grid on;
-        
-        % Occupancy Heatmap
-        subplot(2, 2, 4, 'Parent', fig_profiles);
-        occ_heatmap = nan(n_total_trials, length(pos_bin_centers_common));
-        for t = 1:n_total_trials
-             centers = all_trials_data(t).bin_centers;
-             values = all_trials_data(t).occ;
-             % Interpolate to common bins
-             occ_heatmap(t, :) = interp1(centers, values, pos_bin_centers_common, 'linear', nan);
-        end
-        
-        occ_min = nanmin(occ_heatmap(:));
-        occ_max = nanmax(occ_heatmap(:));
-        if isnan(occ_min) || isnan(occ_max) || occ_max == occ_min
-            occ_min = 0; occ_max = 1;
-        end
-        occ_norm = (occ_heatmap - occ_min) / (occ_max - occ_min);
-        occ_norm(isnan(occ_norm)) = 0;
-        
-        rgb_image_occ = ones(size(occ_norm, 1), size(occ_norm, 2), 3);
-        for t = 1:n_total_trials
-            base_color = all_trials_data(t).color;
-            for c = 1:3
-                rgb_image_occ(t, :, c) = 1 - occ_norm(t, :) * (1 - base_color(c));
-            end
-        end
-        
-        image(pos_bin_centers_common, 1:n_total_trials, rgb_image_occ);
-        set(gca, 'YDir', 'reverse');
-        ylabel('Trial #');
-        xlabel('Position (cm)');
-        xlim([min(pos_bin_centers_common), max(pos_bin_centers_common)]);
-        title('Occupancy Heatmap');
-        
-        % Add figure title
-        FigureTitle(fig_profiles, sprintf('Average Profiles - %s', probe_ids{pid}));
+        fig_profiles = plot_average_velocity_occupancy_profiles(trial_groups, group_names, group_labels, ...
+            all_bin_centers_by_group, analyzer, clusters, probe_ids{pid}, ctl);
         ctl.figs.save_fig_to_join();
     end
     
@@ -409,15 +150,13 @@ for pid = 1:length(probe_ids)
         ctl.figs.save_fig_to_join();
     end
     
-    % Use cached distribution comparisons
-    dist_comparison_results = analyzer.distribution_comparisons;
+    % Verify distribution comparison results
     if ~isempty(dist_comparison_results)
         n_non_empty = sum(~cellfun(@isempty, dist_comparison_results));
-        fprintf('  Using cached distribution comparisons (%d/%d clusters have results)\n', ...
+        fprintf('  Using distribution comparisons (%d/%d clusters have results)\n', ...
             n_non_empty, length(dist_comparison_results));
     else
-        fprintf('  WARNING: No distribution comparisons found in cache!\n');
-        dist_comparison_results = cell(n_clusters, 1);
+        fprintf('  WARNING: No distribution comparisons found!\n');
     end
 
     % For each cluster, create a combined figure with spatial profile and x-normalized comparison
@@ -430,40 +169,10 @@ for pid = 1:length(probe_ids)
         % Initialize TTG field collection across all clusters
         all_ttg_fields = cell(n_clusters, 1);
         
-        % Load speed tuning curves for all clusters (combined long+short trials)
-        tuning_curves = cell(n_clusters, 1);
-        if plot_velocity_tuning
-            for c = 1:n_clusters
-                try
-                    tuning_curves{c} = data.load_tuning_curves(cluster_ids(c), trial_group_label_for_tuning);
-                catch ME
-                    fprintf('    Warning: Could not load speed tuning curve for cluster %d\n', cluster_ids(c));
-                    fprintf('    Error: %s\n', ME.message);
-                    tuning_curves{c} = [];
-                end
-            end
-        end
-        
-        % Load acceleration tuning curves for all clusters (combined long+short trials)
-        accel_tuning_curves = cell(n_clusters, 1);
-        if plot_acceleration_tuning
-            for c = 1:n_clusters
-                try
-                    % load_tuning_curves_acceleration returns a cell array {all, acc, dec}
-                    % We want the 'all' table (index 1) for combined acceleration tuning
-                    accel_data = data.load_tuning_curves_acceleration(cluster_ids(c), trial_group_label_for_accel_tuning);
-                    if ~isempty(accel_data) && length(accel_data) >= 1
-                        accel_tuning_curves{c} = accel_data{1};  % Extract 'all' table
-                    else
-                        accel_tuning_curves{c} = [];
-                    end
-                catch ME
-                    fprintf('    Warning: Could not load acceleration tuning curve for cluster %d\n', cluster_ids(c));
-                    fprintf('    Error: %s\n', ME.message);
-                    accel_tuning_curves{c} = [];
-                end
-            end
-        end
+        % Load tuning curves for all clusters using helper function
+        [tuning_curves, accel_tuning_curves] = load_tuning_curves_for_clusters(...
+            data, cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
+            trial_group_label_for_tuning, trial_group_label_for_accel_tuning);
         
         for c = 1:n_clusters
             % Show progress every 10 clusters to avoid cursor stealing
@@ -473,260 +182,21 @@ for pid = 1:length(probe_ids)
             
             cluster = clusters(c);
             
-            % Compute downsampled long data (for fair relative comparison)
-            % This removes every other bin BEFORE smoothing and rate calculation
-            [rate_long_ds_smooth, Q1_long_ds, Q2_long_ds, Q3_long_ds, bin_centers_long_ds, edges_long_ds] = ...
-                compute_downsampled_long_rates(trial_groups, cluster, bin_size_cm, gauss_sigma_cm);
+            % Prepare all cluster data for plotting using helper function
+            [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
+                prepare_cluster_data_for_plotting(cluster, c, analyzer, plot_data, ...
+                                                   trial_groups, bin_size_cm, gauss_sigma_cm, ...
+                                                   plot_velocity_tuning, plot_acceleration_tuning);
             
-            % Prepare rate data structure for this cluster
-            rate_data = struct();
-            for g = 1:2
-                group = group_names{g};
-                rate_data.(group).Q1_smooth = all_Q1_rate_smooth_by_group.(group)(c, :);
-                rate_data.(group).Q2_smooth = all_Q2_rate_smooth_by_group.(group)(c, :);
-                rate_data.(group).Q3_smooth = all_Q3_rate_smooth_by_group.(group)(c, :);
-                rate_data.(group).rate_per_trial = all_rate_per_trial_by_group.(group){c};
-                rate_data.(group).rate_per_trial_smooth = all_rate_per_trial_smooth_by_group.(group){c};
-                rate_data.(group).spike_positions = all_spike_positions_by_group.(group){c};
-                rate_data.(group).global_trial_indices = all_global_trial_indices_by_group.(group){c};
-            end
-            
-            % Add downsampled long data to rate_data
-            rate_data.long_downsampled = struct();
-            rate_data.long_downsampled.Q1_smooth = Q1_long_ds;
-            rate_data.long_downsampled.Q2_smooth = Q2_long_ds;
-            rate_data.long_downsampled.Q3_smooth = Q3_long_ds;
-            rate_data.long_downsampled.rate_per_trial_smooth = rate_long_ds_smooth;
-            rate_data.long_downsampled.bin_centers = bin_centers_long_ds;
-            rate_data.long_downsampled.edges = edges_long_ds;
-            
-            % Get statistics for this cluster (if available)
-            cluster_stats = [];
-            if ~isempty(spatial_tuning_stats)
-                cluster_field = sprintf('cluster_%d', cluster.id);
-                if isfield(spatial_tuning_stats, cluster_field)
-                    cluster_stats = spatial_tuning_stats.(cluster_field);
-                end
-            end
-            
-            % Compute 2D rate maps (position × velocity/acceleration) with equal-occupancy binning
-            rate_maps_2d = struct();
-            
-            if plot_velocity_tuning
-                % Velocity: use 20 equal-occupancy bins (5% per bin, like tuning curves)
-                n_vel_bins = 20;
-                sigma_vel = 5;  % Smoothing sigma for velocity (cm/s)
-                
-                % Compute for long trials
-                [rate_maps_2d.vel_long, vel_bin_edges_long, vel_trial_counts_long] = ...
-                    analyzer.compute_2d_position_velocity_tuning(cluster, 'long', n_vel_bins, sigma_vel);
-                % Compute for short trials  
-                [rate_maps_2d.vel_short, vel_bin_edges_short, vel_trial_counts_short] = ...
-                    analyzer.compute_2d_position_velocity_tuning(cluster, 'short', n_vel_bins, sigma_vel);
-                
-                % Store bin edges, centers, and trial counts for plotting
-                rate_maps_2d.vel_bin_edges_long = vel_bin_edges_long;
-                rate_maps_2d.vel_bin_edges_short = vel_bin_edges_short;
-                rate_maps_2d.vel_bin_centers_long = (vel_bin_edges_long(1:end-1) + vel_bin_edges_long(2:end)) / 2;
-                rate_maps_2d.vel_bin_centers_short = (vel_bin_edges_short(1:end-1) + vel_bin_edges_short(2:end)) / 2;
-                rate_maps_2d.vel_trial_counts_long = vel_trial_counts_long;
-                rate_maps_2d.vel_trial_counts_short = vel_trial_counts_short;
-                rate_maps_2d.vel_n_trials_long = length(trial_groups.long);
-                rate_maps_2d.vel_n_trials_short = length(trial_groups.short);
-            end
-            
-            if plot_acceleration_tuning
-                % Acceleration: use 20 equal-occupancy bins (5% per bin, like tuning curves)
-                n_accel_bins = 20;
-                sigma_accel = 10;  % Smoothing sigma for acceleration (cm/s²) - reduced to preserve structure
-                
-                % Compute for long trials
-                [rate_maps_2d.accel_long, accel_bin_edges_long, accel_trial_counts_long] = ...
-                    analyzer.compute_2d_position_acceleration_tuning(cluster, 'long', n_accel_bins, sigma_accel);
-                % Compute for short trials
-                [rate_maps_2d.accel_short, accel_bin_edges_short, accel_trial_counts_short] = ...
-                    analyzer.compute_2d_position_acceleration_tuning(cluster, 'short', n_accel_bins, sigma_accel);
-                
-                % Store bin edges, centers, and trial counts for plotting
-                rate_maps_2d.accel_bin_edges_long = accel_bin_edges_long;
-                rate_maps_2d.accel_bin_edges_short = accel_bin_edges_short;
-                rate_maps_2d.accel_bin_centers_long = (accel_bin_edges_long(1:end-1) + accel_bin_edges_long(2:end)) / 2;
-                rate_maps_2d.accel_bin_centers_short = (accel_bin_edges_short(1:end-1) + accel_bin_edges_short(2:end)) / 2;
-                rate_maps_2d.accel_trial_counts_long = accel_trial_counts_long;
-                rate_maps_2d.accel_trial_counts_short = accel_trial_counts_short;
-                rate_maps_2d.accel_n_trials_long = length(trial_groups.long);
-                rate_maps_2d.accel_n_trials_short = length(trial_groups.short);
-            end
-            
-            % Store position bins (both centers and edges) for axis
-            rate_maps_2d.pos_bins_long = analyzer.bin_config.long.centers;
-            rate_maps_2d.pos_bins_short = analyzer.bin_config.short.centers;
-            rate_maps_2d.pos_bin_edges_long = analyzer.bin_config.long.edges;
-            rate_maps_2d.pos_bin_edges_short = analyzer.bin_config.short.edges;
-            
-            % Get cached TTG data
+            % Get TTG bin centers for later use
             cluster_field = sprintf('cluster_%d', cluster.id);
-            ttg_data = analyzer.ttg_analysis.(cluster_field).ttg_data;
             ttg_norm_bin_centers = analyzer.ttg_analysis.(cluster_field).ttg_norm_bin_centers;
-            ttg_stats = analyzer.ttg_analysis.(cluster_field).ttg_stats;
             
             % Store median TTG rates for later heatmap plotting
             for g = 1:2
                 group = group_names{g};
                 Q2_smooth = quantile(ttg_data.(group).rate_per_trial_smooth, 0.50, 1);
                 all_ttg_rates.(group)(c, :) = Q2_smooth;
-            end
-            
-            % --- Compute 2D Relative TTG x Velocity maps ---
-            if plot_velocity_tuning
-                for g = 1:2
-                    group = group_names{g};
-                    
-                    % Get velocity bin edges (computed earlier)
-                    if strcmp(group, 'long')
-                        vel_edges = rate_maps_2d.vel_bin_edges_long;
-                    else
-                        vel_edges = rate_maps_2d.vel_bin_edges_short;
-                    end
-                    n_vel_bins = length(vel_edges) - 1;
-                    
-                    % Get TTG data
-                    ttg_edges = ttg_data.(group).bin_edges_norm;
-                    n_ttg_bins = length(ttg_edges) - 1;
-                    rate_per_trial_smooth = ttg_data.(group).rate_per_trial_smooth;
-                    
-                    trials = trial_groups.(group);
-                    n_trials = length(trials);
-                    
-                    % Initialize 2D arrays
-                    rate_maps_per_trial = nan(n_trials, n_ttg_bins, n_vel_bins);
-                    bin_sampled_per_trial = zeros(n_trials, n_ttg_bins, n_vel_bins);
-                    
-                    for t = 1:n_trials
-                        trial = trials(t).trial;
-                        motion_mask = trial.motion_mask();
-                        
-                        % Get data during motion
-                        time = trial.probe_t(motion_mask);
-                        velocity = trial.velocity(motion_mask);
-                        
-                        if isempty(time) || length(time) < 2
-                            continue;
-                        end
-                        
-                        % Compute normalized TTG
-                        trial_duration = trial.probe_t(end) - trial.probe_t(1);
-                        ttg = trial.probe_t(end) - time;
-                        ttg_norm = (ttg / trial_duration) * 100;
-                        
-                        % Initialize map for this trial
-                        rate_map_trial = nan(n_ttg_bins, n_vel_bins);
-                        
-                        % For each TTG bin
-                        for b = 1:n_ttg_bins
-                            % Find times in this TTG bin
-                            in_bin = ttg_norm >= ttg_edges(b) & ttg_norm < ttg_edges(b+1);
-                            
-                            if any(in_bin)
-                                % Get velocities in this bin
-                                vel_in_bin = velocity(in_bin);
-                                
-                                % Assign to velocity bins
-                                for v = 1:n_vel_bins
-                                    in_vel_bin = vel_in_bin >= vel_edges(v) & vel_in_bin < vel_edges(v+1);
-                                    
-                                    if any(in_vel_bin)
-                                        bin_sampled_per_trial(t, b, v) = 1;
-                                        rate_map_trial(b, v) = rate_per_trial_smooth(t, b);
-                                    end
-                                end
-                            end
-                        end
-                        rate_maps_per_trial(t, :, :) = rate_map_trial;
-                    end
-                    
-                    % Compute median and counts
-                    rate_maps_2d.(['ttg_vel_' group]) = squeeze(nanmedian(rate_maps_per_trial, 1));
-                    rate_maps_2d.(['ttg_vel_trial_counts_' group]) = squeeze(sum(bin_sampled_per_trial, 1));
-                    rate_maps_2d.(['ttg_vel_n_trials_' group]) = n_trials;
-                    rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
-                end
-            end
-            
-            % --- Compute 2D Relative TTG x Acceleration maps ---
-            if plot_acceleration_tuning
-                for g = 1:2
-                    group = group_names{g};
-                    
-                    % Get acceleration bin edges (computed earlier)
-                    if strcmp(group, 'long')
-                        accel_edges = rate_maps_2d.accel_bin_edges_long;
-                    else
-                        accel_edges = rate_maps_2d.accel_bin_edges_short;
-                    end
-                    n_accel_bins = length(accel_edges) - 1;
-                    
-                    % Get TTG data
-                    ttg_edges = ttg_data.(group).bin_edges_norm;
-                    n_ttg_bins = length(ttg_edges) - 1;
-                    rate_per_trial_smooth = ttg_data.(group).rate_per_trial_smooth;
-                    
-                    trials = trial_groups.(group);
-                    n_trials = length(trials);
-                    
-                    % Initialize 2D arrays
-                    rate_maps_per_trial = nan(n_trials, n_ttg_bins, n_accel_bins);
-                    bin_sampled_per_trial = zeros(n_trials, n_ttg_bins, n_accel_bins);
-                    
-                    for t = 1:n_trials
-                        trial = trials(t).trial;
-                        motion_mask = trial.motion_mask();
-                        
-                        % Get data during motion
-                        time = trial.probe_t(motion_mask);
-                        acceleration = trial.acceleration(motion_mask);
-                        
-                        if isempty(time) || length(time) < 2
-                            continue;
-                        end
-                        
-                        % Compute normalized TTG
-                        trial_duration = trial.probe_t(end) - trial.probe_t(1);
-                        ttg = trial.probe_t(end) - time;
-                        ttg_norm = (ttg / trial_duration) * 100;
-                        
-                        % Initialize map for this trial
-                        rate_map_trial = nan(n_ttg_bins, n_accel_bins);
-                        
-                        % For each TTG bin
-                        for b = 1:n_ttg_bins
-                            % Find times in this TTG bin
-                            in_bin = ttg_norm >= ttg_edges(b) & ttg_norm < ttg_edges(b+1);
-                            
-                            if any(in_bin)
-                                % Get accelerations in this bin
-                                accel_in_bin = acceleration(in_bin);
-                                
-                                % Assign to acceleration bins
-                                for a = 1:n_accel_bins
-                                    in_accel_bin = accel_in_bin >= accel_edges(a) & accel_in_bin < accel_edges(a+1);
-                                    
-                                    if any(in_accel_bin)
-                                        bin_sampled_per_trial(t, b, a) = 1;
-                                        rate_map_trial(b, a) = rate_per_trial_smooth(t, b);
-                                    end
-                                end
-                            end
-                        end
-                        rate_maps_per_trial(t, :, :) = rate_map_trial;
-                    end
-                    
-                    % Compute median and counts
-                    rate_maps_2d.(['ttg_accel_' group]) = squeeze(nanmedian(rate_maps_per_trial, 1));
-                    rate_maps_2d.(['ttg_accel_trial_counts_' group]) = squeeze(sum(bin_sampled_per_trial, 1));
-                    rate_maps_2d.(['ttg_accel_n_trials_' group]) = n_trials;
-                    rate_maps_2d.(['ttg_bin_edges_' group]) = ttg_edges;
-                end
             end
 
             % Create combined figure using helper function
@@ -992,12 +462,10 @@ for pid = 1:length(probe_ids)
     fprintf('  Completed probe %d/%d\n', pid, length(probe_ids));
     
     % Clean up memory
-    clear analyzer data clusters sessions trial_groups
-    clear all_bin_centers_by_group all_avg_velocity_by_group
-    clear all_Q1_rate_smooth_by_group all_Q2_rate_smooth_by_group all_Q3_rate_smooth_by_group
-    clear all_occ_by_group all_rate_per_trial_by_group all_rate_per_trial_smooth_by_group
-    clear all_spike_positions_by_group all_global_trial_indices_by_group
-    clear spatial_tuning_stats
+    clear analyzer data clusters sessions plot_data
+    clear trial_groups all_bin_centers_by_group all_edges_by_group
+    clear all_Q2_rate_smooth_by_group spatial_tuning_stats dist_comparison_results
+    clear all_ttg_rates ttg_norm_bin_centers
     
     fprintf('  Memory cleaned up after probe %d/%d\n', pid, length(probe_ids));
 end
