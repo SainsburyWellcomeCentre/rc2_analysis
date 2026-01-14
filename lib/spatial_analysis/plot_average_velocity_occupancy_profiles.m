@@ -1,16 +1,15 @@
 function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_names, group_labels, ...
-                                                        all_bin_centers_by_group, analyzer, clusters, probe_id, ctl)
+                                                        analyzer, clusters, probe_id, ctl)
 % PLOT_AVERAGE_VELOCITY_OCCUPANCY_PROFILES Create 2x2 figure with velocity and occupancy plots
 %
 % SYNTAX:
 %   fig = plot_average_velocity_occupancy_profiles(trial_groups, group_names, group_labels, ...
-%                                                   all_bin_centers_by_group, analyzer, clusters, probe_id, ctl)
+%                                                   analyzer, clusters, probe_id, ctl)
 %
 % INPUTS:
 %   trial_groups              - Struct with 'long' and 'short' trial arrays
 %   group_names               - Cell array of group names {'long', 'short'}
 %   group_labels              - Cell array of group labels for display
-%   all_bin_centers_by_group  - Struct with bin centers for each group
 %   analyzer                  - SpatialTuningAnalyzer instance
 %   clusters                  - Array of cluster objects
 %   probe_id                  - String identifier for probe
@@ -114,7 +113,7 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
     hold on;
     for g = 1:2
         group = group_names{g};
-        bin_centers = all_bin_centers_by_group.(group);
+        bin_centers = analyzer.bin_config.(group).plot_centers;
         vel_trials = trial_vel_by_group.(group);
         
         % Plot individual trials with thin, semi-transparent lines
@@ -128,8 +127,8 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
             end
         end
         
-        % Plot average with thick line
-        avg_vel = analyzer.firing_rates.(group).avg_velocity;
+        % Plot average with thick line (use first cluster's avg_velocity)
+        avg_vel = analyzer.firing_rates.(group).avg_velocity(1, :);
         if g == 1  % long trials - blue
             plot(bin_centers, avg_vel, 'Color', [0 0 0.8], 'LineWidth', 2, ...
                  'DisplayName', group_labels{g});
@@ -158,7 +157,7 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
     hold on;
     for g = 1:2
         group = group_names{g};
-        bin_centers = all_bin_centers_by_group.(group);
+        bin_centers = analyzer.bin_config.(group).plot_centers;
         occ_trials = trial_occ_by_group.(group);
         
         % Plot individual trials with thin, semi-transparent lines
@@ -172,8 +171,8 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
             end
         end
         
-        % Plot average with thick line
-        avg_occ = analyzer.firing_rates.(group).occupancy;
+        % Plot average with thick line (use first cluster's occupancy)
+        avg_occ = analyzer.firing_rates.(group).occupancy(1, :);
         if g == 1  % long trials - blue
             plot(bin_centers, avg_occ, 'Color', [0 0 0.8], 'LineWidth', 2, ...
                  'DisplayName', group_labels{g});

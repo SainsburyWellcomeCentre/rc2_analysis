@@ -42,9 +42,9 @@ overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
-re_run_analysis          = true;  % Set to true to recompute all metrics, false to load cached data
-plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
-plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
+re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
+plot_velocity_tuning     = false;   % Set to false to skip velocity tuning plots
+plot_acceleration_tuning = false;   % Set to false to skip acceleration tuning plots
 
 % Parallel processing configuration
 use_parallel            = true;   % Set to false to disable parallel processing entirely
@@ -124,21 +124,6 @@ for pid = 1:length(probe_ids)
         analyzer = load_spatial_analysis_cache(clusters, sessions, cache_filepath);
     end
     
-    % Extract data for plotting using helper function
-    plot_data = extract_plotting_data_from_analyzer(analyzer);
-    
-    % Unpack commonly used variables
-    cluster_ids = plot_data.cluster_ids;
-    n_clusters = plot_data.n_clusters;
-    group_names = plot_data.group_names;
-    group_labels = plot_data.group_labels;
-    trial_groups = plot_data.trial_groups;
-    all_bin_centers_by_group = plot_data.bin_centers;
-    all_edges_by_group = plot_data.edges;
-    all_Q2_rate_smooth_by_group = plot_data.Q2_rate_smooth;
-    spatial_tuning_stats = plot_data.spatial_tuning_stats;
-    dist_comparison_results = plot_data.dist_comparison_results;
-    
     % Initialize TTG rate storage for heatmap plotting
     all_ttg_rates = struct('long', [], 'short', []);
     ttg_norm_bin_centers = [];
@@ -146,55 +131,55 @@ for pid = 1:length(probe_ids)
     % --- Plot average running and occupancy profiles for each group ---
     if save_figs
         fprintf('  Creating average running and occupancy profiles...\n');
-        fig_profiles = plot_average_velocity_occupancy_profiles(trial_groups, group_names, group_labels, ...
-            all_bin_centers_by_group, analyzer, clusters, probe_ids{pid}, ctl);
+        fig_profiles = plot_average_velocity_occupancy_profiles(analyzer.trial_groups, analyzer.group_names, analyzer.group_labels, ...
+            analyzer, clusters, probe_ids{pid}, ctl);
         ctl.figs.save_fig_to_join();
     end
     
     % --- Plot Time-to-Goal analysis figure ---
     if save_figs
         fprintf('  Creating time-to-goal analysis figure...\n');
-        fig_ttg_analysis = plot_time_to_goal_analysis(trial_groups, group_names, group_labels, ...
-            all_bin_centers_by_group, all_edges_by_group, probe_ids{pid}, ctl);
+        fig_ttg_analysis = plot_time_to_goal_analysis(analyzer.trial_groups, analyzer.group_names, analyzer.group_labels, ...
+            analyzer.bin_config, probe_ids{pid}, ctl);
         ctl.figs.save_fig_to_join();
     end
     
     % Verify distribution comparison results
-    if ~isempty(dist_comparison_results)
-        n_non_empty = sum(~cellfun(@isempty, dist_comparison_results));
+    if ~isempty(analyzer.distribution_comparisons)
+        n_non_empty = sum(~cellfun(@isempty, analyzer.distribution_comparisons));
         fprintf('  Using distribution comparisons (%d/%d clusters have results)\n', ...
-            n_non_empty, length(dist_comparison_results));
+            n_non_empty, length(analyzer.distribution_comparisons));
     else
         fprintf('  WARNING: No distribution comparisons found!\n');
     end
 
     % For each cluster, create a combined figure with spatial profile and x-normalized comparison
     if plot_single_cluster_fig
-        fprintf('  Creating individual cluster plots (%d clusters)...\n', n_clusters);
+        fprintf('  Creating individual cluster plots (%d clusters)...\n', length(analyzer.cluster_ids));
         
         % Define colors for the two groups
         group_colors = struct('long', [0 0 0.8], 'short', [0.8 0 0]); % Blue for long, red for short
         
         % Initialize TTG field collection across all clusters
-        all_ttg_fields = cell(n_clusters, 1);
+        all_ttg_fields = cell(length(analyzer.cluster_ids), 1);
         
         % Load tuning curves for all clusters using helper function
         [tuning_curves, accel_tuning_curves] = load_tuning_curves_for_clusters(...
-            data, cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
+            data, analyzer.cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
             trial_group_label_for_tuning, trial_group_label_for_accel_tuning);
         
-        for c = 1:n_clusters
+        for c = 1:length(analyzer.cluster_ids)
             % Show progress every 10 clusters to avoid cursor stealing
-            if mod(c, 10) == 1 || c == n_clusters
-                fprintf('    Processing cluster %d/%d...\n', c, n_clusters);
+            if mod(c, 10) == 1 || c == length(analyzer.cluster_ids)
+                fprintf('    Processing cluster %d/%d...\n', c, length(analyzer.cluster_ids));
             end
             
             cluster = clusters(c);
             
             % Prepare all cluster data for plotting using helper function
             [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
-                prepare_cluster_data_for_plotting(cluster, c, analyzer, plot_data, ...
-                                                   trial_groups, bin_size_cm, gauss_sigma_cm, ...
+                prepare_cluster_data_for_plotting(cluster, c, analyzer, ...
+                                                   analyzer.trial_groups, bin_size_cm, gauss_sigma_cm, ...
                                                    plot_velocity_tuning, plot_acceleration_tuning);
             
             % Get TTG bin centers for later use
@@ -203,16 +188,21 @@ for pid = 1:length(probe_ids)
             
             % Store median TTG rates for later heatmap plotting
             for g = 1:2
-                group = group_names{g};
+                group = analyzer.group_names{g};
                 Q2_smooth = quantile(ttg_data.(group).rate_per_trial_smooth, 0.50, 1);
                 all_ttg_rates.(group)(c, :) = Q2_smooth;
             end
+            
+            % Extract bin centers for plotting
+            bin_centers_for_plot = struct();
+            bin_centers_for_plot.long = analyzer.bin_config.long.plot_centers;
+            bin_centers_for_plot.short = analyzer.bin_config.short.plot_centers;
 
             % Create combined figure using helper function
             try
-                [fig_cluster, ttg_fields] = plot_cluster_spatial_profile(cluster.id, all_bin_centers_by_group, ...
-                                                           rate_data, group_names, group_labels, ...
-                                                           group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, dist_comparison_results{c}, ttg_data, ttg_stats);
+                [fig_cluster, ttg_fields] = plot_cluster_spatial_profile(cluster.id, bin_centers_for_plot, ...
+                                                           rate_data, analyzer.group_names, analyzer.group_labels, ...
+                                                           group_colors, probe_ids{pid}, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, analyzer.distribution_comparisons{c}, ttg_data, ttg_stats);
                 
                 % Store TTG field information for this cluster
                 all_ttg_fields{c} = ttg_fields;
@@ -252,7 +242,7 @@ for pid = 1:length(probe_ids)
     % Plot distribution comparison contingency table
     if save_figs
         fprintf('  Creating distribution comparison contingency table...\n');
-        fig_contingency = plot_distribution_comparison_contingency(dist_comparison_results, cluster_ids, probe_ids{pid});
+        fig_contingency = plot_distribution_comparison_contingency(analyzer.distribution_comparisons, analyzer.cluster_ids, probe_ids{pid});
         
         % Convert to a4figure format for PDF joining
         set(fig_contingency, 'PaperOrientation', 'landscape');
@@ -267,11 +257,11 @@ for pid = 1:length(probe_ids)
         fig_heatmaps = ctl.figs.a4figure('landscape');
     
         % Sort clusters by maximum peak positional firing rate for long trials
-        long_rate_mat = all_Q2_rate_smooth_by_group.('long');
-        peak_positions = zeros(n_clusters, 1);
-        for c = 1:n_clusters
+        long_rate_mat = analyzer.firing_rates.long.Q2_smooth;
+        peak_positions = zeros(length(analyzer.cluster_ids), 1);
+        for c = 1:length(analyzer.cluster_ids)
             rate_profile = long_rate_mat(c, :);
-            bin_centers = all_bin_centers_by_group.('long');
+            bin_centers = analyzer.bin_config.long.plot_centers;
             
             % Find the position of the maximum peak
             [~, max_idx] = max(rate_profile);
@@ -280,14 +270,14 @@ for pid = 1:length(probe_ids)
         [~, sort_idx] = sort(peak_positions);
         
         % Determine significance for each cluster in each condition
-        is_significant_long = false(n_clusters, 1);
-        is_significant_short = false(n_clusters, 1);
+        is_significant_long = false(length(analyzer.cluster_ids), 1);
+        is_significant_short = false(length(analyzer.cluster_ids), 1);
         
-        if ~isempty(spatial_tuning_stats)
-            for c = 1:n_clusters
-                cluster_field = sprintf('cluster_%d', cluster_ids(c));
-                if isfield(spatial_tuning_stats, cluster_field)
-                    stats = spatial_tuning_stats.(cluster_field);
+        if ~isempty(analyzer.tuning_stats)
+            for c = 1:length(analyzer.cluster_ids)
+                cluster_field = sprintf('cluster_%d', analyzer.cluster_ids(c));
+                if isfield(analyzer.tuning_stats, cluster_field)
+                    stats = analyzer.tuning_stats.(cluster_field);
                     if isfield(stats, 'long') && stats.long.isSpatiallyTuned
                         is_significant_long(c) = true;
                     end
@@ -303,9 +293,9 @@ for pid = 1:length(probe_ids)
         sorted_is_significant_short = is_significant_short(sort_idx);
     
         for g = 1:2
-            group = group_names{g};
-            rate_mat = all_Q2_rate_smooth_by_group.(group);  % Use median (Q2) instead of mean
-            bin_centers = all_bin_centers_by_group.(group);
+            group = analyzer.group_names{g};
+            rate_mat = analyzer.firing_rates.(group).Q2_smooth;  % Use median (Q2) instead of mean
+            bin_centers = analyzer.bin_config.(group).plot_centers;
             sorted_rate_mat = rate_mat(sort_idx, :);
             
             % Get significance for this group
@@ -356,7 +346,7 @@ for pid = 1:length(probe_ids)
             else
                 xlim([0, 120]);
             end
-            title(group_labels{g});
+            title(analyzer.group_labels{g});
             
             % Non-significant clusters (grayscale) - Row 2
             subplot(2, 2, g+2, 'Parent', fig_heatmaps);
@@ -413,21 +403,21 @@ for pid = 1:length(probe_ids)
         if save_figs
             fprintf('  Creating Time-to-Goal Heatmaps...\n');
             fig_ttg_heatmaps = plot_time_to_goal_heatmaps(all_ttg_rates, all_ttg_fields, ...
-                ttg_norm_bin_centers, cluster_ids, probe_ids{pid}, ctl);
+                ttg_norm_bin_centers, analyzer.cluster_ids, probe_ids{pid}, ctl);
             ctl.figs.save_fig_to_join();
         end
         
         % Plot spatially tuned clusters
-        if ~isempty(spatial_tuning_stats)
+        if ~isempty(analyzer.tuning_stats)
             fprintf('  Creating spatially tuned clusters plot...\n');
             
             % Identify clusters tuned in at least one condition
             spatially_tuned_any = [];
             
-            for c = 1:n_clusters
-                cluster_field = sprintf('cluster_%d', cluster_ids(c));
-                if isfield(spatial_tuning_stats, cluster_field)
-                    stats = spatial_tuning_stats.(cluster_field);
+            for c = 1:length(analyzer.cluster_ids)
+                cluster_field = sprintf('cluster_%d', analyzer.cluster_ids(c));
+                if isfield(analyzer.tuning_stats, cluster_field)
+                    stats = analyzer.tuning_stats.(cluster_field);
                     if (isfield(stats, 'long') && stats.long.isSpatiallyTuned) || ...
                        (isfield(stats, 'short') && stats.short.isSpatiallyTuned)
                         spatially_tuned_any = [spatially_tuned_any; c]; %#ok<AGROW>
@@ -439,9 +429,9 @@ for pid = 1:length(probe_ids)
             fprintf('    Found %d clusters spatially tuned in at least one condition\n', n_tuned);
             
             % Create 3D visualization and get fit results
-            [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, ...
-                all_bin_centers_by_group, all_Q2_rate_smooth_by_group, ...
-                cluster_ids, probe_ids{pid}, ctl);
+            [fig_3d, fit_results] = plot_spatial_tuning_3d(analyzer.tuning_stats, ...
+                analyzer.bin_config, analyzer.firing_rates, ...
+                analyzer.cluster_ids, probe_ids{pid}, ctl);
             
             if ~isempty(fig_3d)
                 ctl.figs.save_fig_to_join();
@@ -457,7 +447,7 @@ for pid = 1:length(probe_ids)
         ttg_cache_filename = sprintf('%s_ttg_cache.mat', probe_ids{pid});
         ttg_cache_filepath = fullfile(ctl.figs.curr_dir, ttg_cache_filename);
         fprintf('  Saving TTG data to cache: %s\n', ttg_cache_filename);
-        save(ttg_cache_filepath, 'all_ttg_rates', 'ttg_norm_bin_centers', 'cluster_ids', '-v7.3');
+        save(ttg_cache_filepath, 'all_ttg_rates', 'ttg_norm_bin_centers', 'analyzer.cluster_ids', '-v7.3');
     end
     
     % Join figures if requested
@@ -471,9 +461,7 @@ for pid = 1:length(probe_ids)
     fprintf('  Completed probe %d/%d\n', pid, length(probe_ids));
     
     % Clean up memory
-    clear analyzer data clusters sessions plot_data
-    clear trial_groups all_bin_centers_by_group all_edges_by_group
-    clear all_Q2_rate_smooth_by_group spatial_tuning_stats dist_comparison_results
+    clear analyzer data clusters sessions
     clear all_ttg_rates ttg_norm_bin_centers
     
     fprintf('  Memory cleaned up after probe %d/%d\n', pid, length(probe_ids));

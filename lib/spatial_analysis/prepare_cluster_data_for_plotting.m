@@ -1,12 +1,12 @@
 function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
-    prepare_cluster_data_for_plotting(cluster, c, analyzer, plot_data, ...
+    prepare_cluster_data_for_plotting(cluster, c, analyzer, ...
                                        trial_groups, bin_size_cm, gauss_sigma_cm, ...
                                        plot_velocity, plot_acceleration)
 % PREPARE_CLUSTER_DATA_FOR_PLOTTING Prepare all data needed for cluster plotting
 %
 % SYNTAX:
 %   [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
-%       prepare_cluster_data_for_plotting(cluster, c, analyzer, plot_data, ...
+%       prepare_cluster_data_for_plotting(cluster, c, analyzer, ...
 %                                          trial_groups, bin_size_cm, gauss_sigma_cm, ...
 %                                          plot_velocity, plot_acceleration)
 %
@@ -14,7 +14,6 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
 %   cluster             - Cluster object
 %   c                   - Cluster index
 %   analyzer            - SpatialTuningAnalyzer instance
-%   plot_data           - Struct from extract_plotting_data_from_analyzer
 %   trial_groups        - Struct with trial arrays
 %   bin_size_cm         - Bin size in cm
 %   gauss_sigma_cm      - Gaussian smoothing sigma in cm
@@ -28,7 +27,7 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
 %   ttg_data            - Time-to-goal data
 %   ttg_stats           - Time-to-goal statistics
 
-    group_names = plot_data.group_names;
+    group_names = analyzer.group_names;
     
     % --- Compute downsampled long data ---
     [rate_long_ds_smooth, Q1_long_ds, Q2_long_ds, Q3_long_ds, bin_centers_long_ds, edges_long_ds] = ...
@@ -38,13 +37,13 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
     rate_data = struct();
     for g = 1:2
         group = group_names{g};
-        rate_data.(group).Q1_smooth = plot_data.Q1_rate_smooth.(group)(c, :);
-        rate_data.(group).Q2_smooth = plot_data.Q2_rate_smooth.(group)(c, :);
-        rate_data.(group).Q3_smooth = plot_data.Q3_rate_smooth.(group)(c, :);
-        rate_data.(group).rate_per_trial = plot_data.rate_per_trial.(group){c};
-        rate_data.(group).rate_per_trial_smooth = plot_data.rate_per_trial_smooth.(group){c};
-        rate_data.(group).spike_positions = plot_data.spike_positions.(group){c};
-        rate_data.(group).global_trial_indices = plot_data.global_trial_indices.(group){c};
+        rate_data.(group).Q1_smooth = analyzer.firing_rates.(group).Q1_smooth(c, :);
+        rate_data.(group).Q2_smooth = analyzer.firing_rates.(group).Q2_smooth(c, :);
+        rate_data.(group).Q3_smooth = analyzer.firing_rates.(group).Q3_smooth(c, :);
+        rate_data.(group).rate_per_trial = analyzer.firing_rates.(group).rate_per_trial{c};
+        rate_data.(group).rate_per_trial_smooth = analyzer.firing_rates.(group).rate_per_trial_smooth{c};
+        rate_data.(group).spike_positions = analyzer.firing_rates.(group).spike_positions{c};
+        rate_data.(group).global_trial_indices = analyzer.firing_rates.(group).global_trial_indices{c};
     end
     
     % Add downsampled long data
@@ -58,10 +57,10 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
     
     % --- Get cluster statistics ---
     cluster_stats = [];
-    if ~isempty(plot_data.spatial_tuning_stats)
+    if ~isempty(analyzer.tuning_stats)
         cluster_field = sprintf('cluster_%d', cluster.id);
-        if isfield(plot_data.spatial_tuning_stats, cluster_field)
-            cluster_stats = plot_data.spatial_tuning_stats.(cluster_field);
+        if isfield(analyzer.tuning_stats, cluster_field)
+            cluster_stats = analyzer.tuning_stats.(cluster_field);
         end
     end
     

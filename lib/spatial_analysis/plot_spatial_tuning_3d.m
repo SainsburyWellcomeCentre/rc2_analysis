@@ -1,8 +1,8 @@
-function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, all_Q2_rate_smooth_by_group, cluster_ids, probe_id, ctl)
+function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, bin_config, firing_rates, cluster_ids, probe_id, ctl)
 % PLOT_SPATIAL_TUNING_3D Create 3D visualization of spatial tuning
 %
-%   [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, all_bin_centers_by_group, ...
-%       all_Q2_rate_smooth_by_group, cluster_ids, probe_id, ctl)
+%   [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, bin_config, ...
+%       firing_rates, cluster_ids, probe_id, ctl)
 %
 %   Creates a 2x2 grid of 3D plots showing spatially tuned clusters with
 %   Gaussian fits overlaid on the median firing rates:
@@ -10,12 +10,12 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
 %   - Bottom row: Short trials (unnormalized and normalized)
 %
 %   Inputs:
-%       spatial_tuning_stats         - Struct with tuning stats per cluster
-%       all_bin_centers_by_group     - Struct with 'long' and 'short' bin centers
-%       all_Q2_rate_smooth_by_group  - Struct with 'long' and 'short' median rates
-%       cluster_ids                  - Array of cluster IDs
-%       probe_id                     - String identifier for the probe (for title)
-%       ctl                          - RC2Analysis controller object
+%       spatial_tuning_stats  - Struct with tuning stats per cluster
+%       bin_config            - Struct with 'long' and 'short' bin configuration (from analyzer)
+%       firing_rates          - Struct with 'long' and 'short' firing rate data (from analyzer)
+%       cluster_ids           - Array of cluster IDs
+%       probe_id              - String identifier for the probe (for title)
+%       ctl                   - RC2Analysis controller object
 %
 %   Returns:
 %       fig_3d      - Figure handle (empty if no spatially tuned clusters found)
@@ -58,11 +58,11 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
             trial_type = trial_types{cond_idx};
             
             if strcmp(trial_type, 'long')
-                bin_centers = all_bin_centers_by_group.long;
-                rate_data = all_Q2_rate_smooth_by_group.long(c, :);
+                bin_centers = bin_config.long.plot_centers;
+                rate_data = firing_rates.long.Q2_smooth(c, :);
             else
-                bin_centers = all_bin_centers_by_group.short;
-                rate_data = all_Q2_rate_smooth_by_group.short(c, :);
+                bin_centers = bin_config.short.plot_centers;
+                rate_data = firing_rates.short.Q2_smooth(c, :);
             end
             
             fit_results.(cluster_field).(condition_key) = struct();
@@ -121,8 +121,8 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
     
     % Calculate global max firing rate for absolute firing rate plots (unnormalized)
     % This ensures both long and short unnormalized plots have the same z-axis limit
-    max_rate_long = max(all_Q2_rate_smooth_by_group.long(spatially_tuned_sorted, :), [], 'all');
-    max_rate_short = max(all_Q2_rate_smooth_by_group.short(spatially_tuned_sorted, :), [], 'all');
+    max_rate_long = max(firing_rates.long.Q2_smooth(spatially_tuned_sorted, :), [], 'all');
+    max_rate_short = max(firing_rates.short.Q2_smooth(spatially_tuned_sorted, :), [], 'all');
     global_max_rate = max(max_rate_long, max_rate_short);
     
     % Helper function to plot 3D subplot and collect fit results
@@ -255,13 +255,13 @@ function [fig_3d, fit_results] = plot_spatial_tuning_3d(spatial_tuning_stats, al
     end
     
     % Create 4 subplots
-    plot_3d_subplot(1, all_bin_centers_by_group.long, all_Q2_rate_smooth_by_group.long, ...
+    plot_3d_subplot(1, bin_config.long.plot_centers, firing_rates.long.Q2_smooth, ...
                     'long', false, [0, 120], 'Long Trials');
-    plot_3d_subplot(2, all_bin_centers_by_group.long, all_Q2_rate_smooth_by_group.long, ...
+    plot_3d_subplot(2, bin_config.long.plot_centers, firing_rates.long.Q2_smooth, ...
                     'long', true, [0, 120], 'Long Trials (normalized)');
-    plot_3d_subplot(3, all_bin_centers_by_group.short, all_Q2_rate_smooth_by_group.short, ...
+    plot_3d_subplot(3, bin_config.short.plot_centers, firing_rates.short.Q2_smooth, ...
                     'short', false, [60, 120], 'Short Trials');
-    plot_3d_subplot(4, all_bin_centers_by_group.short, all_Q2_rate_smooth_by_group.short, ...
+    plot_3d_subplot(4, bin_config.short.plot_centers, firing_rates.short.Q2_smooth, ...
                     'short', true, [60, 120], 'Short Trials (normalized)');
     
     % Add figure title

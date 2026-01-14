@@ -1,15 +1,14 @@
-function fig = plot_time_to_goal_analysis(trial_groups, group_names, group_labels, all_bin_centers_by_group, all_edges_by_group, probe_id, ctl)
+function fig = plot_time_to_goal_analysis(trial_groups, group_names, group_labels, bin_config, probe_id, ctl)
 % PLOT_TIME_TO_GOAL_ANALYSIS Create time-to-goal analysis figure (4x2 subplots)
 %
 %   fig = plot_time_to_goal_analysis(trial_groups, group_names, group_labels, ...
-%         all_bin_centers_by_group, all_edges_by_group, probe_id, ctl)
+%         bin_config, probe_id, ctl)
 %
 % Inputs:
 %   trial_groups - Struct with 'long' and 'short' fields containing trial arrays
 %   group_names - Cell array of group names {'long', 'short'}
 %   group_labels - Cell array of display labels for groups
-%   all_bin_centers_by_group - Struct with bin centers for each group
-%   all_edges_by_group - Struct with bin edges for each group
+%   bin_config - Struct with bin configuration for each group (from analyzer)
 %   probe_id - String identifier for the probe
 %   ctl - Control structure with figure management (ctl.figs.a4figure)
 %
@@ -49,8 +48,8 @@ for g = 1:2
     n_trials = length(trials_struct);
     
     % Storage for plot 1: absolute time-to-goal vs position
-    pos_bins{g} = all_bin_centers_by_group.(group);
-    edges = all_edges_by_group.(group);
+    pos_bins{g} = bin_config.(group).plot_centers;
+    edges = bin_config.(group).edges;
     n_bins = length(pos_bins{g});
     ttg_vs_pos_trials{g} = nan(n_trials, n_bins);
     

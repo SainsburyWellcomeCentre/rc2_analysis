@@ -1,5 +1,5 @@
 classdef SpatialTuningAnalyzer < handle
-    % SPATIALTUN INGANALYZER Analyzes spatial tuning of neural clusters
+    % SPATIAL TUNING ANALYZER Analyzes spatial tuning of neural clusters
     %
     %   Encapsulates spatial firing rate analysis for neural clusters across
     %   different trial groups (long/short). Handles computation, statistical
@@ -468,6 +468,8 @@ classdef SpatialTuningAnalyzer < handle
                     'occupancy', nan(n_clusters, n_bins), ...
                     'rate_per_trial', {cell(n_clusters, 1)}, ...
                     'rate_per_trial_smooth', {cell(n_clusters, 1)}, ...
+                    'occ_per_trial', {cell(n_clusters, 1)}, ...
+                    'vel_per_trial', {cell(n_clusters, 1)}, ...
                     'spike_positions', {cell(n_clusters, 1)}, ...
                     'global_trial_indices', {cell(n_clusters, 1)});
             end
@@ -935,6 +937,8 @@ classdef SpatialTuningAnalyzer < handle
             all_occ_by_group = struct();
             all_rate_per_trial_by_group = struct();
             all_rate_per_trial_smooth_by_group = struct();
+            all_occ_per_trial_by_group = struct();
+            all_vel_per_trial_by_group = struct();
             all_spike_positions_by_group = struct();
             all_global_trial_indices_by_group = struct();
             
@@ -949,6 +953,8 @@ classdef SpatialTuningAnalyzer < handle
                 all_occ_by_group.(group) = obj.firing_rates.(group).occupancy;
                 all_rate_per_trial_by_group.(group) = obj.firing_rates.(group).rate_per_trial;
                 all_rate_per_trial_smooth_by_group.(group) = obj.firing_rates.(group).rate_per_trial_smooth;
+                all_occ_per_trial_by_group.(group) = obj.firing_rates.(group).occ_per_trial;
+                all_vel_per_trial_by_group.(group) = obj.firing_rates.(group).vel_per_trial;
                 all_spike_positions_by_group.(group) = obj.firing_rates.(group).spike_positions;
                 all_global_trial_indices_by_group.(group) = obj.firing_rates.(group).global_trial_indices;
             end
@@ -974,6 +980,7 @@ classdef SpatialTuningAnalyzer < handle
                  'all_Q1_rate_smooth_by_group', 'all_Q2_rate_smooth_by_group', ...
                  'all_Q3_rate_smooth_by_group', 'all_occ_by_group', ...
                  'all_rate_per_trial_by_group', 'all_rate_per_trial_smooth_by_group', ...
+                 'all_occ_per_trial_by_group', 'all_vel_per_trial_by_group', ...
                  'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
                  'spatial_tuning_stats', ...
                  'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
@@ -1000,6 +1007,20 @@ classdef SpatialTuningAnalyzer < handle
                 obj.firing_rates.(group).occupancy = loaded_vars.all_occ_by_group.(group);
                 obj.firing_rates.(group).rate_per_trial = loaded_vars.all_rate_per_trial_by_group.(group);
                 obj.firing_rates.(group).rate_per_trial_smooth = loaded_vars.all_rate_per_trial_smooth_by_group.(group);
+                
+                % Load occ_per_trial and vel_per_trial with backward compatibility
+                if isfield(loaded_vars, 'all_occ_per_trial_by_group')
+                    obj.firing_rates.(group).occ_per_trial = loaded_vars.all_occ_per_trial_by_group.(group);
+                else
+                    obj.firing_rates.(group).occ_per_trial = cell(length(obj.cluster_ids), 1);
+                end
+                
+                if isfield(loaded_vars, 'all_vel_per_trial_by_group')
+                    obj.firing_rates.(group).vel_per_trial = loaded_vars.all_vel_per_trial_by_group.(group);
+                else
+                    obj.firing_rates.(group).vel_per_trial = cell(length(obj.cluster_ids), 1);
+                end
+                
                 obj.firing_rates.(group).spike_positions = loaded_vars.all_spike_positions_by_group.(group);
                 obj.firing_rates.(group).global_trial_indices = loaded_vars.all_global_trial_indices_by_group.(group);
             end
