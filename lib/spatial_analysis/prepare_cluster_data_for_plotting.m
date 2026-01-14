@@ -29,9 +29,14 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
 
     group_names = analyzer.group_names;
     
-    % --- Compute downsampled long data ---
-    [rate_long_ds_smooth, Q1_long_ds, Q2_long_ds, Q3_long_ds, bin_centers_long_ds, edges_long_ds] = ...
-        compute_downsampled_long_rates(trial_groups, cluster, bin_size_cm, gauss_sigma_cm);
+    % --- Get downsampled long data from cache ---
+    downsampled = analyzer.downsampled_long_rates{c};
+    rate_long_ds_smooth = downsampled.rate_per_trial_smooth;
+    Q1_long_ds = downsampled.Q1_smooth;
+    Q2_long_ds = downsampled.Q2_smooth;
+    Q3_long_ds = downsampled.Q3_smooth;
+    bin_centers_long_ds = downsampled.bin_centers;
+    edges_long_ds = downsampled.edges;
     
     % --- Prepare rate data structure ---
     rate_data = struct();
@@ -64,92 +69,11 @@ function [rate_data, rate_maps_2d, cluster_stats, ttg_data, ttg_stats] = ...
         end
     end
     
-    % --- Compute 2D rate maps ---
-    rate_maps_2d = struct();
-    
-    % Compute velocity and acceleration maps in parallel
-    if plot_velocity
-        n_vel_bins = 20;
-        sigma_vel = 5;
-        
-        % Pre-allocate outputs
-        vel_maps = cell(1, 2);
-        vel_edges = cell(1, 2);
-        vel_counts = cell(1, 2);
-        group_names_local = {'long', 'short'};
-        
-        % Parallel computation for both groups
-        parfor g = 1:2
-            [vel_maps{g}, vel_edges{g}, vel_counts{g}] = ...
-                analyzer.compute_2d_position_velocity_tuning(cluster, group_names_local{g}, n_vel_bins, sigma_vel);
-        end
-        
-        % Unpack results
-        rate_maps_2d.vel_long = vel_maps{1};
-        rate_maps_2d.vel_short = vel_maps{2};
-        vel_bin_edges_long = vel_edges{1};
-        vel_bin_edges_short = vel_edges{2};
-        vel_trial_counts_long = vel_counts{1};
-        vel_trial_counts_short = vel_counts{2};
-        
-        % Store metadata
-        rate_maps_2d.vel_bin_edges_long = vel_bin_edges_long;
-        rate_maps_2d.vel_bin_edges_short = vel_bin_edges_short;
-        rate_maps_2d.vel_bin_centers_long = (vel_bin_edges_long(1:end-1) + vel_bin_edges_long(2:end)) / 2;
-        rate_maps_2d.vel_bin_centers_short = (vel_bin_edges_short(1:end-1) + vel_bin_edges_short(2:end)) / 2;
-        rate_maps_2d.vel_trial_counts_long = vel_trial_counts_long;
-        rate_maps_2d.vel_trial_counts_short = vel_trial_counts_short;
-        rate_maps_2d.vel_n_trials_long = length(trial_groups.long);
-        rate_maps_2d.vel_n_trials_short = length(trial_groups.short);
-    end
-    
-    if plot_acceleration
-        n_accel_bins = 20;
-        sigma_accel = 10;
-        
-        % Pre-allocate outputs
-        accel_maps = cell(1, 2);
-        accel_edges = cell(1, 2);
-        accel_counts = cell(1, 2);
-        group_names_local = {'long', 'short'};
-        
-        % Parallel computation for both groups
-        parfor g = 1:2
-            [accel_maps{g}, accel_edges{g}, accel_counts{g}] = ...
-                analyzer.compute_2d_position_acceleration_tuning(cluster, group_names_local{g}, n_accel_bins, sigma_accel);
-        end
-        
-        % Unpack results
-        rate_maps_2d.accel_long = accel_maps{1};
-        rate_maps_2d.accel_short = accel_maps{2};
-        accel_bin_edges_long = accel_edges{1};
-        accel_bin_edges_short = accel_edges{2};
-        accel_trial_counts_long = accel_counts{1};
-        accel_trial_counts_short = accel_counts{2};
-        
-        % Store metadata
-        rate_maps_2d.accel_bin_edges_long = accel_bin_edges_long;
-        rate_maps_2d.accel_bin_edges_short = accel_bin_edges_short;
-        rate_maps_2d.accel_bin_centers_long = (accel_bin_edges_long(1:end-1) + accel_bin_edges_long(2:end)) / 2;
-        rate_maps_2d.accel_bin_centers_short = (accel_bin_edges_short(1:end-1) + accel_bin_edges_short(2:end)) / 2;
-        rate_maps_2d.accel_trial_counts_long = accel_trial_counts_long;
-        rate_maps_2d.accel_trial_counts_short = accel_trial_counts_short;
-        rate_maps_2d.accel_n_trials_long = length(trial_groups.long);
-        rate_maps_2d.accel_n_trials_short = length(trial_groups.short);
-    end
-    
-    % Store position bins
-    rate_maps_2d.pos_bins_long = analyzer.bin_config.long.centers;
-    rate_maps_2d.pos_bins_short = analyzer.bin_config.short.centers;
-    rate_maps_2d.pos_bin_edges_long = analyzer.bin_config.long.edges;
-    rate_maps_2d.pos_bin_edges_short = analyzer.bin_config.short.edges;
+    % --- Get pre-computed 2D rate maps from cache ---
+    rate_maps_2d = analyzer.rate_maps_2d{c};
     
     % --- Get TTG data ---
     cluster_field = sprintf('cluster_%d', cluster.id);
     ttg_data = analyzer.ttg_analysis.(cluster_field).ttg_data;
     ttg_stats = analyzer.ttg_analysis.(cluster_field).ttg_stats;
-    
-    % --- Compute TTG × kinematic maps ---
-    rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, trial_groups, rate_maps_2d, ...
-                                               plot_velocity, plot_acceleration);
 end

@@ -66,6 +66,8 @@ classdef SpatialTuningAnalyzer < handle
         tuning_stats        % Struct: cluster_id -> long/short -> stats
         ttg_analysis        % Struct: per-cluster TTG data and statistics
         distribution_comparisons % Cell array: per-cluster Kruskal-Wallis results
+        rate_maps_2d        % Cell array: per-cluster 2D rate maps (pos×vel, pos×accel, ttg×vel, ttg×accel)
+        downsampled_long_rates % Cell array: per-cluster downsampled long trial firing rates for relative position analysis
     end
     
     methods
@@ -186,14 +188,11 @@ classdef SpatialTuningAnalyzer < handle
             % Initialize result storage
             obj.initialize_storage();
             
-            % Setup parallel pool if needed
-            if obj.use_parallel
-                obj.setup_parallel_pool();
-            end
+            % Ensure parallel pool is ready
+            obj.ensure_parallel_pool();
             
             % Process all clusters
             cluster_results = cell(n_clusters, 1);
-            
             if obj.use_parallel
                 parfor c = 1:n_clusters
                     cluster_results{c} = obj.compute_cluster_data(c);
@@ -257,6 +256,18 @@ classdef SpatialTuningAnalyzer < handle
                     result.(group).stats = [];
                 end
             end
+            
+            % Compute downsampled long rates for relative position comparison
+            [rate_per_trial_smooth, Q1_smooth, Q2_smooth, Q3_smooth, bin_centers, edges] = ...
+                compute_downsampled_long_rates(obj.trial_groups, cluster, obj.bin_size_cm, obj.gauss_sigma_cm);
+            
+            result.downsampled_long = struct(...
+                'rate_per_trial_smooth', rate_per_trial_smooth, ...
+                'Q1_smooth', Q1_smooth, ...
+                'Q2_smooth', Q2_smooth, ...
+                'Q3_smooth', Q3_smooth, ...
+                'bin_centers', bin_centers, ...
+                'edges', edges);
         end
         
         function [rate_data, spike_data] = compute_group_firing_rates(obj, cluster, trials_struct, cfg)
@@ -453,6 +464,7 @@ classdef SpatialTuningAnalyzer < handle
             % Initialize storage structures for results
             obj.firing_rates = struct();
             obj.tuning_stats = struct();
+            obj.downsampled_long_rates = cell(length(obj.clusters), 1);
             
             for g = 1:2
                 group = obj.group_names{g};
@@ -509,6 +521,9 @@ classdef SpatialTuningAnalyzer < handle
                         obj.tuning_stats.(cluster_field).(group) = result.(group).stats;
                     end
                 end
+                
+                % Store downsampled long rates
+                obj.downsampled_long_rates{c} = result.downsampled_long;
             end
         end
         
@@ -796,45 +811,67 @@ classdef SpatialTuningAnalyzer < handle
             end
             
             n_clusters = length(obj.clusters);
-            fprintf('  Computing TTG analysis for %d clusters...\n', n_clusters);
+            fprintf('  Computing TTG analysis for %d clusters (%s)...\n', ...
+                n_clusters, obj.parallel_status());
             
             % Initialize storage
             obj.ttg_analysis = struct();
             
-            % Process each cluster
+            % Ensure parallel pool is ready
+            obj.ensure_parallel_pool();
+            
+            % Process all clusters
+            ttg_results = cell(n_clusters, 1);
+            if obj.use_parallel
+                parfor c = 1:n_clusters
+                    ttg_results{c} = obj.compute_single_cluster_ttg(c);
+                end
+            else
+                for c = 1:n_clusters
+                    ttg_results{c} = obj.compute_single_cluster_ttg(c);
+                end
+            end
+            
+            % Store results
             for c = 1:n_clusters
-                cluster = obj.clusters(c);
-                cluster_id = cluster.id;
+                cluster_id = obj.clusters(c).id;
                 cluster_field = sprintf('cluster_%d', cluster_id);
-                
-                % Get global trial indices for this cluster (wrap in cell for indexing)
-                all_global_trial_indices_by_group = struct();
-                for g = 1:2
-                    group = obj.group_names{g};
-                    all_global_trial_indices_by_group.(group) = ...
-                        {obj.firing_rates.(group).global_trial_indices{c}};
-                end
-                
-                % Compute TTG data (use cluster_idx = 1 since we wrapped data in cell)
-                [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(...
-                    cluster, obj.trial_groups, obj.group_names, ...
-                    all_global_trial_indices_by_group, 1);
-                
-                % Compute TTG statistics
-                ttg_stats = [];
-                if obj.stats_params.run_statistics
-                    ttg_stats = compute_ttg_tuning_statistics(...
-                        ttg_data, obj.group_names, obj.stats_params);
-                end
-                
-                % Store results
-                obj.ttg_analysis.(cluster_field) = struct(...
-                    'ttg_data', ttg_data, ...
-                    'ttg_norm_bin_centers', ttg_norm_bin_centers, ...
-                    'ttg_stats', ttg_stats);
+                obj.ttg_analysis.(cluster_field) = ttg_results{c};
             end
             
             fprintf('  TTG analysis complete\n');
+        end
+        
+        function result = compute_single_cluster_ttg(obj, cluster_idx)
+            % Compute TTG analysis for a single cluster (parfor-compatible)
+            
+            cluster = obj.clusters(cluster_idx);
+            
+            % Get global trial indices for this cluster (wrap in cell for indexing)
+            all_global_trial_indices_by_group = struct();
+            for g = 1:2
+                group = obj.group_names{g};
+                all_global_trial_indices_by_group.(group) = ...
+                    {obj.firing_rates.(group).global_trial_indices{cluster_idx}};
+            end
+            
+            % Compute TTG data (use cluster_idx = 1 since we wrapped data in cell)
+            [ttg_data, ttg_norm_bin_centers] = compute_time_to_goal_tuning(...
+                cluster, obj.trial_groups, obj.group_names, ...
+                all_global_trial_indices_by_group, 1);
+            
+            % Compute TTG statistics
+            ttg_stats = [];
+            if obj.stats_params.run_statistics
+                ttg_stats = compute_ttg_tuning_statistics(...
+                    ttg_data, obj.group_names, obj.stats_params);
+            end
+            
+            % Package results
+            result = struct(...
+                'ttg_data', ttg_data, ...
+                'ttg_norm_bin_centers', ttg_norm_bin_centers, ...
+                'ttg_stats', ttg_stats);
         end
         
         function compute_distribution_comparisons(obj)
@@ -854,72 +891,203 @@ classdef SpatialTuningAnalyzer < handle
             end
             
             n_clusters = length(obj.clusters);
-            fprintf('  Computing distribution comparisons for %d clusters...\n', n_clusters);
+            fprintf('  Computing distribution comparisons for %d clusters (%s)...\n', ...
+                n_clusters, obj.parallel_status());
             
             % Initialize storage
             obj.distribution_comparisons = cell(n_clusters, 1);
             
-            % Counter for successful comparisons
+            % Ensure parallel pool is ready
+            obj.ensure_parallel_pool();
+            
+            % Process all clusters
+            comparison_results = cell(n_clusters, 1);
+            if obj.use_parallel
+                parfor c = 1:n_clusters
+                    comparison_results{c} = obj.compute_single_cluster_distribution(c);
+                end
+            else
+                for c = 1:n_clusters
+                    comparison_results{c} = obj.compute_single_cluster_distribution(c);
+                end
+            end
+            
+            % Store results and count statistics
             n_spatially_tuned = 0;
             n_successful = 0;
-            
-            % Process each cluster
             for c = 1:n_clusters
-                cluster = obj.clusters(c);
-                cluster_id = cluster.id;
-                cluster_field = sprintf('cluster_%d', cluster_id);
-                
-                % Check if spatially tuned
-                is_spatially_tuned = false;
-                if ~isempty(obj.tuning_stats) && isfield(obj.tuning_stats, cluster_field)
-                    cluster_stats = obj.tuning_stats.(cluster_field);
-                    if (isfield(cluster_stats, 'long') && cluster_stats.long.isSpatiallyTuned) || ...
-                       (isfield(cluster_stats, 'short') && cluster_stats.short.isSpatiallyTuned)
-                        is_spatially_tuned = true;
-                        n_spatially_tuned = n_spatially_tuned + 1;
-                    end
-                end
-                
-                % Only compare if spatially tuned
-                if is_spatially_tuned
-                    try
-                        % Get rate data
-                        rate_per_trial_long = obj.firing_rates.long.rate_per_trial{c};
-                        rate_per_trial_short = obj.firing_rates.short.rate_per_trial{c};
-                        bin_centers_long = obj.bin_config.long.centers;
-                        bin_centers_short = obj.bin_config.short.centers;
-                        
-                        % Get TTG rates
-                        ttg_data = obj.ttg_analysis.(cluster_field).ttg_data;
-                        ttg_rate_long = ttg_data.long.rate_per_trial_smooth;
-                        ttg_rate_short = ttg_data.short.rate_per_trial_smooth;
-                        
-                        % Compute downsampled long data
-                        [rate_long_ds_smooth, ~, ~, ~, bin_centers_long_ds, edges_long_ds] = ...
-                            compute_downsampled_long_rates(obj.trial_groups, cluster, ...
-                                obj.bin_size_cm, obj.gauss_sigma_cm);
-                        
-                        % Perform comparison
-                        results = compare_spatial_distributions(...
-                            rate_per_trial_long, rate_per_trial_short, ...
-                            bin_centers_long, bin_centers_short, ...
-                            ttg_rate_long, ttg_rate_short, ...
-                            rate_long_ds_smooth, bin_centers_long_ds);
-                        
-                        obj.distribution_comparisons{c} = results;
-                        n_successful = n_successful + 1;
-                    catch ME
-                        warning('Failed to compute distribution comparison for cluster %d: %s', ...
-                            cluster_id, ME.message);
-                        obj.distribution_comparisons{c} = [];
-                    end
-                else
-                    obj.distribution_comparisons{c} = [];
-                end
+                obj.distribution_comparisons{c} = comparison_results{c}.result;
+                n_spatially_tuned = n_spatially_tuned + comparison_results{c}.is_spatially_tuned;
+                n_successful = n_successful + comparison_results{c}.is_successful;
             end
             
             fprintf('  Distribution comparisons complete: %d spatially tuned, %d successful comparisons\n', ...
                 n_spatially_tuned, n_successful);
+        end
+        
+        function result = compute_single_cluster_distribution(obj, cluster_idx)
+            % Compute distribution comparison for a single cluster (parfor-compatible)
+            
+            cluster = obj.clusters(cluster_idx);
+            cluster_id = cluster.id;
+            cluster_field = sprintf('cluster_%d', cluster_id);
+            
+            result = struct('result', [], 'is_spatially_tuned', 0, 'is_successful', 0);
+            
+            % Check if spatially tuned
+            is_spatially_tuned = false;
+            if ~isempty(obj.tuning_stats) && isfield(obj.tuning_stats, cluster_field)
+                cluster_stats = obj.tuning_stats.(cluster_field);
+                if (isfield(cluster_stats, 'long') && cluster_stats.long.isSpatiallyTuned) || ...
+                   (isfield(cluster_stats, 'short') && cluster_stats.short.isSpatiallyTuned)
+                    is_spatially_tuned = true;
+                    result.is_spatially_tuned = 1;
+                end
+            end
+            
+            % Only compare if spatially tuned
+            if is_spatially_tuned
+                try
+                    % Get rate data
+                    rate_per_trial_long = obj.firing_rates.long.rate_per_trial{cluster_idx};
+                    rate_per_trial_short = obj.firing_rates.short.rate_per_trial{cluster_idx};
+                    bin_centers_long = obj.bin_config.long.centers;
+                    bin_centers_short = obj.bin_config.short.centers;
+                    
+                    % Get TTG rates
+                    ttg_data = obj.ttg_analysis.(cluster_field).ttg_data;
+                    ttg_rate_long = ttg_data.long.rate_per_trial_smooth;
+                    ttg_rate_short = ttg_data.short.rate_per_trial_smooth;
+                    
+                    % Get downsampled long data from cache
+                    downsampled = obj.downsampled_long_rates{cluster_idx};
+                    rate_long_ds_smooth = downsampled.rate_per_trial_smooth;
+                    bin_centers_long_ds = downsampled.bin_centers;
+                    
+                    % Perform comparison
+                    comparison = compare_spatial_distributions(...
+                        rate_per_trial_long, rate_per_trial_short, ...
+                        bin_centers_long, bin_centers_short, ...
+                        ttg_rate_long, ttg_rate_short, ...
+                        rate_long_ds_smooth, bin_centers_long_ds);
+                    
+                    result.result = comparison;
+                    result.is_successful = 1;
+                catch ME
+                    warning('Failed to compute distribution comparison for cluster %d: %s', ...
+                        cluster_id, ME.message);
+                end
+            end
+        end
+        
+        function compute_all_2d_rate_maps(obj)
+            % Compute all 2D rate maps for all clusters
+            %
+            %   analyzer.compute_all_2d_rate_maps()
+            %
+            %   Pre-computes position×velocity, position×acceleration, TTG×velocity,
+            %   and TTG×acceleration rate maps for all clusters. Results are stored
+            %   in obj.rate_maps_2d for fast retrieval during plotting.
+            
+            if isempty(obj.firing_rates)
+                error('Firing rates not computed. Run analyze_all_clusters() first.');
+            end
+            if isempty(obj.ttg_analysis)
+                error('TTG analysis not computed. Run compute_ttg_analysis() first.');
+            end
+            
+            n_clusters = length(obj.clusters);
+            fprintf('  Computing 2D rate maps for %d clusters (%s)...\n', ...
+                n_clusters, obj.parallel_status());
+            
+            % 2D map parameters
+            n_vel_bins = 20;
+            sigma_vel = 5;
+            n_accel_bins = 20;
+            sigma_accel = 10;
+            
+            % Ensure parallel pool is ready
+            obj.ensure_parallel_pool();
+            
+            % Process all clusters
+            rate_maps_results = cell(n_clusters, 1);
+            if obj.use_parallel
+                parfor c = 1:n_clusters
+                    rate_maps_results{c} = obj.compute_single_cluster_2d_maps(c, n_vel_bins, sigma_vel, n_accel_bins, sigma_accel);
+                end
+            else
+                for c = 1:n_clusters
+                    rate_maps_results{c} = obj.compute_single_cluster_2d_maps(c, n_vel_bins, sigma_vel, n_accel_bins, sigma_accel);
+                end
+            end
+            
+            % Store results
+            obj.rate_maps_2d = rate_maps_results;
+            
+            fprintf('  2D rate maps computation complete\n');
+        end
+        
+        function rate_maps_2d = compute_single_cluster_2d_maps(obj, cluster_idx, n_vel_bins, sigma_vel, n_accel_bins, sigma_accel)
+            % Compute all 2D rate maps for a single cluster (parfor-compatible)
+            
+            cluster = obj.clusters(cluster_idx);
+            cluster_id = cluster.id;
+            cluster_field = sprintf('cluster_%d', cluster_id);
+            
+            rate_maps_2d = struct();
+            
+            % --- Compute velocity and acceleration maps for both groups ---
+            group_names_local = {'long', 'short'};
+            
+            % Pre-allocate
+            vel_maps = cell(1, 2);
+            vel_edges = cell(1, 2);
+            vel_counts = cell(1, 2);
+            accel_maps = cell(1, 2);
+            accel_edges = cell(1, 2);
+            accel_counts = cell(1, 2);
+            
+            % Compute velocity and acceleration maps for both groups
+            for g = 1:2
+                [vel_maps{g}, vel_edges{g}, vel_counts{g}] = ...
+                    obj.compute_2d_position_velocity_tuning(cluster, group_names_local{g}, n_vel_bins, sigma_vel);
+                [accel_maps{g}, accel_edges{g}, accel_counts{g}] = ...
+                    obj.compute_2d_position_acceleration_tuning(cluster, group_names_local{g}, n_accel_bins, sigma_accel);
+            end
+            
+            % Store velocity maps
+            rate_maps_2d.vel_long = vel_maps{1};
+            rate_maps_2d.vel_short = vel_maps{2};
+            rate_maps_2d.vel_bin_edges_long = vel_edges{1};
+            rate_maps_2d.vel_bin_edges_short = vel_edges{2};
+            rate_maps_2d.vel_bin_centers_long = (vel_edges{1}(1:end-1) + vel_edges{1}(2:end)) / 2;
+            rate_maps_2d.vel_bin_centers_short = (vel_edges{2}(1:end-1) + vel_edges{2}(2:end)) / 2;
+            rate_maps_2d.vel_trial_counts_long = vel_counts{1};
+            rate_maps_2d.vel_trial_counts_short = vel_counts{2};
+            rate_maps_2d.vel_n_trials_long = length(obj.trial_groups.long);
+            rate_maps_2d.vel_n_trials_short = length(obj.trial_groups.short);
+            
+            % Store acceleration maps
+            rate_maps_2d.accel_long = accel_maps{1};
+            rate_maps_2d.accel_short = accel_maps{2};
+            rate_maps_2d.accel_bin_edges_long = accel_edges{1};
+            rate_maps_2d.accel_bin_edges_short = accel_edges{2};
+            rate_maps_2d.accel_bin_centers_long = (accel_edges{1}(1:end-1) + accel_edges{1}(2:end)) / 2;
+            rate_maps_2d.accel_bin_centers_short = (accel_edges{2}(1:end-1) + accel_edges{2}(2:end)) / 2;
+            rate_maps_2d.accel_trial_counts_long = accel_counts{1};
+            rate_maps_2d.accel_trial_counts_short = accel_counts{2};
+            rate_maps_2d.accel_n_trials_long = length(obj.trial_groups.long);
+            rate_maps_2d.accel_n_trials_short = length(obj.trial_groups.short);
+            
+            % Store position bins
+            rate_maps_2d.pos_bins_long = obj.bin_config.long.centers;
+            rate_maps_2d.pos_bins_short = obj.bin_config.short.centers;
+            rate_maps_2d.pos_bin_edges_long = obj.bin_config.long.edges;
+            rate_maps_2d.pos_bin_edges_short = obj.bin_config.short.edges;
+            
+            % --- Compute TTG × kinematic maps ---
+            ttg_data = obj.ttg_analysis.(cluster_field).ttg_data;
+            rate_maps_2d = compute_ttg_kinematic_maps(ttg_data, obj.trial_groups, rate_maps_2d, true, true);
         end
         
         function save_cache(obj, cache_filepath)
@@ -974,6 +1142,8 @@ classdef SpatialTuningAnalyzer < handle
             % New cached data
             ttg_analysis = obj.ttg_analysis;
             distribution_comparisons = obj.distribution_comparisons;
+            rate_maps_2d = obj.rate_maps_2d;
+            downsampled_long_rates = obj.downsampled_long_rates;
             
             save(cache_filepath, 'all_rate_smooth_by_group', ...
                  'all_bin_centers_by_group', 'all_avg_velocity_by_group', ...
@@ -986,7 +1156,7 @@ classdef SpatialTuningAnalyzer < handle
                  'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
                  'bin_size_cm', 'gauss_sigma_cm', 'position_threshold', ...
                  'use_parallel', 'max_workers', 'stats_params', ...
-                 'ttg_analysis', 'distribution_comparisons', '-v7.3');
+                 'ttg_analysis', 'distribution_comparisons', 'rate_maps_2d', 'downsampled_long_rates', '-v7.3');
         end
         
         function load_cache(obj, cache_filepath)
@@ -1044,20 +1214,11 @@ classdef SpatialTuningAnalyzer < handle
                 obj.stats_params = loaded_vars.stats_params;
             end
             
-            % Load TTG analysis and distribution comparisons (if present in cache)
-            if isfield(loaded_vars, 'ttg_analysis')
-                obj.ttg_analysis = loaded_vars.ttg_analysis;
-            else
-                fprintf('  Warning: ttg_analysis not found in cache, will need to recompute\n');
-                obj.ttg_analysis = struct();
-            end
-            
-            if isfield(loaded_vars, 'distribution_comparisons')
-                obj.distribution_comparisons = loaded_vars.distribution_comparisons;
-            else
-                fprintf('  Warning: distribution_comparisons not found in cache, will need to recompute\n');
-                obj.distribution_comparisons = [];
-            end
+            % Load TTG analysis, distribution comparisons, 2D rate maps, and downsampled rates
+            obj.ttg_analysis = loaded_vars.ttg_analysis;
+            obj.distribution_comparisons = loaded_vars.distribution_comparisons;
+            obj.rate_maps_2d = loaded_vars.rate_maps_2d;
+            obj.downsampled_long_rates = loaded_vars.downsampled_long_rates;
             
             % Reconstruct bin configuration from loaded parameters
             obj.setup_bins();
@@ -1088,6 +1249,19 @@ classdef SpatialTuningAnalyzer < handle
             end
         end
         
+        function ensure_parallel_pool(obj)
+            % Ensure parallel pool is ready if parallel processing is enabled
+            %
+            %   obj.ensure_parallel_pool()
+            %
+            %   This method checks if parallel processing is enabled and sets up
+            %   the parallel pool if needed. Call this before any parfor loops.
+            
+            if obj.use_parallel
+                obj.setup_parallel_pool();
+            end
+        end
+        
         function run_full_analysis_and_save(obj, cache_filepath)
             % Run complete analysis pipeline and save to cache
             %
@@ -1110,6 +1284,9 @@ classdef SpatialTuningAnalyzer < handle
             
             % Compute distribution comparisons
             obj.compute_distribution_comparisons();
+            
+            % Compute all 2D rate maps
+            obj.compute_all_2d_rate_maps();
             
             % Print summary
             obj.print_summary();
