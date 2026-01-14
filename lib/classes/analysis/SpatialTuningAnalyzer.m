@@ -200,6 +200,8 @@ classdef SpatialTuningAnalyzer < handle
                 result.(group).occupancy = rate_data.occupancy;
                 result.(group).rate_per_trial = spike_data.rate_per_trial;
                 result.(group).rate_per_trial_smooth = spike_data.rate_per_trial_smooth;
+                result.(group).occ_per_trial = spike_data.occ_per_trial;
+                result.(group).vel_per_trial = spike_data.vel_per_trial;
                 result.(group).spike_positions = spike_data.spike_positions;
                 result.(group).global_trial_indices = spike_data.global_trial_indices;
                 
@@ -287,6 +289,8 @@ classdef SpatialTuningAnalyzer < handle
                 'rate_per_trial', rate_per_trial, ...
                 'rate_per_trial_smooth', rate_per_trial_smooth, ...
                 'count_per_trial', count_per_trial, ...
+                'occ_per_trial', occ_per_trial, ...
+                'vel_per_trial', vel_per_trial, ...
                 'occ_per_trial_smooth', occ_per_trial_smooth, ...
                 'spike_positions', {spike_positions_per_trial}, ...
                 'global_trial_indices', global_trial_indices);
@@ -450,6 +454,8 @@ classdef SpatialTuningAnalyzer < handle
                     % Store per-trial data
                     obj.firing_rates.(group).rate_per_trial{c} = result.(group).rate_per_trial;
                     obj.firing_rates.(group).rate_per_trial_smooth{c} = result.(group).rate_per_trial_smooth;
+                    obj.firing_rates.(group).occ_per_trial{c} = result.(group).occ_per_trial;
+                    obj.firing_rates.(group).vel_per_trial{c} = result.(group).vel_per_trial;
                     obj.firing_rates.(group).spike_positions{c} = result.(group).spike_positions;
                     obj.firing_rates.(group).global_trial_indices{c} = result.(group).global_trial_indices;
                     

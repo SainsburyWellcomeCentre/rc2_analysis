@@ -65,14 +65,13 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
         n_bins = analyzer.bin_config.(group).n_bins;
         
         n_trials = length(trials_struct);
-        vel_per_trial = nan(n_trials, n_bins);
-        occ_per_trial = nan(n_trials, n_bins);
+        
+        % Get per-trial occupancy and velocity directly from analyzer
+        % (stored for the first cluster)
+        vel_per_trial = analyzer.firing_rates.(group).vel_per_trial{1};
+        occ_per_trial = analyzer.firing_rates.(group).occ_per_trial{1};
         
         for k = 1:n_trials
-            trial = trials_struct(k).trial;
-            [~, occ, vel, ~] = compute_trial_firing_rate(trial, clusters(1), edges);
-            vel_per_trial(k, :) = vel;
-            occ_per_trial(k, :) = occ;
             
             % Store for heatmap
             trial_info = struct();
@@ -90,8 +89,8 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
                 trial_info.color = [0.8 0 0];  % red
                 trial_info.bin_centers = bin_centers + 60;
             end
-            trial_info.vel = vel;
-            trial_info.occ = occ;
+            trial_info.vel = vel_per_trial(k, :);
+            trial_info.occ = occ_per_trial(k, :);
             
             if trial_info.global_idx > 0 && trial_info.global_idx <= max_global_idx
                 trial_cells{trial_info.global_idx} = trial_info;
@@ -130,7 +129,7 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
         end
         
         % Plot average with thick line
-        avg_vel = nanmean(analyzer.firing_rates.(group).avg_velocity, 1);
+        avg_vel = analyzer.firing_rates.(group).avg_velocity;
         if g == 1  % long trials - blue
             plot(bin_centers, avg_vel, 'Color', [0 0 0.8], 'LineWidth', 2, ...
                  'DisplayName', group_labels{g});
@@ -174,7 +173,7 @@ function fig = plot_average_velocity_occupancy_profiles(trial_groups, group_name
         end
         
         % Plot average with thick line
-        avg_occ = nanmean(analyzer.firing_rates.(group).occupancy, 1);
+        avg_occ = analyzer.firing_rates.(group).occupancy;
         if g == 1  % long trials - blue
             plot(bin_centers, avg_occ, 'Color', [0 0 0.8], 'LineWidth', 2, ...
                  'DisplayName', group_labels{g});
