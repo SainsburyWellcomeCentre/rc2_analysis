@@ -5,7 +5,7 @@
 % REFACTORED VERSION using SpatialTuningAnalyzer class and modular helper functions
 %
 % HELPER FUNCTIONS (in lib/spatial_analysis/):
-%   - manage_spatial_analysis_cache.m: Load/save cache with consistent logic
+%   - load_spatial_analysis_cache.m: Load analyzer from cache file
 %   - extract_plotting_data_from_analyzer.m: Extract organized plotting data
 %   - plot_average_velocity_occupancy_profiles.m: Create velocity/occupancy plots
 %   - load_tuning_curves_for_clusters.m: Load velocity/acceleration tuning curves
@@ -92,28 +92,37 @@ for pid = 1:length(probe_ids)
     
     fprintf('  Found %d clusters and %d sessions\n', length(clusters), length(sessions));
     
-    % Create analyzer instance
-    analyzer = SpatialTuningAnalyzer(clusters, sessions);
+    % Create parameters struct for analysis
+    params = struct();
+    params.bin_size_cm = bin_size_cm;
+    params.gauss_sigma_cm = gauss_sigma_cm;
+    params.position_threshold = position_threshold_cm;
+    params.use_parallel = use_parallel;
+    params.max_workers = max_workers;
+    params.stats_params = struct();
+    params.stats_params.minSpikes = minSpikes;
+    params.stats_params.minPeakRate = minPeakRate;
+    params.stats_params.fieldFrac = fieldFrac;
+    params.stats_params.minFieldBins = minFieldBins;
+    params.stats_params.maxNumFields = maxNumFields;
+    params.stats_params.nShuf = nShuf;
+    params.stats_params.pThresh = pThresh;
+    params.stats_params.run_statistics = run_statistics;
     
-    % Configure parameters
-    analyzer.bin_size_cm = bin_size_cm;
-    analyzer.gauss_sigma_cm = gauss_sigma_cm;
-    analyzer.position_threshold = position_threshold_cm;
-    analyzer.use_parallel = use_parallel;
-    analyzer.max_workers = max_workers;
-    
-    % Configure statistical parameters
-    analyzer.stats_params.minSpikes = minSpikes;
-    analyzer.stats_params.minPeakRate = minPeakRate;
-    analyzer.stats_params.fieldFrac = fieldFrac;
-    analyzer.stats_params.minFieldBins = minFieldBins;
-    analyzer.stats_params.maxNumFields = maxNumFields;
-    analyzer.stats_params.nShuf = nShuf;
-    analyzer.stats_params.pThresh = pThresh;
-    analyzer.stats_params.run_statistics = run_statistics;
-    
-    % Manage cache loading/saving with helper function
-    analyzer = manage_spatial_analysis_cache(analyzer, cache_filepath, re_run_analysis);
+    % Decide whether to load from cache or run analysis
+    if re_run_analysis || ~exist(cache_filepath, 'file')
+        % No cache or force recompute: run full analysis
+        if ~exist(cache_filepath, 'file')
+            fprintf('  No cache found\n');
+        else
+            fprintf('  Re-running analysis (re_run_analysis=true)\n');
+        end
+        analyzer = SpatialTuningAnalyzer(clusters, sessions, params);
+        analyzer.run_full_analysis_and_save(cache_filepath);
+    else
+        % Load from existing cache
+        analyzer = load_spatial_analysis_cache(clusters, sessions, cache_filepath);
+    end
     
     % Extract data for plotting using helper function
     plot_data = extract_plotting_data_from_analyzer(analyzer);

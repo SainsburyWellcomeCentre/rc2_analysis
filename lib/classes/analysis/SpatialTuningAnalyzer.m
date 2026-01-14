@@ -69,14 +69,18 @@ classdef SpatialTuningAnalyzer < handle
     end
     
     methods
-        function obj = SpatialTuningAnalyzer(clusters, sessions)
+        function obj = SpatialTuningAnalyzer(clusters, sessions, params)
             % Constructor
             %
             %   analyzer = SpatialTuningAnalyzer(clusters, sessions)
+            %   analyzer = SpatialTuningAnalyzer(clusters, sessions, params)
             %
             %   Inputs:
             %       clusters - Array of cluster objects
             %       sessions - Cell array of session objects
+            %       params   - (Optional) Struct with configuration parameters:
+            %                  .bin_size_cm, .gauss_sigma_cm, .position_threshold,
+            %                  .use_parallel, .max_workers, .stats_params
             
             if nargin > 0
                 obj.clusters = clusters;
@@ -84,6 +88,45 @@ classdef SpatialTuningAnalyzer < handle
                 obj.cluster_ids = [clusters.id];
                 obj.group_names = {'long', 'short'};
                 obj.group_labels = {'Long (0-120 cm)', 'Short (60-120 cm)'};
+                
+                % Apply optional parameters if provided
+                if nargin >= 3 && ~isempty(params)
+                    obj.apply_parameters(params);
+                end
+            end
+        end
+        
+        function apply_parameters(obj, params)
+            % Apply configuration parameters from struct
+            %
+            %   analyzer.apply_parameters(params)
+            %
+            %   Inputs:
+            %       params - Struct with fields: bin_size_cm, gauss_sigma_cm,
+            %                position_threshold, use_parallel, max_workers, stats_params
+            
+            if isfield(params, 'bin_size_cm')
+                obj.bin_size_cm = params.bin_size_cm;
+            end
+            if isfield(params, 'gauss_sigma_cm')
+                obj.gauss_sigma_cm = params.gauss_sigma_cm;
+            end
+            if isfield(params, 'position_threshold')
+                obj.position_threshold = params.position_threshold;
+            end
+            if isfield(params, 'use_parallel')
+                obj.use_parallel = params.use_parallel;
+            end
+            if isfield(params, 'max_workers')
+                obj.max_workers = params.max_workers;
+            end
+            if isfield(params, 'stats_params')
+                % Merge stats_params fields
+                stats_fields = fieldnames(params.stats_params);
+                for i = 1:length(stats_fields)
+                    field = stats_fields{i};
+                    obj.stats_params.(field) = params.stats_params.(field);
+                end
             end
         end
         
@@ -917,6 +960,10 @@ classdef SpatialTuningAnalyzer < handle
             group_labels = obj.group_labels;
             bin_size_cm = obj.bin_size_cm;
             gauss_sigma_cm = obj.gauss_sigma_cm;
+            position_threshold = obj.position_threshold;
+            use_parallel = obj.use_parallel;
+            max_workers = obj.max_workers;
+            stats_params = obj.stats_params;
             
             % New cached data
             ttg_analysis = obj.ttg_analysis;
@@ -930,7 +977,8 @@ classdef SpatialTuningAnalyzer < handle
                  'all_spike_positions_by_group', 'all_global_trial_indices_by_group', ...
                  'spatial_tuning_stats', ...
                  'cluster_ids', 'n_clusters', 'group_names', 'group_labels', ...
-                 'bin_size_cm', 'gauss_sigma_cm', ...
+                 'bin_size_cm', 'gauss_sigma_cm', 'position_threshold', ...
+                 'use_parallel', 'max_workers', 'stats_params', ...
                  'ttg_analysis', 'distribution_comparisons', '-v7.3');
         end
         
@@ -960,6 +1008,20 @@ classdef SpatialTuningAnalyzer < handle
             obj.tuning_stats = loaded_vars.spatial_tuning_stats;
             obj.bin_size_cm = loaded_vars.bin_size_cm;
             obj.gauss_sigma_cm = loaded_vars.gauss_sigma_cm;
+            
+            % Load additional parameters (with defaults for backward compatibility)
+            if isfield(loaded_vars, 'position_threshold')
+                obj.position_threshold = loaded_vars.position_threshold;
+            end
+            if isfield(loaded_vars, 'use_parallel')
+                obj.use_parallel = loaded_vars.use_parallel;
+            end
+            if isfield(loaded_vars, 'max_workers')
+                obj.max_workers = loaded_vars.max_workers;
+            end
+            if isfield(loaded_vars, 'stats_params')
+                obj.stats_params = loaded_vars.stats_params;
+            end
             
             % Load TTG analysis and distribution comparisons (if present in cache)
             if isfield(loaded_vars, 'ttg_analysis')
@@ -1003,6 +1065,39 @@ classdef SpatialTuningAnalyzer < handle
             else
                 status = 'sequential';
             end
+        end
+        
+        function run_full_analysis_and_save(obj, cache_filepath)
+            % Run complete analysis pipeline and save to cache
+            %
+            %   analyzer.run_full_analysis_and_save(cache_filepath)
+            %
+            %   Inputs:
+            %       cache_filepath - Full path to cache file for saving results
+            %
+            %   Description:
+            %       Executes the complete analysis workflow: spatial firing rates,
+            %       TTG analysis, distribution comparisons, and saves all results.
+            
+            fprintf('  Computing spatial analysis...\n');
+            
+            % Run full analysis
+            obj.analyze_all_clusters();
+            
+            % Compute TTG analysis
+            obj.compute_ttg_analysis();
+            
+            % Compute distribution comparisons
+            obj.compute_distribution_comparisons();
+            
+            % Print summary
+            obj.print_summary();
+            
+            % Save cache
+            [~, cache_filename] = fileparts(cache_filepath);
+            fprintf('  Saving analysis data to cache: %s.mat\n', cache_filename);
+            obj.save_cache(cache_filepath);
+            fprintf('  Cache saved successfully\n');
         end
         
         function print_summary(obj)
