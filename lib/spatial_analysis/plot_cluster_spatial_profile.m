@@ -1289,53 +1289,31 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 13 (row 4, col 1): Velocity × Position contour (long trials)
     if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
         ax_vel_long = subplot(5, 4, 13, 'Parent', fig);
-        hold(ax_vel_long, 'on');
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_long;
         vel_edges = rate_maps_2d.vel_bin_edges_long;
         rate_data = rate_maps_2d.vel_long;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for p = 1:length(pos_edges)-1
-            for v = 1:length(vel_edges)-1
-                rate_val = rate_data(p, v);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
-                end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha
-                if isfield(rate_maps_2d, 'vel_trial_counts_long') && isfield(rate_maps_2d, 'vel_n_trials_long')
-                    alpha_val = rate_maps_2d.vel_trial_counts_long(p, v) / rate_maps_2d.vel_n_trials_long;
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                patch(ax_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-            end
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'vel_trial_counts_long') && isfield(rate_maps_2d, 'vel_n_trials_long')
+            alpha_matrix = rate_maps_2d.vel_trial_counts_long / rate_maps_2d.vel_n_trials_long;
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_vel_long, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, pos_edges, vel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_vel_long, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_vel_long, [cmin, cmax]);
             colorbar(ax_vel_long);
@@ -1350,53 +1328,31 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 14 (row 4, col 2): Velocity × Position contour (short trials)
     if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
         ax_vel_short = subplot(5, 4, 14, 'Parent', fig);
-        hold(ax_vel_short, 'on');
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_short;
         vel_edges = rate_maps_2d.vel_bin_edges_short;
         rate_data = rate_maps_2d.vel_short;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for p = 1:length(pos_edges)-1
-            for v = 1:length(vel_edges)-1
-                rate_val = rate_data(p, v);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
-                end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha
-                if isfield(rate_maps_2d, 'vel_trial_counts_short') && isfield(rate_maps_2d, 'vel_n_trials_short')
-                    alpha_val = rate_maps_2d.vel_trial_counts_short(p, v) / rate_maps_2d.vel_n_trials_short;
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                patch(ax_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-            end
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'vel_trial_counts_short') && isfield(rate_maps_2d, 'vel_n_trials_short')
+            alpha_matrix = rate_maps_2d.vel_trial_counts_short / rate_maps_2d.vel_n_trials_short;
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_vel_short, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, pos_edges, vel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_vel_short, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_vel_short, [cmin, cmax]);
             colorbar(ax_vel_short);
@@ -1411,53 +1367,31 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 15 (row 4, col 3): Acceleration × Position contour (long trials)
     if isfield(rate_maps_2d, 'accel_long') && ~isempty(rate_maps_2d.accel_long)
         ax_accel_long = subplot(5, 4, 15, 'Parent', fig);
-        hold(ax_accel_long, 'on');
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_long;
         accel_edges = rate_maps_2d.accel_bin_edges_long;
         rate_data = rate_maps_2d.accel_long;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for p = 1:length(pos_edges)-1
-            for a = 1:length(accel_edges)-1
-                rate_val = rate_data(p, a);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
-                end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha
-                if isfield(rate_maps_2d, 'accel_trial_counts_long') && isfield(rate_maps_2d, 'accel_n_trials_long')
-                    alpha_val = rate_maps_2d.accel_trial_counts_long(p, a) / rate_maps_2d.accel_n_trials_long;
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                patch(ax_accel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-            end
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'accel_trial_counts_long') && isfield(rate_maps_2d, 'accel_n_trials_long')
+            alpha_matrix = rate_maps_2d.accel_trial_counts_long / rate_maps_2d.accel_n_trials_long;
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_accel_long, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, pos_edges, accel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_accel_long, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_accel_long, [cmin, cmax]);
             colorbar(ax_accel_long);
@@ -1472,53 +1406,31 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 16 (row 4, col 4): Acceleration × Position contour (short trials)
     if isfield(rate_maps_2d, 'accel_short') && ~isempty(rate_maps_2d.accel_short)
         ax_accel_short = subplot(5, 4, 16, 'Parent', fig);
-        hold(ax_accel_short, 'on');
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_short;
         accel_edges = rate_maps_2d.accel_bin_edges_short;
         rate_data = rate_maps_2d.accel_short;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for p = 1:length(pos_edges)-1
-            for a = 1:length(accel_edges)-1
-                rate_val = rate_data(p, a);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
-                end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha
-                if isfield(rate_maps_2d, 'accel_trial_counts_short') && isfield(rate_maps_2d, 'accel_n_trials_short')
-                    alpha_val = rate_maps_2d.accel_trial_counts_short(p, a) / rate_maps_2d.accel_n_trials_short;
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [pos_edges(p), pos_edges(p+1), pos_edges(p+1), pos_edges(p)];
-                y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                patch(ax_accel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
-            end
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'accel_trial_counts_short') && isfield(rate_maps_2d, 'accel_n_trials_short')
+            alpha_matrix = rate_maps_2d.accel_trial_counts_short / rate_maps_2d.accel_n_trials_short;
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_accel_short, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, pos_edges, accel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_accel_short, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_accel_short, [cmin, cmax]);
             colorbar(ax_accel_short);
@@ -1533,58 +1445,37 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 17 (row 5, col 1): Velocity × Relative TTG contour (long trials)
     if isfield(rate_maps_2d, 'ttg_vel_long') && ~isempty(rate_maps_2d.ttg_vel_long)
         ax_ttg_vel_long = subplot(5, 4, 17, 'Parent', fig);
-        hold(ax_ttg_vel_long, 'on');
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_long;
         vel_edges = rate_maps_2d.vel_bin_edges_long;
         rate_data = rate_maps_2d.ttg_vel_long;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for t = 1:length(ttg_edges)-1
-            for v = 1:length(vel_edges)-1
-                rate_val = rate_data(t, v);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'ttg_vel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_long')
+            ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_long;
+            alpha_matrix = zeros(size(rate_data));
+            for t = 1:size(rate_data, 1)
+                if ttg_occupancy(t) > 0
+                    alpha_matrix(t, :) = rate_maps_2d.ttg_vel_trial_counts_long(t, :) / ttg_occupancy(t);
                 end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha: proportion of trials in this TTG bin that had this velocity
-                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_long')
-                    ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_long(t);
-                    if ttg_occupancy > 0
-                        alpha_val = rate_maps_2d.ttg_vel_trial_counts_long(t, v) / ttg_occupancy;
-                    else
-                        alpha_val = 0;
-                    end
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
-                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                patch(ax_ttg_vel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_ttg_vel_long, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, ttg_edges, vel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_ttg_vel_long, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_ttg_vel_long, [cmin, cmax]);
             colorbar(ax_ttg_vel_long);
@@ -1600,58 +1491,37 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 18 (row 5, col 2): Velocity × Relative TTG contour (short trials)
     if isfield(rate_maps_2d, 'ttg_vel_short') && ~isempty(rate_maps_2d.ttg_vel_short)
         ax_ttg_vel_short = subplot(5, 4, 18, 'Parent', fig);
-        hold(ax_ttg_vel_short, 'on');
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_short;
         vel_edges = rate_maps_2d.vel_bin_edges_short;
         rate_data = rate_maps_2d.ttg_vel_short;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin with variable height
-        for t = 1:length(ttg_edges)-1
-            for v = 1:length(vel_edges)-1
-                rate_val = rate_data(t, v);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'ttg_vel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_short')
+            ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_short;
+            alpha_matrix = zeros(size(rate_data));
+            for t = 1:size(rate_data, 1)
+                if ttg_occupancy(t) > 0
+                    alpha_matrix(t, :) = rate_maps_2d.ttg_vel_trial_counts_short(t, :) / ttg_occupancy(t);
                 end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha: proportion of trials in this TTG bin that had this velocity
-                if isfield(rate_maps_2d, 'ttg_vel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_vel_ttg_occupancy_short')
-                    ttg_occupancy = rate_maps_2d.ttg_vel_ttg_occupancy_short(t);
-                    if ttg_occupancy > 0
-                        alpha_val = rate_maps_2d.ttg_vel_trial_counts_short(t, v) / ttg_occupancy;
-                    else
-                        alpha_val = 0;
-                    end
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
-                y = [vel_edges(v), vel_edges(v), vel_edges(v+1), vel_edges(v+1)];
-                patch(ax_ttg_vel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_ttg_vel_short, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, ttg_edges, vel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_ttg_vel_short, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_ttg_vel_short, [cmin, cmax]);
             colorbar(ax_ttg_vel_short);
@@ -1667,58 +1537,37 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 19 (row 5, col 3): Acceleration × Relative TTG contour (long trials)
     if isfield(rate_maps_2d, 'ttg_accel_long') && ~isempty(rate_maps_2d.ttg_accel_long)
         ax_ttg_accel_long = subplot(5, 4, 19, 'Parent', fig);
-        hold(ax_ttg_accel_long, 'on');
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_long;
         accel_edges = rate_maps_2d.accel_bin_edges_long;
         rate_data = rate_maps_2d.ttg_accel_long;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin
-        for t = 1:length(ttg_edges)-1
-            for a = 1:length(accel_edges)-1
-                rate_val = rate_data(t, a);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'ttg_accel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_long')
+            ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_long;
+            alpha_matrix = zeros(size(rate_data));
+            for t = 1:size(rate_data, 1)
+                if ttg_occupancy(t) > 0
+                    alpha_matrix(t, :) = rate_maps_2d.ttg_accel_trial_counts_long(t, :) / ttg_occupancy(t);
                 end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha: proportion of trials in this TTG bin that had this acceleration
-                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_long') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_long')
-                    ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_long(t);
-                    if ttg_occupancy > 0
-                        alpha_val = rate_maps_2d.ttg_accel_trial_counts_long(t, a) / ttg_occupancy;
-                    else
-                        alpha_val = 0;
-                    end
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
-                y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                patch(ax_ttg_accel_long, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_ttg_accel_long, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, ttg_edges, accel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_ttg_accel_long, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_ttg_accel_long, [cmin, cmax]);
             colorbar(ax_ttg_accel_long);
@@ -1734,58 +1583,37 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 20 (row 5, col 4): Acceleration × Relative TTG contour (short trials)
     if isfield(rate_maps_2d, 'ttg_accel_short') && ~isempty(rate_maps_2d.ttg_accel_short)
         ax_ttg_accel_short = subplot(5, 4, 20, 'Parent', fig);
-        hold(ax_ttg_accel_short, 'on');
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_short;
         accel_edges = rate_maps_2d.accel_bin_edges_short;
         rate_data = rate_maps_2d.ttg_accel_short;
         
-        % Get colormap limits
-        cmin = min(rate_data(:), [], 'omitnan');
-        cmax = max(rate_data(:), [], 'omitnan');
-        cmap = jet(256);
-        
-        % Create patches for each bin
-        for t = 1:length(ttg_edges)-1
-            for a = 1:length(accel_edges)-1
-                rate_val = rate_data(t, a);
-                
-                % Skip NaN values
-                if isnan(rate_val)
-                    continue;
+        % Compute alpha matrix from trial counts
+        if isfield(rate_maps_2d, 'ttg_accel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_short')
+            ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_short;
+            alpha_matrix = zeros(size(rate_data));
+            for t = 1:size(rate_data, 1)
+                if ttg_occupancy(t) > 0
+                    alpha_matrix(t, :) = rate_maps_2d.ttg_accel_trial_counts_short(t, :) / ttg_occupancy(t);
                 end
-                
-                % Map rate to color
-                if cmax > cmin
-                    color_idx = round(((rate_val - cmin) / (cmax - cmin)) * 255) + 1;
-                    color_idx = max(1, min(256, color_idx));
-                else
-                    color_idx = 1;
-                end
-                face_color = cmap(color_idx, :);
-                
-                % Determine alpha: proportion of trials in this TTG bin that had this acceleration
-                if isfield(rate_maps_2d, 'ttg_accel_trial_counts_short') && isfield(rate_maps_2d, 'ttg_accel_ttg_occupancy_short')
-                    ttg_occupancy = rate_maps_2d.ttg_accel_ttg_occupancy_short(t);
-                    if ttg_occupancy > 0
-                        alpha_val = rate_maps_2d.ttg_accel_trial_counts_short(t, a) / ttg_occupancy;
-                    else
-                        alpha_val = 0;
-                    end
-                else
-                    alpha_val = 1;
-                end
-                
-                % Create rectangle patch
-                x = [ttg_edges(t), ttg_edges(t+1), ttg_edges(t+1), ttg_edges(t)];
-                y = [accel_edges(a), accel_edges(a), accel_edges(a+1), accel_edges(a+1)];
-                patch(ax_ttg_accel_short, x, y, face_color, 'EdgeColor', 'none', 'FaceAlpha', alpha_val);
             end
+        else
+            alpha_matrix = ones(size(rate_data));
         end
         
-        hold(ax_ttg_accel_short, 'off');
+        % Create supersampled matrix to preserve variable bin sizes
+        [ss_map, ss_alpha, x_coords, y_coords] = create_supersampled_rate_map(...
+            rate_data, alpha_matrix, ttg_edges, accel_edges, 10);
+        
+        % Use imagesc for efficient rendering (transpose for correct orientation)
+        h = imagesc(x_coords, y_coords, ss_map');
+        set(h, 'AlphaData', ss_alpha');
+        set(gca, 'YDir', 'normal');
+        
         colormap(ax_ttg_accel_short, 'parula');
+        cmin = min(rate_data(:), [], 'omitnan');
+        cmax = max(rate_data(:), [], 'omitnan');
         if ~isnan(cmin) && ~isnan(cmax) && cmax > cmin
             caxis(ax_ttg_accel_short, [cmin, cmax]);
             colorbar(ax_ttg_accel_short);
