@@ -369,7 +369,8 @@ for pid = 1:length(probe_ids)
         ttg_cache_filename = sprintf('%s_ttg_cache.mat', probe_ids{pid});
         ttg_cache_filepath = fullfile(ctl.figs.curr_dir, ttg_cache_filename);
         fprintf('  Saving TTG data to cache: %s\n', ttg_cache_filename);
-        save(ttg_cache_filepath, 'all_ttg_rates', 'ttg_norm_bin_centers', 'analyzer.cluster_ids', '-v7.3');
+        cluster_ids = analyzer.cluster_ids;  % Extract to variable for saving
+        save(ttg_cache_filepath, 'all_ttg_rates', 'ttg_norm_bin_centers', 'cluster_ids', '-v7.3');
     end
     
     % Join figures if requested
