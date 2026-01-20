@@ -143,10 +143,10 @@ classdef RasterDisplayFigure < handle
         
         
         
-        function fill_data(obj, x_i, y_i, spike_times, velocity_traces, spike_rates, common_t, title_str)
+        function fill_data(obj, x_i, y_i, spike_times, velocity_traces, spike_rates, common_t, title_str, spike_colors, spike_alphas, trial_color)
         %%fill_data Puts all data on the axes.
         %
-        %   fill_data(X, Y, SPIKE_TIMES, VELOCITY_TRACES, SPIKE_RATES, COMMON_T, TITLE_STRING)
+        %   fill_data(X, Y, SPIKE_TIMES, VELOCITY_TRACES, SPIKE_RATES, COMMON_T, TITLE_STRING, SPIKE_COLORS, SPIKE_ALPHAS, TRIAL_COLOR)
         %   
         %   Args:
         %       X - column of the section
@@ -159,14 +159,30 @@ classdef RasterDisplayFigure < handle
         %                     rates traces to show
         %       COMMON_T - # samples x 1 vector with the time base of the
         %                  traces in VELOCITY_TRACES and SPIKE_RATES
+        %       TITLE_STRING - title for the plot
+        %       SPIKE_COLORS - (optional) cell array where each entry is a # spikes x 3 matrix of RGB colors
+        %       SPIKE_ALPHAS - (optional) cell array where each entry is a # spikes x 1 vector of alpha values
+        %       TRIAL_COLOR - (optional) 1 x 3 RGB color for velocity trace (default: red)
         
-            h_raster = Raster(spike_times, obj.h_section(x_i, y_i).h_ax(1), obj.raster_marker_type); %#ok<*PROPLC>
+            % Handle optional color/alpha arguments
+            if nargin < 9
+                spike_colors = [];
+            end
+            if nargin < 10
+                spike_alphas = [];
+            end
+            if nargin < 11
+                trial_color = [1, 0, 0];  % default red
+            end
+            
+            h_raster = Raster(spike_times, obj.h_section(x_i, y_i).h_ax(1), obj.raster_marker_type, spike_colors, spike_alphas); %#ok<*PROPLC>
             h_motion = TracePlot(velocity_traces, common_t, obj.h_section(x_i, y_i).h_ax(2));
             
-            h_raster.ylabel('Bout #');
+            h_raster.ylabel('Sorted Cluster #');
             h_raster.xlabel('');
             h_motion.add_traces();
-            h_motion.add_sd();
+            h_motion.mean_colour(trial_color);  % Set velocity color based on trial type
+            h_motion.add_sd(trial_color);  % Pass trial color to SD traces
             h_motion.ylim([0, nan]);
             h_motion.ylabel('cm/s');
             h_motion.xlabel('');

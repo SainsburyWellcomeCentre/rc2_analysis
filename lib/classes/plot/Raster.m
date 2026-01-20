@@ -21,16 +21,20 @@ classdef Raster < RC2Axis
     
     methods
         
-        function obj = Raster(spike_times, h_ax, marker_type)
+        function obj = Raster(spike_times, h_ax, marker_type, spike_colors, spike_alphas)
         %%Raster
         %
-        %   Raster(SPIKE_TIMES, AXIS_HANDLE, MARKER_TYPE) plots data in
+        %   Raster(SPIKE_TIMES, AXIS_HANDLE, MARKER_TYPE, SPIKE_COLORS, SPIKE_ALPHAS) plots data in
         %   SPIKE_TIMES.  AXIS_HANDLE is optional, if supplied it should be a
         %   handle to an axis object. Otherwise, an axis will be created.
         %   MARKER_TYPE is either 'dot' or 'line' and determines the style
         %   of the spikes.
         %   SPIKE_TIMES should be a cell array with each cell containing
         %   the times of the spikes for a separate row of the raster.
+        %   SPIKE_COLORS (optional) is a cell array where each entry is a
+        %   # spikes x 3 matrix of RGB colors for each spike.
+        %   SPIKE_ALPHAS (optional) is a cell array where each entry is a
+        %   # spikes x 1 vector of alpha values for each spike.
          
             VariableDefault('h_ax', []);
             
@@ -38,21 +42,71 @@ classdef Raster < RC2Axis
             
             n_trials = length(spike_times);
             
+            % Handle optional color/alpha arguments
+            use_per_spike_colors = false;
+            if nargin >= 4 && ~isempty(spike_colors) && iscell(spike_colors)
+                use_per_spike_colors = true;
+            end
+            
             % 
             for trial_i = 1 : n_trials
                 
                 n_spikes = length(spike_times{trial_i});
                 
-                if strcmp(marker_type, 'dot')
-                    scatter(obj.h_ax, spike_times{trial_i}, ...
-                        trial_i*ones(n_spikes, 1), ...
-                        10, 'k', 'fill')
-                elseif strcmp(marker_type, 'line')
-                    for spike_i = 1 : n_spikes
-                        line(obj.h_ax, ...
-                            [spike_times{trial_i}, spike_times{trial_i}], ...
-                            trial_i + [-.5, .5], ...
-                            'color', 'k');
+                if n_spikes == 0
+                    continue;
+                end
+                
+                if use_per_spike_colors && trial_i <= length(spike_colors)
+                    % Per-spike colors and alphas - batch by unique color/alpha combinations
+                    colors = spike_colors{trial_i};
+                    if nargin >= 5 && ~isempty(spike_alphas) && iscell(spike_alphas) && trial_i <= length(spike_alphas)
+                        alphas = spike_alphas{trial_i};
+                    else
+                        alphas = ones(n_spikes, 1);
+                    end
+                    
+                    % Find unique color/alpha combinations
+                    color_alpha_key = [colors, alphas];
+                    [unique_keys, ~, group_idx] = unique(color_alpha_key, 'rows', 'stable');
+                    
+                    % Plot each unique color/alpha group together
+                    for group = 1:size(unique_keys, 1)
+                        mask = group_idx == group;
+                        group_spike_times = spike_times{trial_i}(mask);
+                        group_color = unique_keys(group, 1:3);
+                        group_alpha = unique_keys(group, 4);
+                        
+                        n_group_spikes = length(group_spike_times);
+                        
+                        if strcmp(marker_type, 'dot')
+                            h = scatter(obj.h_ax, group_spike_times, ...
+                                trial_i*ones(n_group_spikes, 1), ...
+                                10, group_color, 'fill');
+                            h.MarkerFaceAlpha = group_alpha;
+                            h.MarkerEdgeAlpha = group_alpha;
+                        elseif strcmp(marker_type, 'line')
+                            for spike_i = 1:n_group_spikes
+                                line(obj.h_ax, ...
+                                    [group_spike_times(spike_i), group_spike_times(spike_i)], ...
+                                    trial_i + [-.5, .5], ...
+                                    'color', [group_color, group_alpha]);
+                            end
+                        end
+                    end
+                else
+                    % Default: all black
+                    if strcmp(marker_type, 'dot')
+                        scatter(obj.h_ax, spike_times{trial_i}, ...
+                            trial_i*ones(n_spikes, 1), ...
+                            10, 'k', 'fill');
+                    elseif strcmp(marker_type, 'line')
+                        for spike_i = 1 : n_spikes
+                            line(obj.h_ax, ...
+                                [spike_times{trial_i}(spike_i), spike_times{trial_i}(spike_i)], ...
+                                trial_i + [-.5, .5], ...
+                                'color', 'k');
+                        end
                     end
                 end
             end

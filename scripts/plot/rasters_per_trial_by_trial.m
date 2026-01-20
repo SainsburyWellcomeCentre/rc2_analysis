@@ -53,6 +53,68 @@ for ii = 1 : length(probe_ids)
     data        = ctl.load_formatted_data(probe_ids{ii});
     clusters    = data.selected_clusters();
     
+    % Load the spatial analysis cache to get cluster sorting order
+    % This ensures rasters use the same order as spatial heatmaps
+    spatial_cache_dir = fullfile(ctl.path_config.figure_dir, 'spatial_firing_rate', experiment_groups{:});
+    cache_filename = sprintf('%s_spatial_analysis_cache.mat', probe_ids{ii});
+    cache_filepath = fullfile(spatial_cache_dir, cache_filename);
+    
+    if exist(cache_filepath, 'file')
+        fprintf('Loading spatial analysis cache to determine cluster sorting order...\n');
+        cached = load(cache_filepath);
+        
+        % Compute the same sorting as in spatial_firing_rate_profile.m
+        % Sort clusters by maximum peak positional firing rate for long trials
+        long_rate_mat = cached.all_Q2_rate_smooth_by_group.long;  % Use median (Q2)
+        bin_centers = cached.all_bin_centers_by_group.long;
+        peak_positions = zeros(cached.n_clusters, 1);
+        
+        for c = 1:cached.n_clusters
+            rate_profile = long_rate_mat(c, :);
+            
+            % Find the position of the maximum peak
+            [~, max_idx] = max(rate_profile);
+            peak_positions(c) = bin_centers(max_idx);
+        end
+        [~, sort_idx] = sort(peak_positions);
+        
+        % Reorder clusters to match the spatial heatmap order
+        clusters = clusters(sort_idx);
+        
+        % Get significance information for each cluster
+        cluster_significance_long = false(cached.n_clusters, 1);
+        cluster_significance_short = false(cached.n_clusters, 1);
+        
+        if isfield(cached, 'spatial_tuning_stats') && ~isempty(cached.spatial_tuning_stats)
+            stats = cached.spatial_tuning_stats;
+            for c = 1:cached.n_clusters
+                cluster_field = sprintf('cluster_%d', cached.cluster_ids(c));
+                if isfield(stats, cluster_field)
+                    cluster_stats = stats.(cluster_field);
+                    if isfield(cluster_stats, 'long') && isfield(cluster_stats.long, 'isSpatiallyTuned')
+                        cluster_significance_long(c) = cluster_stats.long.isSpatiallyTuned;
+                    end
+                    if isfield(cluster_stats, 'short') && isfield(cluster_stats.short, 'isSpatiallyTuned')
+                        cluster_significance_short(c) = cluster_stats.short.isSpatiallyTuned;
+                    end
+                end
+            end
+        end
+        
+        % Reorder significance arrays to match sorted clusters
+        cluster_significance_long = cluster_significance_long(sort_idx);
+        cluster_significance_short = cluster_significance_short(sort_idx);
+        
+        fprintf('Clusters sorted by peak position in long trials (matching spatial heatmaps)\n');
+        fprintf('  %d/%d clusters significant in long trials\n', sum(cluster_significance_long), cached.n_clusters);
+        fprintf('  %d/%d clusters significant in short trials\n', sum(cluster_significance_short), cached.n_clusters);
+    else
+        warning('Spatial analysis cache not found at: %s\nClusters will not be sorted.', cache_filepath);
+        % Default: all clusters non-significant
+        cluster_significance_long = false(length(clusters), 1);
+        cluster_significance_short = false(length(clusters), 1);
+    end
+    
     % Get all trials for the specified trial group
     all_trials = {};
     for kk = 1 : length(trial_group_labels)
@@ -80,6 +142,22 @@ for ii = 1 : length(probe_ids)
         sol_down_time = trial.probe_t(sol_down_idx);
         sol_up_time = trial.probe_t(sol_up_idx);
         
+        % Determine trial type based on maximum position
+        max_position = max(trial.position);
+        is_long_trial = max_position > 90;  % threshold at 90 cm
+        
+        % Set color based on trial type: blue for long, red for short
+        if is_long_trial
+            base_color = [0, 0, 1];  % blue
+            trial_significance = cluster_significance_long;
+        else
+            base_color = [1, 0, 0];  % red
+            trial_significance = cluster_significance_short;
+        end
+        
+        % Get motion mask for this trial
+        motion_mask = trial.motion_mask();
+        
         % Use the entire trial time range, but make it relative to solenoid down
         % So t=0 is at solenoid down
         trial_start_time = trial.probe_t(1);
@@ -93,6 +171,8 @@ for ii = 1 : length(probe_ids)
         
         % Combine all clusters' spike data for this trial
         all_spike_times = {};
+        all_spike_colors = {};  % Cell array of color arrays (one per cluster)
+        all_spike_alphas = {};  % Cell array of alpha arrays (one per cluster)
         all_spike_rates = [];
         
         for cluster_idx = 1 : length(clusters)
@@ -107,8 +187,37 @@ for ii = 1 : length(probe_ids)
             spike_times = rd.spike_array();
             spike_rates = rd.spike_convolutions();
             
+            % Determine which spikes occur during motion
+            % Convert spike times (relative to sol_down_time) back to absolute probe time
+            spike_times_absolute = spike_times{1} + sol_down_time;
+            
+            % Interpolate motion mask to spike times
+            % motion_mask is sampled at trial.fs (usually 10000 Hz)
+            spike_in_motion = interp1(trial.probe_t, double(motion_mask), spike_times_absolute, 'nearest', 0) > 0.5;
+            
+            % Create color array for each spike
+            n_spikes = length(spike_times{1});
+            spike_colors = zeros(n_spikes, 3);
+            spike_alphas = zeros(n_spikes, 1);
+            
+            % Determine alpha for this cluster based on significance
+            cluster_alpha = trial_significance(cluster_idx) * 0.5 + 0.5;  % 1.0 if significant, 0.5 if not
+            
+            for spike_i = 1:n_spikes
+                if spike_in_motion(spike_i)
+                    % During motion: use trial color (red/blue) with cluster alpha
+                    spike_colors(spike_i, :) = base_color;
+                else
+                    % Not during motion: use black with cluster alpha
+                    spike_colors(spike_i, :) = [0, 0, 0];
+                end
+                spike_alphas(spike_i) = cluster_alpha;
+            end
+            
             % Add to combined data
             all_spike_times = [all_spike_times; spike_times];
+            all_spike_colors = [all_spike_colors; {spike_colors}];
+            all_spike_alphas = [all_spike_alphas; {spike_alphas}];
             all_spike_rates = [all_spike_rates, spike_rates];
         end
         
@@ -125,8 +234,13 @@ for ii = 1 : length(probe_ids)
         
         % fill the section with the combined data
         sol_duration = sol_up_time - sol_down_time;
-        title_str = sprintf('Trial %i - All Clusters (Solenoid down at t=0, up at t=%.2fs)', trial.trial_id, sol_duration);
-        r.fill_data(1, 1, all_spike_times, velocity_trace, all_spike_rates, rd.common_t, title_str);
+        if is_long_trial
+            trial_type_str = 'Long';
+        else
+            trial_type_str = 'Short';
+        end
+        title_str = sprintf('Trial %i (%s trial) - All Clusters (Solenoid down at t=0, up at t=%.2fs)', trial.trial_id, trial_type_str, sol_duration);
+        r.fill_data(1, 1, all_spike_times, velocity_trace, all_spike_rates, rd.common_t, title_str, all_spike_colors, all_spike_alphas, base_color);
         
         % set the limits and synchronize the axes of all the sections
         r.x_lim(limits);

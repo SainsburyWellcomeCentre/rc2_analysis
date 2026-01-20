@@ -106,11 +106,16 @@ classdef TracePlot < RC2Axis
         
         
         
-        function add_sd(obj)
+        function add_sd(obj, col)
         %%add_sd Adds two traces above and below the mean trace indicating
         %%the mean + or - the standard deviation
         %
-        %   add_sd() plots the SD traces
+        %   add_sd(COLOUR) plots the SD traces. COLOUR is optional and
+        %   defaults to [0.7, 0, 0] (dark red).
+        
+            if nargin < 2
+                col = [0.7, 0, 0];  % default dark red
+            end
         
             if ~isempty(obj.h_sd_traces)
                 return
@@ -121,7 +126,7 @@ classdef TracePlot < RC2Axis
             
             obj.h_sd_traces = plot(obj.h_ax, obj.x, ...
                 [mean_trace + sd_trace, mean_trace - sd_trace], ...
-                'color', [0.7, 0, 0], 'linewidth', 0.5);
+                'color', col, 'linewidth', 0.5);
         end
         
         
