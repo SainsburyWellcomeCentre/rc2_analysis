@@ -11,14 +11,14 @@
 %% ==================== PARAMETERS ====================
 
 % --- Data Selection ---
-probe_id = 'CAA-1123432a_rec1';  % Which probe's data to use
-trial_index_long = 1;   % Which long trial's velocity profile to use (1-based index)
-trial_index_short = 2;  % Which short trial's velocity profile to use (1-based index)
+probe_id = 'CAA-1123476a_rec1';  % Which probe's data to use
+trial_index_long = 'all';   % Which long trial's velocity profile to use (1-based index or 'all')
+trial_index_short = 'all';  % Which short trial's velocity profile to use (1-based index or 'all')
 
 % --- Primary Tuning Type ---
 % Choose which tuning characteristic to start from
 % Options: 'absolute_space', 'relative_space', 'velocity', 'acceleration'
-primary_tuning = 'relative_space';
+primary_tuning = 'acceleration';
 
 % --- Absolute Space Tuning Parameters (for absolute positions on track) ---
 % Long trials: 0-120 cm, Short trials: 60-120 cm
@@ -44,9 +44,9 @@ rel_space.baseline = 2;       % Baseline firing rate (Hz)
 vel_tuning = struct();
 vel_tuning.enabled = true;
 vel_tuning.type = 'gaussian';  % 'linear_positive', 'linear_negative', 'gaussian', 'sigmoid'
-vel_tuning.mu = 10;            % Peak velocity (cm/s) for Gaussian
-vel_tuning.sigma = 10;         % Width for Gaussian (cm/s)
-vel_tuning.amplitude = 50;     % Peak firing rate (Hz)
+vel_tuning.mu = 1;            % Peak velocity (cm/s) for Gaussian
+vel_tuning.sigma = 1;         % Width for Gaussian (cm/s)
+vel_tuning.amplitude = 100;     % Peak firing rate (Hz)
 vel_tuning.baseline = 10;       % Baseline firing rate (Hz)
 vel_tuning.slope = 2;        % Slope for linear (Hz per cm/s)
 vel_tuning.midpoint = 10;      % Midpoint for sigmoid (cm/s)
@@ -152,99 +152,198 @@ for s = 1:length(sessions)
     end
 end
 
+% Determine if we're analyzing single or multiple trials
+use_all_long = ischar(trial_index_long) && strcmpi(trial_index_long, 'all');
+use_all_short = ischar(trial_index_short) && strcmpi(trial_index_short, 'all');
+
 % Validate trial indices
-if trial_index_long > length(long_trials)
+if ~use_all_long && trial_index_long > length(long_trials)
     error('Long trial index %d exceeds number of available long trials (%d)', ...
         trial_index_long, length(long_trials));
 end
-if trial_index_short > length(short_trials)
+if ~use_all_short && trial_index_short > length(short_trials)
     error('Short trial index %d exceeds number of available short trials (%d)', ...
         trial_index_short, length(short_trials));
 end
 
-% Extract data for LONG trial
-trial_long = long_trials(trial_index_long);
-motion_mask_long = trial_long.motion_mask();
-position_long = trial_long.position(motion_mask_long);
-velocity_long = trial_long.velocity(motion_mask_long);
-acceleration_long = trial_long.acceleration(motion_mask_long);  % Use real acceleration from trial
-time_long = trial_long.probe_t(motion_mask_long);
+% Extract data for LONG trial(s)
+if use_all_long
+    % Extract data from all long trials
+    long_trial_data = cell(length(long_trials), 1);
+    for i = 1:length(long_trials)
+        trial = long_trials(i);
+        motion_mask = trial.motion_mask();
+        long_trial_data{i}.position = trial.position(motion_mask);
+        long_trial_data{i}.velocity = trial.velocity(motion_mask);
+        long_trial_data{i}.acceleration = trial.acceleration(motion_mask);
+        long_trial_data{i}.time = trial.probe_t(motion_mask);
+    end
+    fprintf('Loaded %d LONG trials\n', length(long_trials));
+    % For compatibility, use first trial as reference
+    position_long = long_trial_data{1}.position;
+    velocity_long = long_trial_data{1}.velocity;
+    acceleration_long = long_trial_data{1}.acceleration;
+    time_long = long_trial_data{1}.time;
+else
+    % Extract data for single long trial
+    trial_long = long_trials(trial_index_long);
+    motion_mask_long = trial_long.motion_mask();
+    position_long = trial_long.position(motion_mask_long);
+    velocity_long = trial_long.velocity(motion_mask_long);
+    acceleration_long = trial_long.acceleration(motion_mask_long);
+    time_long = trial_long.probe_t(motion_mask_long);
+    
+    fprintf('Loaded LONG trial %d: %d samples, duration %.2f s\n', ...
+        trial_index_long, length(time_long), time_long(end) - time_long(1));
+    fprintf('  Position: %.1f - %.1f cm, Velocity: %.1f - %.1f cm/s, Accel: %.1f - %.1f cm/s²\n', ...
+        min(position_long), max(position_long), min(velocity_long), max(velocity_long), ...
+        min(acceleration_long), max(acceleration_long));
+end
 
-fprintf('Loaded LONG trial %d: %d samples, duration %.2f s\n', ...
-    trial_index_long, length(time_long), time_long(end) - time_long(1));
-fprintf('  Position: %.1f - %.1f cm, Velocity: %.1f - %.1f cm/s, Accel: %.1f - %.1f cm/s²\n', ...
-    min(position_long), max(position_long), min(velocity_long), max(velocity_long), ...
-    min(acceleration_long), max(acceleration_long));
-
-% Extract data for SHORT trial
-trial_short = short_trials(trial_index_short);
-motion_mask_short = trial_short.motion_mask();
-position_short = trial_short.position(motion_mask_short);
-velocity_short = trial_short.velocity(motion_mask_short);
-acceleration_short = trial_short.acceleration(motion_mask_short);  % Use real acceleration from trial
-time_short = trial_short.probe_t(motion_mask_short);
-
-fprintf('Loaded SHORT trial %d: %d samples, duration %.2f s\n', ...
-    trial_index_short, length(time_short), time_short(end) - time_short(1));
-fprintf('  Position: %.1f - %.1f cm, Velocity: %.1f - %.1f cm/s, Accel: %.1f - %.1f cm/s²\n', ...
-    min(position_short), max(position_short), min(velocity_short), max(velocity_short), ...
-    min(acceleration_short), max(acceleration_short));
-
-% For absolute space analysis, short trials start at 60 cm on the track
-% Add offset to convert to absolute track coordinates (long: 0-120, short: 60-120)
-short_trial_start_position = 60;  % cm
-position_short_absolute = position_short + short_trial_start_position;
-fprintf('  Short trial absolute positions: %.1f - %.1f cm (offset by %.1f cm)\n', ...
-    min(position_short_absolute), max(position_short_absolute), short_trial_start_position);
+% Extract data for SHORT trial(s)
+short_trial_start_position = 60;  % cm - offset for absolute coordinates
+if use_all_short
+    % Extract data from all short trials
+    short_trial_data = cell(length(short_trials), 1);
+    for i = 1:length(short_trials)
+        trial = short_trials(i);
+        motion_mask = trial.motion_mask();
+        short_trial_data{i}.position = trial.position(motion_mask);
+        short_trial_data{i}.position_absolute = trial.position(motion_mask) + short_trial_start_position;
+        short_trial_data{i}.velocity = trial.velocity(motion_mask);
+        short_trial_data{i}.acceleration = trial.acceleration(motion_mask);
+        short_trial_data{i}.time = trial.probe_t(motion_mask);
+    end
+    fprintf('Loaded %d SHORT trials\n', length(short_trials));
+    % For compatibility, use first trial as reference
+    position_short = short_trial_data{1}.position;
+    position_short_absolute = short_trial_data{1}.position_absolute;
+    velocity_short = short_trial_data{1}.velocity;
+    acceleration_short = short_trial_data{1}.acceleration;
+    time_short = short_trial_data{1}.time;
+else
+    % Extract data for single short trial
+    trial_short = short_trials(trial_index_short);
+    motion_mask_short = trial_short.motion_mask();
+    position_short = trial_short.position(motion_mask_short);
+    velocity_short = trial_short.velocity(motion_mask_short);
+    acceleration_short = trial_short.acceleration(motion_mask_short);
+    time_short = trial_short.probe_t(motion_mask_short);
+    position_short_absolute = position_short + short_trial_start_position;
+    
+    fprintf('Loaded SHORT trial %d: %d samples, duration %.2f s\n', ...
+        trial_index_short, length(time_short), time_short(end) - time_short(1));
+    fprintf('  Position: %.1f - %.1f cm, Velocity: %.1f - %.1f cm/s, Accel: %.1f - %.1f cm/s²\n', ...
+        min(position_short), max(position_short), min(velocity_short), max(velocity_short), ...
+        min(acceleration_short), max(acceleration_short));
+    fprintf('  Short trial absolute positions: %.1f - %.1f cm (offset by %.1f cm)\n', ...
+        min(position_short_absolute), max(position_short_absolute), short_trial_start_position);
+end
 
 %% ==================== GENERATE SYNTHETIC FIRING RATES ====================
 
-% Generate firing rates for LONG trial
-switch primary_tuning
-    case 'absolute_space'
-        % Use actual position values - same tuning curve for both trials
-        firing_rate_long = generate_spatial_tuning(position_long, abs_space);
-        
-    case 'relative_space'
-        rel_position_long = (position_long - min(position_long)) / (max(position_long) - min(position_long));
-        firing_rate_long = generate_spatial_tuning(rel_position_long * 100, rel_space);
-        
-    case 'velocity'
-        firing_rate_long = generate_velocity_tuning(velocity_long, vel_tuning);
-        
-    case 'acceleration'
-        firing_rate_long = generate_acceleration_tuning(acceleration_long, accel_tuning);
-        
-    otherwise
-        error('Unknown primary tuning type: %s', primary_tuning);
-end
-
-% Generate firing rates for SHORT trial
-switch primary_tuning
-    case 'absolute_space'
-        % Use absolute position values (with offset) - same tuning curve for both trials
-        firing_rate_short = generate_spatial_tuning(position_short_absolute, abs_space);
-        
-    case 'relative_space'
-        rel_position_short = (position_short - min(position_short)) / (max(position_short) - min(position_short));
-        firing_rate_short = generate_spatial_tuning(rel_position_short * 100, rel_space);
-        
-    case 'velocity'
-        firing_rate_short = generate_velocity_tuning(velocity_short, vel_tuning);
-        
-    case 'acceleration'
-        firing_rate_short = generate_acceleration_tuning(acceleration_short, accel_tuning);
-        
-    otherwise
-        error('Unknown primary tuning type: %s', primary_tuning);
-end
-
-% Add noise to make it more realistic
 noise_level = 0.1;  % 10% noise
-firing_rate_long = firing_rate_long .* (1 + noise_level * randn(size(firing_rate_long)));
-firing_rate_long(firing_rate_long < 0) = 0;  % Ensure non-negative
-firing_rate_short = firing_rate_short .* (1 + noise_level * randn(size(firing_rate_short)));
-firing_rate_short(firing_rate_short < 0) = 0;  % Ensure non-negative
+
+% Generate firing rates for LONG trial(s)
+if use_all_long
+    % Generate firing rates for all long trials
+    for i = 1:length(long_trial_data)
+        pos = long_trial_data{i}.position;
+        vel = long_trial_data{i}.velocity;
+        accel = long_trial_data{i}.acceleration;
+        
+        switch primary_tuning
+            case 'absolute_space'
+                fr = generate_spatial_tuning(pos, abs_space);
+            case 'relative_space'
+                rel_pos = (pos - min(pos)) / (max(pos) - min(pos));
+                fr = generate_spatial_tuning(rel_pos * 100, rel_space);
+            case 'velocity'
+                fr = generate_velocity_tuning(vel, vel_tuning);
+            case 'acceleration'
+                fr = generate_acceleration_tuning(accel, accel_tuning);
+            otherwise
+                error('Unknown primary tuning type: %s', primary_tuning);
+        end
+        
+        % Add noise
+        fr = fr .* (1 + noise_level * randn(size(fr)));
+        fr(fr < 0) = 0;
+        long_trial_data{i}.firing_rate = fr;
+    end
+    % Reference for compatibility
+    firing_rate_long = long_trial_data{1}.firing_rate;
+else
+    % Generate firing rate for single long trial
+    switch primary_tuning
+        case 'absolute_space'
+            firing_rate_long = generate_spatial_tuning(position_long, abs_space);
+        case 'relative_space'
+            rel_position_long = (position_long - min(position_long)) / (max(position_long) - min(position_long));
+            firing_rate_long = generate_spatial_tuning(rel_position_long * 100, rel_space);
+        case 'velocity'
+            firing_rate_long = generate_velocity_tuning(velocity_long, vel_tuning);
+        case 'acceleration'
+            firing_rate_long = generate_acceleration_tuning(acceleration_long, accel_tuning);
+        otherwise
+            error('Unknown primary tuning type: %s', primary_tuning);
+    end
+    
+    % Add noise
+    firing_rate_long = firing_rate_long .* (1 + noise_level * randn(size(firing_rate_long)));
+    firing_rate_long(firing_rate_long < 0) = 0;
+end
+
+% Generate firing rates for SHORT trial(s)
+if use_all_short
+    % Generate firing rates for all short trials
+    for i = 1:length(short_trial_data)
+        pos = short_trial_data{i}.position;
+        pos_abs = short_trial_data{i}.position_absolute;
+        vel = short_trial_data{i}.velocity;
+        accel = short_trial_data{i}.acceleration;
+        
+        switch primary_tuning
+            case 'absolute_space'
+                fr = generate_spatial_tuning(pos_abs, abs_space);
+            case 'relative_space'
+                rel_pos = (pos - min(pos)) / (max(pos) - min(pos));
+                fr = generate_spatial_tuning(rel_pos * 100, rel_space);
+            case 'velocity'
+                fr = generate_velocity_tuning(vel, vel_tuning);
+            case 'acceleration'
+                fr = generate_acceleration_tuning(accel, accel_tuning);
+            otherwise
+                error('Unknown primary tuning type: %s', primary_tuning);
+        end
+        
+        % Add noise
+        fr = fr .* (1 + noise_level * randn(size(fr)));
+        fr(fr < 0) = 0;
+        short_trial_data{i}.firing_rate = fr;
+    end
+    % Reference for compatibility
+    firing_rate_short = short_trial_data{1}.firing_rate;
+else
+    % Generate firing rate for single short trial
+    switch primary_tuning
+        case 'absolute_space'
+            firing_rate_short = generate_spatial_tuning(position_short_absolute, abs_space);
+        case 'relative_space'
+            rel_position_short = (position_short - min(position_short)) / (max(position_short) - min(position_short));
+            firing_rate_short = generate_spatial_tuning(rel_position_short * 100, rel_space);
+        case 'velocity'
+            firing_rate_short = generate_velocity_tuning(velocity_short, vel_tuning);
+        case 'acceleration'
+            firing_rate_short = generate_acceleration_tuning(acceleration_short, accel_tuning);
+        otherwise
+            error('Unknown primary tuning type: %s', primary_tuning);
+    end
+    
+    % Add noise
+    firing_rate_short = firing_rate_short .* (1 + noise_level * randn(size(firing_rate_short)));
+    firing_rate_short(firing_rate_short < 0) = 0;
+end
 
 %% ==================== CREATE FIGURE ====================
 
@@ -255,65 +354,120 @@ color_long = [0, 0.4470, 0.7410];    % Blue
 color_short = [0.8500, 0.3250, 0.0980];  % Red
 
 % Panel 1 (Row 1, Col 1): Parameters
-subplot(3, 6, 1:2);
+ax1 = subplot(3, 6, 1:2);
 axis off;
+% Adjust position to add spacing
+pos1 = get(ax1, 'Position');
+pos1(3) = pos1(3) * 0.80;  % Reduce width to 80% to create spacing
+set(ax1, 'Position', pos1);
+
+% Build description based on primary tuning
+switch primary_tuning
+    case 'absolute_space'
+        tuning_desc = sprintf(['Neuron tuned to absolute position %.0f cm ', ...
+            'with %.0f cm spread (Gaussian). Fires at same track ', ...
+            'location regardless of trial type.'], abs_space.mu, abs_space.sigma);
+    case 'relative_space'
+        tuning_desc = sprintf(['Neuron tuned to %.0f%% of track length ', ...
+            'with %.0f%% spread (Gaussian). Fires at same relative ', ...
+            'position across trial types.'], rel_space.mu*100, rel_space.sigma*100);
+    case 'velocity'
+        if strcmp(vel_tuning.type, 'gaussian')
+            tuning_desc = sprintf(['Neuron tuned to velocity %.1f cm/s ', ...
+                'with %.1f cm/s spread (Gaussian). Fires when mouse ', ...
+                'runs at specific speed.'], vel_tuning.mu, vel_tuning.sigma);
+        else
+            tuning_desc = sprintf('Neuron with %s velocity tuning. ', ...
+                strrep(vel_tuning.type, '_', ' '));
+        end
+    case 'acceleration'
+        tuning_desc = sprintf(['Neuron with %s acceleration tuning.\n', ...
+            'Fires based on changes in running speed.'], ...
+            strrep(accel_tuning.type, '_', ' '));
+    otherwise
+        tuning_desc = '';
+end
+
 param_text = {
     '\bf{Synthetic Tuning Parameters}',
     '',
     sprintf('\\bf{Probe:} %s', strrep(probe_id, '_', '\_')),
-    sprintf('\\bf{Long Trial:} %d, \\bf{Short Trial:} %d', trial_index_long, trial_index_short),
+    sprintf('\\bf{Long Trial:} %s, \\bf{Short Trial:} %s', ...
+        char(string(trial_index_long)), char(string(trial_index_short))),
+    '',
     sprintf('\\bf{Primary Tuning:} %s', strrep(primary_tuning, '_', ' ')),
     '',
-    '\bf{Active Tuning Types:}'
+    tuning_desc
 };
 
-if abs_space.enabled
-    param_text{end+1} = sprintf('  • Absolute Space (%s, \\mu=%.0f cm, \\sigma=%.0f cm)', ...
-        abs_space.type, abs_space.mu, abs_space.sigma);
-end
-if rel_space.enabled
-    param_text{end+1} = sprintf('  • Relative Space (%s, \\mu=%.0f%%, \\sigma=%.0f%%)', ...
-        rel_space.type, rel_space.mu*100, rel_space.sigma*100);
-end
-if vel_tuning.enabled
-    param_text{end+1} = sprintf('  • Velocity (%s)', vel_tuning.type);
-end
-if accel_tuning.enabled
-    param_text{end+1} = sprintf('  • Acceleration (%s)', accel_tuning.type);
-end
-
-text(0.05, 0.95, param_text, 'VerticalAlignment', 'top', 'FontSize', 9, ...
+text(0.05, 0.95, param_text, 'VerticalAlignment', 'top', 'FontSize', 11, ...
     'Interpreter', 'tex');
 
 % Panel 2 (Row 1, Col 2): Long trial running profile
-subplot(3, 6, 3:4);
+ax2 = subplot(3, 6, [3 4]);
+pos2 = get(ax2, 'Position');
+pos2(1) = pos2(1) + 0.03;  % Shift right to create gap
+set(ax2, 'Position', pos2);
 hold on;
+if use_all_long
+    % Plot individual trials only
+    for i = 1:length(long_trial_data)
+        t = long_trial_data{i}.time - long_trial_data{i}.time(1);  % Start from 0
+        yyaxis left
+        plot(t, long_trial_data{i}.position, '-', 'Color', [0, 0, 0, 0.5], 'LineWidth', 0.8);
+        yyaxis right
+        plot(t, long_trial_data{i}.velocity, '-', 'Color', [color_long, 0.5], 'LineWidth', 0.8);
+    end
+else
+    % Single trial
+    yyaxis left
+    plot(time_long - time_long(1), position_long, '-', 'Color', 'k', 'LineWidth', 1.5);
+    yyaxis right
+    plot(time_long - time_long(1), velocity_long, '-', 'Color', color_long, 'LineWidth', 1);
+end
 yyaxis left
-plot(time_long, position_long, '-', 'Color', color_long, 'LineWidth', 1.5);
-ylabel('Position (cm)');
+ylabel('Position (cm)', 'Color', 'k');
 ylim([0, 120]);
-
+ax = gca;
+ax.YAxis(1).Color = 'k';
 yyaxis right
-plot(time_long, velocity_long, '-', 'Color', color_long, 'LineWidth', 1);
-ylabel('Velocity (cm/s)');
-
+ylabel('Velocity (cm/s)', 'Color', color_long);
+ax.YAxis(2).Color = color_long;
 xlabel('Time (s)');
 title('Long Trial Running Profile');
 grid on;
 hold off;
 
 % Panel 3 (Row 1, Col 3): Short trial running profile
-subplot(3, 6, 5:6);
+ax3 = subplot(3, 6, [5 6]);
+pos3 = get(ax3, 'Position');
+pos3(1) = pos3(1) + 0.08;  % Shift right to create gap
+set(ax3, 'Position', pos3);
 hold on;
+if use_all_short
+    % Plot individual trials only
+    for i = 1:length(short_trial_data)
+        t = short_trial_data{i}.time - short_trial_data{i}.time(1);  % Start from 0
+        yyaxis left
+        plot(t, short_trial_data{i}.position_absolute, '-', 'Color', [0, 0, 0, 0.5], 'LineWidth', 0.8);
+        yyaxis right
+        plot(t, short_trial_data{i}.velocity, '-', 'Color', [color_short, 0.5], 'LineWidth', 0.8);
+    end
+else
+    % Single trial
+    yyaxis left
+    plot(time_short - time_short(1), position_short_absolute, '-', 'Color', 'k', 'LineWidth', 1.5);
+    yyaxis right
+    plot(time_short - time_short(1), velocity_short, '-', 'Color', color_short, 'LineWidth', 1);
+end
 yyaxis left
-plot(time_short, position_short + 60, '-', 'Color', color_short, 'LineWidth', 1.5);
-ylabel('Position (cm)');
+ylabel('Position (cm)', 'Color', 'k');
 ylim([0, 120]);
-
+ax = gca;
+ax.YAxis(1).Color = 'k';
 yyaxis right
-plot(time_short, velocity_short, '-', 'Color', color_short, 'LineWidth', 1);
-ylabel('Velocity (cm/s)');
-
+ylabel('Velocity (cm/s)', 'Color', color_short);
+ax.YAxis(2).Color = color_short;
 xlabel('Time (s)');
 title('Short Trial Running Profile');
 grid on;
@@ -327,47 +481,100 @@ hold on;
 pos_bin_size = cache.bin_size_cm;  % Use cached bin size (typically 2 cm)
 pos_bins = 0:pos_bin_size:120;
 pos_centers = pos_bins(1:end-1) + pos_bin_size/2;
-binned_rate_long = zeros(size(pos_centers));
-binned_count_long = zeros(size(pos_centers));
 
-for i = 1:length(position_long)
-    bin_idx = find(position_long(i) >= pos_bins(1:end-1) & position_long(i) < pos_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        binned_rate_long(bin_idx) = binned_rate_long(bin_idx) + firing_rate_long(i);
-        binned_count_long(bin_idx) = binned_count_long(bin_idx) + 1;
+% Process LONG trials
+if use_all_long
+    % Plot individual trials (thin) and average (thick)
+    all_binned_long = zeros(length(long_trial_data), length(pos_centers));
+    for trial_idx = 1:length(long_trial_data)
+        binned_rate = zeros(size(pos_centers));
+        binned_count = zeros(size(pos_centers));
+        pos = long_trial_data{trial_idx}.position;
+        fr = long_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(pos)
+            bin_idx = find(pos(i) >= pos_bins(1:end-1) & pos(i) < pos_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_binned_long(trial_idx, :) = binned_rate;
+        plot(pos_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_long, 0.3], 'LineWidth', 0.5);
     end
-end
-valid_bins_long = binned_count_long > 0;
-binned_rate_long(valid_bins_long) = binned_rate_long(valid_bins_long) ./ binned_count_long(valid_bins_long);
-
-% Bin firing rate by position for SHORT trial (use absolute positions with offset)
-binned_rate_short = zeros(size(pos_centers));
-binned_count_short = zeros(size(pos_centers));
-
-for i = 1:length(position_short)
-    pos_absolute = position_short_absolute(i);  % Use pre-computed absolute position
-    bin_idx = find(pos_absolute >= pos_bins(1:end-1) & pos_absolute < pos_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        binned_rate_short(bin_idx) = binned_rate_short(bin_idx) + firing_rate_short(i);
-        binned_count_short(bin_idx) = binned_count_short(bin_idx) + 1;
+    % Average
+    avg_binned_long = mean(all_binned_long, 1);
+    valid_avg_long = avg_binned_long > 0;
+    plot(pos_centers(valid_avg_long), avg_binned_long(valid_avg_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2.5, 'DisplayName', 'Long (avg)');
+else
+    % Single trial
+    binned_rate_long = zeros(size(pos_centers));
+    binned_count_long = zeros(size(pos_centers));
+    for i = 1:length(position_long)
+        bin_idx = find(position_long(i) >= pos_bins(1:end-1) & position_long(i) < pos_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            binned_rate_long(bin_idx) = binned_rate_long(bin_idx) + firing_rate_long(i);
+            binned_count_long(bin_idx) = binned_count_long(bin_idx) + 1;
+        end
     end
+    valid_bins_long = binned_count_long > 0;
+    binned_rate_long(valid_bins_long) = binned_rate_long(valid_bins_long) ./ binned_count_long(valid_bins_long);
+    plot(pos_centers(valid_bins_long), binned_rate_long(valid_bins_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
 end
-valid_bins_short = binned_count_short > 0;
-binned_rate_short(valid_bins_short) = binned_rate_short(valid_bins_short) ./ binned_count_short(valid_bins_short);
 
-% Plot both
-plot(pos_centers(valid_bins_long), binned_rate_long(valid_bins_long), 'o-', ...
-    'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
-plot(pos_centers(valid_bins_short), binned_rate_short(valid_bins_short), 'o-', ...
-    'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+% Process SHORT trials
+if use_all_short
+    % Plot individual trials (thin) and average (thick)
+    all_binned_short = zeros(length(short_trial_data), length(pos_centers));
+    for trial_idx = 1:length(short_trial_data)
+        binned_rate = zeros(size(pos_centers));
+        binned_count = zeros(size(pos_centers));
+        pos = short_trial_data{trial_idx}.position_absolute;
+        fr = short_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(pos)
+            bin_idx = find(pos(i) >= pos_bins(1:end-1) & pos(i) < pos_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_binned_short(trial_idx, :) = binned_rate;
+        plot(pos_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_short, 0.3], 'LineWidth', 0.5);
+    end
+    % Average
+    avg_binned_short = mean(all_binned_short, 1);
+    valid_avg_short = avg_binned_short > 0;
+    plot(pos_centers(valid_avg_short), avg_binned_short(valid_avg_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2.5, 'DisplayName', 'Short (avg)');
+else
+    % Single trial
+    binned_rate_short = zeros(size(pos_centers));
+    binned_count_short = zeros(size(pos_centers));
+    for i = 1:length(position_short)
+        pos_absolute = position_short_absolute(i);
+        bin_idx = find(pos_absolute >= pos_bins(1:end-1) & pos_absolute < pos_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            binned_rate_short(bin_idx) = binned_rate_short(bin_idx) + firing_rate_short(i);
+            binned_count_short(bin_idx) = binned_count_short(bin_idx) + 1;
+        end
+    end
+    valid_bins_short = binned_count_short > 0;
+    binned_rate_short(valid_bins_short) = binned_rate_short(valid_bins_short) ./ binned_count_short(valid_bins_short);
+    plot(pos_centers(valid_bins_short), binned_rate_short(valid_bins_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+end
 
 xlabel('Absolute Position (cm)');
 ylabel('Firing Rate (Hz)');
 title('Absolute Space Tuning');
-legend('Location', 'best');
 xlim([0, 120]);
-max_rate = max([binned_rate_long(valid_bins_long), binned_rate_short(valid_bins_short)]);
-ylim([0, max_rate * 1.2]);
 grid on;
 hold off;
 
@@ -380,49 +587,102 @@ rel_bin_size = 2;  % 2% bins for relative position
 rel_bins = 0:rel_bin_size:100;
 rel_centers = rel_bins(1:end-1) + rel_bin_size/2;
 
-% Bin firing rate by relative position for LONG trial
-rel_pos_long = (position_long - min(position_long)) / (max(position_long) - min(position_long)) * 100;
-rel_binned_rate_long = zeros(size(rel_centers));
-rel_binned_count_long = zeros(size(rel_centers));
-
-for i = 1:length(rel_pos_long)
-    bin_idx = find(rel_pos_long(i) >= rel_bins(1:end-1) & rel_pos_long(i) < rel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        rel_binned_rate_long(bin_idx) = rel_binned_rate_long(bin_idx) + firing_rate_long(i);
-        rel_binned_count_long(bin_idx) = rel_binned_count_long(bin_idx) + 1;
+% Process LONG trials
+if use_all_long
+    % Plot individual trials (thin) and average (thick)
+    all_rel_binned_long = zeros(length(long_trial_data), length(rel_centers));
+    for trial_idx = 1:length(long_trial_data)
+        binned_rate = zeros(size(rel_centers));
+        binned_count = zeros(size(rel_centers));
+        pos = long_trial_data{trial_idx}.position;
+        rel_pos = (pos - min(pos)) / (max(pos) - min(pos)) * 100;
+        fr = long_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(rel_pos)
+            bin_idx = find(rel_pos(i) >= rel_bins(1:end-1) & rel_pos(i) < rel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_rel_binned_long(trial_idx, :) = binned_rate;
+        plot(rel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_long, 0.3], 'LineWidth', 0.5);
     end
-end
-rel_valid_bins_long = rel_binned_count_long > 0;
-rel_binned_rate_long(rel_valid_bins_long) = rel_binned_rate_long(rel_valid_bins_long) ./ rel_binned_count_long(rel_valid_bins_long);
-
-% Bin firing rate by relative position for SHORT trial
-rel_pos_short = (position_short - min(position_short)) / (max(position_short) - min(position_short)) * 100;
-rel_binned_rate_short = zeros(size(rel_centers));
-rel_binned_count_short = zeros(size(rel_centers));
-
-for i = 1:length(rel_pos_short)
-    bin_idx = find(rel_pos_short(i) >= rel_bins(1:end-1) & rel_pos_short(i) < rel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        rel_binned_rate_short(bin_idx) = rel_binned_rate_short(bin_idx) + firing_rate_short(i);
-        rel_binned_count_short(bin_idx) = rel_binned_count_short(bin_idx) + 1;
+    % Average
+    avg_rel_binned_long = mean(all_rel_binned_long, 1);
+    valid_avg_long = avg_rel_binned_long > 0;
+    plot(rel_centers(valid_avg_long), avg_rel_binned_long(valid_avg_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2.5, 'DisplayName', 'Long (avg)');
+else
+    % Single trial
+    rel_pos_long = (position_long - min(position_long)) / (max(position_long) - min(position_long)) * 100;
+    rel_binned_rate_long = zeros(size(rel_centers));
+    rel_binned_count_long = zeros(size(rel_centers));
+    for i = 1:length(rel_pos_long)
+        bin_idx = find(rel_pos_long(i) >= rel_bins(1:end-1) & rel_pos_long(i) < rel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            rel_binned_rate_long(bin_idx) = rel_binned_rate_long(bin_idx) + firing_rate_long(i);
+            rel_binned_count_long(bin_idx) = rel_binned_count_long(bin_idx) + 1;
+        end
     end
+    rel_valid_bins_long = rel_binned_count_long > 0;
+    rel_binned_rate_long(rel_valid_bins_long) = rel_binned_rate_long(rel_valid_bins_long) ./ rel_binned_count_long(rel_valid_bins_long);
+    plot(rel_centers(rel_valid_bins_long), rel_binned_rate_long(rel_valid_bins_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
 end
-rel_valid_bins_short = rel_binned_count_short > 0;
-rel_binned_rate_short(rel_valid_bins_short) = rel_binned_rate_short(rel_valid_bins_short) ./ rel_binned_count_short(rel_valid_bins_short);
 
-% Plot both
-plot(rel_centers(rel_valid_bins_long), rel_binned_rate_long(rel_valid_bins_long), 'o-', ...
-    'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
-plot(rel_centers(rel_valid_bins_short), rel_binned_rate_short(rel_valid_bins_short), 'o-', ...
-    'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+% Process SHORT trials
+if use_all_short
+    % Plot individual trials (thin) and average (thick)
+    all_rel_binned_short = zeros(length(short_trial_data), length(rel_centers));
+    for trial_idx = 1:length(short_trial_data)
+        binned_rate = zeros(size(rel_centers));
+        binned_count = zeros(size(rel_centers));
+        pos = short_trial_data{trial_idx}.position;
+        rel_pos = (pos - min(pos)) / (max(pos) - min(pos)) * 100;
+        fr = short_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(rel_pos)
+            bin_idx = find(rel_pos(i) >= rel_bins(1:end-1) & rel_pos(i) < rel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_rel_binned_short(trial_idx, :) = binned_rate;
+        plot(rel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_short, 0.3], 'LineWidth', 0.5);
+    end
+    % Average
+    avg_rel_binned_short = mean(all_rel_binned_short, 1);
+    valid_avg_short = avg_rel_binned_short > 0;
+    plot(rel_centers(valid_avg_short), avg_rel_binned_short(valid_avg_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2.5, 'DisplayName', 'Short (avg)');
+else
+    % Single trial
+    rel_pos_short = (position_short - min(position_short)) / (max(position_short) - min(position_short)) * 100;
+    rel_binned_rate_short = zeros(size(rel_centers));
+    rel_binned_count_short = zeros(size(rel_centers));
+    for i = 1:length(rel_pos_short)
+        bin_idx = find(rel_pos_short(i) >= rel_bins(1:end-1) & rel_pos_short(i) < rel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            rel_binned_rate_short(bin_idx) = rel_binned_rate_short(bin_idx) + firing_rate_short(i);
+            rel_binned_count_short(bin_idx) = rel_binned_count_short(bin_idx) + 1;
+        end
+    end
+    rel_valid_bins_short = rel_binned_count_short > 0;
+    rel_binned_rate_short(rel_valid_bins_short) = rel_binned_rate_short(rel_valid_bins_short) ./ rel_binned_count_short(rel_valid_bins_short);
+    plot(rel_centers(rel_valid_bins_short), rel_binned_rate_short(rel_valid_bins_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+end
 
 xlabel('Relative Position (%)');
 ylabel('Firing Rate (Hz)');
 title('Relative Space Tuning');
-legend('Location', 'best');
 xlim([0, 100]);
-max_rate = max([rel_binned_rate_long(rel_valid_bins_long), rel_binned_rate_short(rel_valid_bins_short)]);
-ylim([0, max_rate * 1.2]);
 grid on;
 hold off;
 
@@ -431,56 +691,113 @@ subplot(3, 6, 13:15);
 hold on;
 
 % Determine common velocity bins across both trials from the actual data
-all_velocities = [velocity_long(:); velocity_short(:)];
+if use_all_long && use_all_short
+    all_vels = [];
+    for i = 1:length(long_trial_data)
+        all_vels = [all_vels; long_trial_data{i}.velocity(:)]; %#ok<AGROW>
+    end
+    for i = 1:length(short_trial_data)
+        all_vels = [all_vels; short_trial_data{i}.velocity(:)]; %#ok<AGROW>
+    end
+else
+    all_vels = [velocity_long(:); velocity_short(:)];
+end
 vel_bin_size = 5;  % cm/s bins
-vel_bins = floor(min(all_velocities)):vel_bin_size:ceil(max(all_velocities));
+vel_bins = floor(min(all_vels)):vel_bin_size:ceil(max(all_vels));
 vel_centers = vel_bins(1:end-1) + vel_bin_size/2;
 
-% Bin firing rate by velocity for LONG trial
-vel_binned_rate_long = zeros(size(vel_centers));
-vel_binned_count_long = zeros(size(vel_centers));
-
-for i = 1:length(velocity_long)
-    bin_idx = find(velocity_long(i) >= vel_bins(1:end-1) & velocity_long(i) < vel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        vel_binned_rate_long(bin_idx) = vel_binned_rate_long(bin_idx) + firing_rate_long(i);
-        vel_binned_count_long(bin_idx) = vel_binned_count_long(bin_idx) + 1;
+% Process LONG trials
+if use_all_long
+    % Plot individual trials (thin) and average (thick)
+    all_vel_binned_long = zeros(length(long_trial_data), length(vel_centers));
+    for trial_idx = 1:length(long_trial_data)
+        binned_rate = zeros(size(vel_centers));
+        binned_count = zeros(size(vel_centers));
+        vel = long_trial_data{trial_idx}.velocity;
+        fr = long_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(vel)
+            bin_idx = find(vel(i) >= vel_bins(1:end-1) & vel(i) < vel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_vel_binned_long(trial_idx, :) = binned_rate;
+        plot(vel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_long, 0.3], 'LineWidth', 0.5);
     end
-end
-vel_valid_bins_long = vel_binned_count_long > 0;
-vel_binned_rate_long(vel_valid_bins_long) = vel_binned_rate_long(vel_valid_bins_long) ./ vel_binned_count_long(vel_valid_bins_long);
-
-% Bin firing rate by velocity for SHORT trial
-vel_binned_rate_short = zeros(size(vel_centers));
-vel_binned_count_short = zeros(size(vel_centers));
-
-for i = 1:length(velocity_short)
-    bin_idx = find(velocity_short(i) >= vel_bins(1:end-1) & velocity_short(i) < vel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        vel_binned_rate_short(bin_idx) = vel_binned_rate_short(bin_idx) + firing_rate_short(i);
-        vel_binned_count_short(bin_idx) = vel_binned_count_short(bin_idx) + 1;
+    % Average
+    avg_vel_binned_long = mean(all_vel_binned_long, 1);
+    valid_avg_long = avg_vel_binned_long > 0;
+    plot(vel_centers(valid_avg_long), avg_vel_binned_long(valid_avg_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2.5, 'DisplayName', 'Long (avg)');
+else
+    % Single trial
+    vel_binned_rate_long = zeros(size(vel_centers));
+    vel_binned_count_long = zeros(size(vel_centers));
+    for i = 1:length(velocity_long)
+        bin_idx = find(velocity_long(i) >= vel_bins(1:end-1) & velocity_long(i) < vel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            vel_binned_rate_long(bin_idx) = vel_binned_rate_long(bin_idx) + firing_rate_long(i);
+            vel_binned_count_long(bin_idx) = vel_binned_count_long(bin_idx) + 1;
+        end
     end
+    vel_valid_bins_long = vel_binned_count_long > 0;
+    vel_binned_rate_long(vel_valid_bins_long) = vel_binned_rate_long(vel_valid_bins_long) ./ vel_binned_count_long(vel_valid_bins_long);
+    plot(vel_centers(vel_valid_bins_long), vel_binned_rate_long(vel_valid_bins_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
 end
-vel_valid_bins_short = vel_binned_count_short > 0;
-vel_binned_rate_short(vel_valid_bins_short) = vel_binned_rate_short(vel_valid_bins_short) ./ vel_binned_count_short(vel_valid_bins_short);
 
-% Plot both
-plot(vel_centers(vel_valid_bins_long), vel_binned_rate_long(vel_valid_bins_long), 'o-', ...
-    'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
-plot(vel_centers(vel_valid_bins_short), vel_binned_rate_short(vel_valid_bins_short), 'o-', ...
-    'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+% Process SHORT trials
+if use_all_short
+    % Plot individual trials (thin) and average (thick)
+    all_vel_binned_short = zeros(length(short_trial_data), length(vel_centers));
+    for trial_idx = 1:length(short_trial_data)
+        binned_rate = zeros(size(vel_centers));
+        binned_count = zeros(size(vel_centers));
+        vel = short_trial_data{trial_idx}.velocity;
+        fr = short_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(vel)
+            bin_idx = find(vel(i) >= vel_bins(1:end-1) & vel(i) < vel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_vel_binned_short(trial_idx, :) = binned_rate;
+        plot(vel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_short, 0.3], 'LineWidth', 0.5);
+    end
+    % Average
+    avg_vel_binned_short = mean(all_vel_binned_short, 1);
+    valid_avg_short = avg_vel_binned_short > 0;
+    plot(vel_centers(valid_avg_short), avg_vel_binned_short(valid_avg_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2.5, 'DisplayName', 'Short (avg)');
+else
+    % Single trial
+    vel_binned_rate_short = zeros(size(vel_centers));
+    vel_binned_count_short = zeros(size(vel_centers));
+    for i = 1:length(velocity_short)
+        bin_idx = find(velocity_short(i) >= vel_bins(1:end-1) & velocity_short(i) < vel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            vel_binned_rate_short(bin_idx) = vel_binned_rate_short(bin_idx) + firing_rate_short(i);
+            vel_binned_count_short(bin_idx) = vel_binned_count_short(bin_idx) + 1;
+        end
+    end
+    vel_valid_bins_short = vel_binned_count_short > 0;
+    vel_binned_rate_short(vel_valid_bins_short) = vel_binned_rate_short(vel_valid_bins_short) ./ vel_binned_count_short(vel_valid_bins_short);
+    plot(vel_centers(vel_valid_bins_short), vel_binned_rate_short(vel_valid_bins_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+end
 
 xlabel('Velocity (cm/s)');
 ylabel('Firing Rate (Hz)');
 title('Velocity Tuning');
-legend('Location', 'best');
-if length(vel_centers) > 1
-    xlim([min(vel_centers), max(vel_centers)]);
-end
-max_rate = max([vel_binned_rate_long(vel_valid_bins_long), vel_binned_rate_short(vel_valid_bins_short)]);
-if max_rate > 0
-    ylim([0, max_rate * 1.2]);
-end
+xlim([0, 30]);
 grid on;
 hold off;
 
@@ -489,62 +806,121 @@ subplot(3, 6, 16:18);
 hold on;
 
 % Determine common acceleration bins across both trials from the actual data
-all_accelerations = [acceleration_long(:); acceleration_short(:)];
-accel_bin_size = 0.5;  % cm/s² bins (should be in realistic ±5 cm/s² range)
-accel_bins = floor(min(all_accelerations)):accel_bin_size:ceil(max(all_accelerations));
+if use_all_long && use_all_short
+    all_accels = [];
+    for i = 1:length(long_trial_data)
+        all_accels = [all_accels; long_trial_data{i}.acceleration(:)]; %#ok<AGROW>
+    end
+    for i = 1:length(short_trial_data)
+        all_accels = [all_accels; short_trial_data{i}.acceleration(:)]; %#ok<AGROW>
+    end
+else
+    all_accels = [acceleration_long(:); acceleration_short(:)];
+end
+accel_bin_size = 0.5;  % cm/s² bins
+accel_bins = floor(min(all_accels)):accel_bin_size:ceil(max(all_accels));
 accel_centers = accel_bins(1:end-1) + accel_bin_size/2;
 
-% Bin firing rate by acceleration for LONG trial
-accel_binned_rate_long = zeros(size(accel_centers));
-accel_binned_count_long = zeros(size(accel_centers));
-
-for i = 1:length(acceleration_long)
-    bin_idx = find(acceleration_long(i) >= accel_bins(1:end-1) & acceleration_long(i) < accel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        accel_binned_rate_long(bin_idx) = accel_binned_rate_long(bin_idx) + firing_rate_long(i);
-        accel_binned_count_long(bin_idx) = accel_binned_count_long(bin_idx) + 1;
+% Process LONG trials
+if use_all_long
+    % Plot individual trials (thin) and average (thick)
+    all_accel_binned_long = zeros(length(long_trial_data), length(accel_centers));
+    for trial_idx = 1:length(long_trial_data)
+        binned_rate = zeros(size(accel_centers));
+        binned_count = zeros(size(accel_centers));
+        accel = long_trial_data{trial_idx}.acceleration;
+        fr = long_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(accel)
+            bin_idx = find(accel(i) >= accel_bins(1:end-1) & accel(i) < accel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_accel_binned_long(trial_idx, :) = binned_rate;
+        plot(accel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_long, 0.3], 'LineWidth', 0.5);
     end
-end
-accel_valid_bins_long = accel_binned_count_long > 0;
-accel_binned_rate_long(accel_valid_bins_long) = accel_binned_rate_long(accel_valid_bins_long) ./ accel_binned_count_long(accel_valid_bins_long);
-
-% Bin firing rate by acceleration for SHORT trial
-accel_binned_rate_short = zeros(size(accel_centers));
-accel_binned_count_short = zeros(size(accel_centers));
-
-for i = 1:length(acceleration_short)
-    bin_idx = find(acceleration_short(i) >= accel_bins(1:end-1) & acceleration_short(i) < accel_bins(2:end), 1);
-    if ~isempty(bin_idx)
-        accel_binned_rate_short(bin_idx) = accel_binned_rate_short(bin_idx) + firing_rate_short(i);
-        accel_binned_count_short(bin_idx) = accel_binned_count_short(bin_idx) + 1;
+    % Average
+    avg_accel_binned_long = mean(all_accel_binned_long, 1);
+    valid_avg_long = avg_accel_binned_long > 0;
+    plot(accel_centers(valid_avg_long), avg_accel_binned_long(valid_avg_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2.5, 'DisplayName', 'Long (avg)');
+else
+    % Single trial
+    accel_binned_rate_long = zeros(size(accel_centers));
+    accel_binned_count_long = zeros(size(accel_centers));
+    for i = 1:length(acceleration_long)
+        bin_idx = find(acceleration_long(i) >= accel_bins(1:end-1) & acceleration_long(i) < accel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            accel_binned_rate_long(bin_idx) = accel_binned_rate_long(bin_idx) + firing_rate_long(i);
+            accel_binned_count_long(bin_idx) = accel_binned_count_long(bin_idx) + 1;
+        end
     end
+    accel_valid_bins_long = accel_binned_count_long > 0;
+    accel_binned_rate_long(accel_valid_bins_long) = accel_binned_rate_long(accel_valid_bins_long) ./ accel_binned_count_long(accel_valid_bins_long);
+    plot(accel_centers(accel_valid_bins_long), accel_binned_rate_long(accel_valid_bins_long), 'o-', ...
+        'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
 end
-accel_valid_bins_short = accel_binned_count_short > 0;
-accel_binned_rate_short(accel_valid_bins_short) = accel_binned_rate_short(accel_valid_bins_short) ./ accel_binned_count_short(accel_valid_bins_short);
 
-% Plot both
-plot(accel_centers(accel_valid_bins_long), accel_binned_rate_long(accel_valid_bins_long), 'o-', ...
-    'Color', color_long, 'MarkerFaceColor', color_long, 'LineWidth', 2, 'DisplayName', 'Long');
-plot(accel_centers(accel_valid_bins_short), accel_binned_rate_short(accel_valid_bins_short), 'o-', ...
-    'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+% Process SHORT trials
+if use_all_short
+    % Plot individual trials (thin) and average (thick)
+    all_accel_binned_short = zeros(length(short_trial_data), length(accel_centers));
+    for trial_idx = 1:length(short_trial_data)
+        binned_rate = zeros(size(accel_centers));
+        binned_count = zeros(size(accel_centers));
+        accel = short_trial_data{trial_idx}.acceleration;
+        fr = short_trial_data{trial_idx}.firing_rate;
+        for i = 1:length(accel)
+            bin_idx = find(accel(i) >= accel_bins(1:end-1) & accel(i) < accel_bins(2:end), 1);
+            if ~isempty(bin_idx)
+                binned_rate(bin_idx) = binned_rate(bin_idx) + fr(i);
+                binned_count(bin_idx) = binned_count(bin_idx) + 1;
+            end
+        end
+        valid_bins = binned_count > 0;
+        binned_rate(valid_bins) = binned_rate(valid_bins) ./ binned_count(valid_bins);
+        all_accel_binned_short(trial_idx, :) = binned_rate;
+        plot(accel_centers(valid_bins), binned_rate(valid_bins), '-', ...
+            'Color', [color_short, 0.3], 'LineWidth', 0.5);
+    end
+    % Average
+    avg_accel_binned_short = mean(all_accel_binned_short, 1);
+    valid_avg_short = avg_accel_binned_short > 0;
+    plot(accel_centers(valid_avg_short), avg_accel_binned_short(valid_avg_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2.5, 'DisplayName', 'Short (avg)');
+else
+    % Single trial
+    accel_binned_rate_short = zeros(size(accel_centers));
+    accel_binned_count_short = zeros(size(accel_centers));
+    for i = 1:length(acceleration_short)
+        bin_idx = find(acceleration_short(i) >= accel_bins(1:end-1) & acceleration_short(i) < accel_bins(2:end), 1);
+        if ~isempty(bin_idx)
+            accel_binned_rate_short(bin_idx) = accel_binned_rate_short(bin_idx) + firing_rate_short(i);
+            accel_binned_count_short(bin_idx) = accel_binned_count_short(bin_idx) + 1;
+        end
+    end
+    accel_valid_bins_short = accel_binned_count_short > 0;
+    accel_binned_rate_short(accel_valid_bins_short) = accel_binned_rate_short(accel_valid_bins_short) ./ accel_binned_count_short(accel_valid_bins_short);
+    plot(accel_centers(accel_valid_bins_short), accel_binned_rate_short(accel_valid_bins_short), 'o-', ...
+        'Color', color_short, 'MarkerFaceColor', color_short, 'LineWidth', 2, 'DisplayName', 'Short');
+end
 
 xlabel('Acceleration (cm/s²)');
 ylabel('Firing Rate (Hz)');
 title('Acceleration Tuning');
-legend('Location', 'best');
-if length(accel_centers) > 1
-    xlim([min(accel_centers), max(accel_centers)]);
-end
-max_rate = max([accel_binned_rate_long(accel_valid_bins_long), accel_binned_rate_short(accel_valid_bins_short)]);
-if max_rate > 0
-    ylim([0, max_rate * 1.2]);
-end
+xlim([-5, 5]);
 grid on;
 hold off;
 
 % Overall title
-sgtitle(sprintf('Synthetic Tuning Visualization - %s (Long: %d, Short: %d)', ...
-    strrep(probe_id, '_', '\_'), trial_index_long, trial_index_short), ...
+long_str = char(string(trial_index_long));
+short_str = char(string(trial_index_short));
+sgtitle(sprintf('Synthetic Tuning Visualization - %s (Long: %s, Short: %s)', ...
+    strrep(probe_id, '_', '\\_'), long_str, short_str), ...
     'FontSize', 12, 'FontWeight', 'bold');
 
 fprintf('\nFigure created successfully!\n');
