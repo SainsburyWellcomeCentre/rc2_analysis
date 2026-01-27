@@ -5,7 +5,8 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
     bin_size_cm, gauss_sigma_cm, probe_id, save_figs, ctl)
 % CREATE_SINGLE_CLUSTER_FIGURES Create individual spatial profile figures for each cluster
 %
-% Creates a combined figure for each cluster showing spatial firing rate profiles
+% Creates a combined 6-row figure for each cluster showing spatial firing rate profiles,
+% velocity/acceleration tuning curves (combined and split by trial type), 2D rate maps,
 % and x-normalized comparisons between trial groups.
 %
 % INPUTS:
@@ -51,6 +52,13 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
         data, analyzer.cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
         trial_group_label_for_tuning, trial_group_label_for_accel_tuning);
     
+    % Compute split tuning curves (by trial type: long vs short) WITHOUT SHUFFLING
+    % Pass the combined tuning curves to reuse the best model
+    [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, accel_tuning_curves_short] = ...
+        compute_split_tuning_curves(data, clusters, analyzer.trial_groups, ...
+                                     plot_velocity_tuning, plot_acceleration_tuning, ...
+                                     tuning_curves, accel_tuning_curves);
+    
     for c = 1:length(analyzer.cluster_ids)
         % Show progress every 10 clusters to avoid cursor stealing
         if mod(c, 10) == 1 || c == length(analyzer.cluster_ids)
@@ -85,7 +93,10 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
         try
             [fig_cluster, ttg_fields] = plot_cluster_spatial_profile(cluster.id, bin_centers_for_plot, ...
                                                        rate_data, analyzer.group_names, analyzer.group_labels, ...
-                                                       group_colors, probe_id, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, rate_maps_2d, analyzer.distribution_comparisons{c}, ttg_data, ttg_stats);
+                                                       group_colors, probe_id, cluster_stats, tuning_curves{c}, accel_tuning_curves{c}, ...
+                                                       rate_maps_2d, analyzer.distribution_comparisons{c}, ttg_data, ttg_stats, ...
+                                                       tuning_curves_long{c}, tuning_curves_short{c}, ...
+                                                       accel_tuning_curves_long{c}, accel_tuning_curves_short{c});
             
             % Store TTG field information for this cluster
             all_ttg_fields{c} = ttg_fields;
@@ -110,7 +121,7 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
         
         % Save using the figure management system
         if save_figs
-            % Convert to a4figure format for PDF joining (portrait for 5-row layout)
+            % Convert to a4figure format for PDF joining (portrait for 6-row layout)
             set(fig_cluster, 'PaperOrientation', 'portrait');
             set(fig_cluster, 'PaperUnits', 'normalized');
             set(fig_cluster, 'PaperPosition', [0 0 1 1]);

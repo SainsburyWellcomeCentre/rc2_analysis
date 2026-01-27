@@ -1,10 +1,10 @@
-function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats)
+function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats, tuning_data_long, tuning_data_short, accel_tuning_data_long, accel_tuning_data_short)
 % PLOT_CLUSTER_SPATIAL_PROFILE Create a combined figure for a single cluster
 %
 %   [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_centers_by_group, rate_data, ...
-%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats)
+%                                      group_names, group_labels, group_colors, probe_id, stats, tuning_data, accel_tuning_data, rate_maps_2d, dist_comparison, ttg_data, ttg_stats, tuning_data_long, tuning_data_short, accel_tuning_data_long, accel_tuning_data_short)
 %
-%   Creates a 5-row, 4-column portrait figure showing:
+%   Creates a 6-row, 4-column portrait figure showing:
 %       Row 1: Position Tuning
 %           - Panel 1: Combined position-based raster for both long and short trials
 %           - Panel 2: Smoothed traces with median and IQR shading
@@ -15,21 +15,26 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %           - Panel 6: Time-to-goal firing rate with quartiles
 %           - Panel 7: TTG information shuffle distribution histograms
 %           - Panel 8: Kruskal-Wallis test summary
-%       Row 3: Velocity & Acceleration Tuning Curves
+%       Row 3: Velocity & Acceleration Tuning Curves (Combined)
 %           - Panel 9: Velocity tuning curve (combined long+short)
 %           - Panel 10: Velocity shuffle histogram
 %           - Panel 11: Acceleration tuning curve (combined long+short)
 %           - Panel 12: Acceleration shuffle histogram
-%       Row 4: Position × Velocity/Acceleration Maps
-%           - Panel 13: Velocity × Position (long trials)
-%           - Panel 14: Velocity × Position (short trials)
-%           - Panel 15: Acceleration × Position (long trials)
-%           - Panel 16: Acceleration × Position (short trials)
-%       Row 5: TTG × Velocity/Acceleration Maps
-%           - Panel 17: Velocity × TTG (long trials)
-%           - Panel 18: Velocity × TTG (short trials)
-%           - Panel 19: Acceleration × TTG (long trials)
-%           - Panel 20: Acceleration × TTG (short trials)
+%       Row 4: Velocity & Acceleration Tuning Curves (Split by Trial Type)
+%           - Panel 21: Velocity tuning curve (long trials only)
+%           - Panel 22: Velocity tuning curve (short trials only)
+%           - Panel 23: Acceleration tuning curve (long trials only)
+%           - Panel 24: Acceleration tuning curve (short trials only)
+%       Row 5: Position × Velocity/Acceleration Maps
+%           - Panel 21: Velocity × Position (long trials)
+%           - Panel 22: Velocity × Position (short trials)
+%           - Panel 23: Acceleration × Position (long trials)
+%           - Panel 24: Acceleration × Position (short trials)
+%       Row 6: TTG × Velocity/Acceleration Maps
+%           - Panel 21: Velocity × TTG (long trials)
+%           - Panel 22: Velocity × TTG (short trials)
+%           - Panel 23: Acceleration × TTG (long trials)
+%           - Panel 24: Acceleration × TTG (short trials)
 %
 %   Inputs:
 %       cluster_id         - Numeric ID of the cluster
@@ -50,6 +55,10 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
 %       dist_comparison    - (Optional) Struct with distribution comparison results (.absolute and .relative)
 %       ttg_data           - (Optional) Struct with time-to-goal data per group
 %       ttg_stats          - (Optional) Struct with TTG tuning statistical test results per group
+%       tuning_data_long   - (Optional) Struct with velocity tuning curve data for long trials only
+%       tuning_data_short  - (Optional) Struct with velocity tuning curve data for short trials only
+%       accel_tuning_data_long  - (Optional) Struct with acceleration tuning curve data for long trials only
+%       accel_tuning_data_short - (Optional) Struct with acceleration tuning curve data for short trials only
 %
 %   Outputs:
 %       fig - Figure handle
@@ -63,6 +72,18 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     ttg_fields = struct();
     
     % Handle missing arguments
+    if nargin < 18
+        accel_tuning_data_short = [];
+    end
+    if nargin < 17
+        accel_tuning_data_long = [];
+    end
+    if nargin < 16
+        tuning_data_short = [];
+    end
+    if nargin < 15
+        tuning_data_long = [];
+    end
     if nargin < 14
         ttg_stats = [];
     end
@@ -85,7 +106,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         rate_maps_2d = [];
     end
 
-    fig = figure('Position', [50, 50, 2000, 2600], 'Visible', 'off');
+    fig = figure('Position', [50, 50, 2000, 3100], 'Visible', 'off');
     
     % Set tighter subplot spacing
     set(fig, 'DefaultAxesFontSize', 8);  % Smaller default font size
@@ -112,7 +133,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     end
     
     %% Panel 1 (col 1): Combined position-based raster for both long and short trials
-    subplot(5, 4, 1, 'Parent', fig);
+    subplot(6, 4, 1, 'Parent', fig);
     hold on;
     
     % Collect all trials with their global indices and group info
@@ -219,7 +240,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     set(gca, 'XTick', 0:20:120);
     
     %% Panel 2 (col 2): Smoothed traces with median and IQR shading
-    subplot(5, 4, 2, 'Parent', fig);
+    subplot(6, 4, 2, 'Parent', fig);
     hold on;
     
     for g = 1:length(group_names)
@@ -335,7 +356,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     %% Panel 3 (row 1, col 3): Shuffle distribution histograms for SPATIAL tuning (Skaggs info)
     if ~isempty(stats)
         % Combined vertical histogram spanning the full column
-        subplot(5, 4, 3, 'Parent', fig);
+        subplot(6, 4, 3, 'Parent', fig);
         hold on;
         
         % Determine common x-axis range
@@ -417,7 +438,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     end
     
     %% Panel 4 (row 1, col 4): X-normalized comparison
-    subplot(5, 4, 4, 'Parent', fig);
+    subplot(6, 4, 4, 'Parent', fig);
     hold on;
     
     % Common normalized grid (0 to 1, displayed as 0% to 100%)
@@ -620,7 +641,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 5 (row 2, col 1): Normalized time-to-goal raster (0-100%)
     if ~isempty(ttg_data)
-        subplot(5, 4, 5, 'Parent', fig);
+        subplot(6, 4, 5, 'Parent', fig);
         hold on;
         
         % Collect all trials with their global indices and group info
@@ -720,7 +741,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 6 (row 2, col 2): Time-to-goal firing rate with NORMALIZED binning (0-100%)
     if ~isempty(ttg_data)
-        subplot(5, 4, 6, 'Parent', fig);
+        subplot(6, 4, 6, 'Parent', fig);
         hold on;
         
         % Store Q3 values to compute y-axis max
@@ -943,7 +964,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 7 (row 2, col 3): TTG information shuffle distribution histograms
     if ~isempty(ttg_stats)
-        subplot(5, 4, 7, 'Parent', fig);
+        subplot(6, 4, 7, 'Parent', fig);
         hold on;
         
         % Collect all info values to determine common x-axis
@@ -1025,7 +1046,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 8 (row 2, col 4): Kruskal-Wallis test results summary
     if ~isempty(dist_comparison) && isstruct(dist_comparison)
-        ax_text = subplot(5, 4, 8, 'Parent', fig);
+        ax_text = subplot(6, 4, 8, 'Parent', fig);
         axis(ax_text, 'off');
         
         % Prepare text for each test
@@ -1084,7 +1105,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 9 (row 3, col 1): Velocity tuning curve
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_tuning = subplot(5, 4, 9, 'Parent', fig);
+        ax_tuning = subplot(6, 4, 9, 'Parent', fig);
         
         % Extract tuning curve data
         fr = nanmean(tuning_data.tuning, 2);
@@ -1092,38 +1113,46 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(tuning_data.tuning), 2);
         x = tuning_data.bin_centers;
         
-        % Determine if significant
-        is_significant = tuning_data.shuffled.p < 0.05;
-        
-        % Set colors based on significance
-        if is_significant
-            data_color = 'k';
-            fit_color = 'k';
+        % Get best model name (for new ModelSelectionTuning format)
+        if isfield(tuning_data.shuffled, 'best_model')
+            best_model = tuning_data.shuffled.best_model;
+            model_info = tuning_data.shuffled.best_model_info;
         else
-            data_color = [0.6, 0.6, 0.6];
-            fit_color = [0.6, 0.6, 0.6];
+            % Fallback for old ShuffleTuning format
+            best_model = 'quadratic';
+            model_info.beta = tuning_data.shuffled.beta;
+        end
+        
+        % Determine if significant (flat model is never significant)
+        is_significant = (tuning_data.shuffled.p < 0.05) && ~strcmp(best_model, 'flat');
+        
+        % Set colors: data points always gray, fit line changes based on significance
+        % Dark brown-orange for tuned: RGB(139, 69, 19) = [0.545, 0.271, 0.075]
+        % Desaturated orange-gray for not tuned: RGB(160, 140, 120) = [0.627, 0.549, 0.471]
+        data_color = [0.3, 0.3, 0.3];  % Always dark gray for data points
+        if is_significant
+            fit_color = [0.545, 0.271, 0.075];  % Dark brown-orange for tuned
+        else
+            fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
         % Plot shuffled fits in background (light grey, dashed)
-        n_shuffs_to_plot = min(4, size(tuning_data.shuffled.beta_shuff, 1));
         hold on;
-        for i = 1:n_shuffs_to_plot
-            % Quadratic polynomial fit for shuffled data
-            if length(tuning_data.shuffled.beta_shuff(i, :)) >= 3
-                x_fit = linspace(min(x), max(x), 100);
-                f = polyval(tuning_data.shuffled.beta_shuff(i, :), x_fit);
-                plot(ax_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+        if isfield(tuning_data.shuffled, 'shuff_tuning') && ~isempty(tuning_data.shuffled.shuff_tuning)
+            n_shuffs_to_plot = min(4, size(tuning_data.shuffled.shuff_tuning, 2));
+            for i = 1:n_shuffs_to_plot
+                plot(ax_tuning, x, tuning_data.shuffled.shuff_tuning(:, i), '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
             end
         end
         
         % Plot mean firing rate with error bars (SEM)
         errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
         
-        % Plot true fit (quadratic polynomial) - black if significant, gray if not
-        if isfield(tuning_data.shuffled, 'beta') && length(tuning_data.shuffled.beta) >= 3
+        % Plot fitted model curve
+        if ~isempty(model_info) && isfield(model_info, 'beta')
             x_fit = linspace(min(x), max(x), 100);
-            f = polyval(tuning_data.shuffled.beta, x_fit);
-            plot(ax_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
+            y_fit = evaluate_model(best_model, model_info.beta, x_fit);
+            plot(ax_tuning, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
         end
         hold off;
         
@@ -1132,22 +1161,21 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         grid on;
         xlim([-5, max(x)+5]);
         
-        % Add significance indicator
+        % Add significance indicator and model name
         if is_significant
-            % Add asterisk in top-right if significant
-            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
-                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            % Add model name in top-right if significant
+            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         else
             % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
-                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         end
         
-        % Add beta parameter values as formula
-        if isfield(tuning_data.shuffled, 'beta') && length(tuning_data.shuffled.beta) >= 3
-            beta = tuning_data.shuffled.beta;
-            beta_str = sprintf('%.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3));
-            text(0.05, 0.05, beta_str, 'Units', 'normalized', 'FontSize', 7, ...
+        % Add model parameters as text in bottom-left
+        if ~isempty(model_info) && isfield(model_info, 'beta')
+            param_str = format_model_parameters(best_model, model_info.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
                  'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
                  'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
         end
@@ -1155,23 +1183,43 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 10 (row 3, col 2): Velocity tuning shuffle histogram
     if ~isempty(tuning_data) && isstruct(tuning_data)
-        ax_hist = subplot(5, 4, 10, 'Parent', fig);
+        ax_hist = subplot(6, 4, 10, 'Parent', fig);
         
-        % Create histogram of shuffled r values
-        [n, c] = histcounts(tuning_data.shuffled.r_shuff, 50);
+        % Handle both old and new formats
+        if isfield(tuning_data.shuffled, 'fit_metric_shuff')
+            % New ModelSelectionTuning format - use fit metric (R²)
+            shuff_values = tuning_data.shuffled.fit_metric_shuff;
+            obs_value = tuning_data.shuffled.best_model_info.fit_metric;
+            x_label = 'R^2';
+            x_lim = [min([0, min(shuff_values)-0.1]), max([1, max(shuff_values)+0.1])];
+        elseif isfield(tuning_data.shuffled, 'r_shuff')
+            % Old ShuffleTuning format - use correlation
+            shuff_values = tuning_data.shuffled.r_shuff;
+            obs_value = tuning_data.shuffled.r;
+            x_label = 'r';
+            x_lim = [-0.5, 0.5];
+        else
+            % No shuffle data available
+            text(0.5, 0.5, 'No shuffle data', 'Units', 'normalized', ...
+                'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
+            axis off;
+            return;
+        end
+        
+        % Create histogram
+        [n, c] = histcounts(shuff_values, 50);
         bin_centers = (c(1:end-1) + c(2:end)) / 2;
         bar(ax_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
         
         hold on;
-        % Plot observed r value as a dot
-        r_obs = tuning_data.shuffled.r;
-        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
-        scatter(ax_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+        % Plot observed value as a dot
+        y_at_obs = interp1(bin_centers, n, obs_value, 'linear', 0);
+        scatter(ax_hist, obs_value, y_at_obs, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
         hold off;
         
-        xlabel('r');
+        xlabel(x_label);
         ylabel('Count');
-        xlim([-0.5, 0.5]);
+        xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
         % Add p-value text
@@ -1186,7 +1234,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 11 (row 3, col 3): Acceleration tuning curve
     if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_tuning = subplot(5, 4, 11, 'Parent', fig);
+        ax_accel_tuning = subplot(6, 4, 11, 'Parent', fig);
         
         % Extract tuning curve data
         fr = nanmean(accel_tuning_data.tuning, 2);
@@ -1194,38 +1242,46 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(accel_tuning_data.tuning), 2);
         x = accel_tuning_data.bin_centers;
         
-        % Determine if significant
-        is_significant = accel_tuning_data.shuffled.p < 0.05;
-        
-        % Set colors based on significance
-        if is_significant
-            data_color = 'k';
-            fit_color = 'k';
+        % Get best model name (for new ModelSelectionTuning format)
+        if isfield(accel_tuning_data.shuffled, 'best_model')
+            best_model = accel_tuning_data.shuffled.best_model;
+            model_info = accel_tuning_data.shuffled.best_model_info;
         else
-            data_color = [0.6, 0.6, 0.6];
-            fit_color = [0.6, 0.6, 0.6];
+            % Fallback for old ShuffleTuning format
+            best_model = 'quadratic';
+            model_info.beta = accel_tuning_data.shuffled.beta;
+        end
+        
+        % Determine if significant (flat model is never significant)
+        is_significant = (accel_tuning_data.shuffled.p < 0.05) && ~strcmp(best_model, 'flat');
+        
+        % Set colors: data points always gray, fit line changes based on significance
+        % Dark brown-orange for tuned: RGB(139, 69, 19) = [0.545, 0.271, 0.075]
+        % Desaturated orange-gray for not tuned: RGB(160, 140, 120) = [0.627, 0.549, 0.471]
+        data_color = [0.3, 0.3, 0.3];  % Always dark gray for data points
+        if is_significant
+            fit_color = [0.545, 0.271, 0.075];  % Dark brown-orange for tuned
+        else
+            fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
         % Plot shuffled fits in background (light grey, dashed)
-        n_shuffs_to_plot = min(4, size(accel_tuning_data.shuffled.beta_shuff, 1));
         hold on;
-        for i = 1:n_shuffs_to_plot
-            % Quadratic polynomial fit for shuffled data
-            if length(accel_tuning_data.shuffled.beta_shuff(i, :)) >= 3
-                x_fit = linspace(min(x), max(x), 100);
-                f = polyval(accel_tuning_data.shuffled.beta_shuff(i, :), x_fit);
-                plot(ax_accel_tuning, x_fit, f, '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
+        if isfield(accel_tuning_data.shuffled, 'shuff_tuning') && ~isempty(accel_tuning_data.shuffled.shuff_tuning)
+            n_shuffs_to_plot = min(4, size(accel_tuning_data.shuffled.shuff_tuning, 2));
+            for i = 1:n_shuffs_to_plot
+                plot(ax_accel_tuning, x, accel_tuning_data.shuffled.shuff_tuning(:, i), '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
             end
         end
         
         % Plot mean firing rate with error bars (SEM)
         errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
         
-        % Plot true fit (quadratic polynomial) - black if significant, gray if not
-        if isfield(accel_tuning_data.shuffled, 'beta') && length(accel_tuning_data.shuffled.beta) >= 3
+        % Plot fitted model curve
+        if ~isempty(model_info) && isfield(model_info, 'beta')
             x_fit = linspace(min(x), max(x), 100);
-            f = polyval(accel_tuning_data.shuffled.beta, x_fit);
-            plot(ax_accel_tuning, x_fit, f, '-', 'Color', fit_color, 'LineWidth', 3.5);
+            y_fit = evaluate_model(best_model, model_info.beta, x_fit);
+            plot(ax_accel_tuning, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
         end
         hold off;
         
@@ -1234,22 +1290,21 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         grid on;
         xlim([min(x)-5, max(x)+5]);
         
-        % Add significance indicator
+        % Add significance indicator and model name
         if is_significant
-            % Add asterisk in top-right if significant
-            text(0.95, 0.95, '*', 'Units', 'normalized', 'FontSize', 24, 'FontWeight', 'bold', ...
-                 'Color', 'k', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            % Add model name in top-right if significant
+            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         else
             % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 16, 'FontWeight', 'bold', ...
-                 'Color', [0.5 0.5 0.5], 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         end
         
-        % Add beta parameter values as formula
-        if isfield(accel_tuning_data.shuffled, 'beta') && length(accel_tuning_data.shuffled.beta) >= 3
-            beta = accel_tuning_data.shuffled.beta;
-            beta_str = sprintf('%.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3));
-            text(0.05, 0.05, beta_str, 'Units', 'normalized', 'FontSize', 7, ...
+        % Add model parameters as text in bottom-left
+        if ~isempty(model_info) && isfield(model_info, 'beta')
+            param_str = format_model_parameters(best_model, model_info.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
                  'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
                  'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
         end
@@ -1257,23 +1312,43 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     %% Panel 12 (row 3, col 4): Acceleration tuning shuffle histogram
     if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
-        ax_accel_hist = subplot(5, 4, 12, 'Parent', fig);
+        ax_accel_hist = subplot(6, 4, 12, 'Parent', fig);
         
-        % Create histogram of shuffled r values
-        [n, c] = histcounts(accel_tuning_data.shuffled.r_shuff, 50);
+        % Handle both old and new formats
+        if isfield(accel_tuning_data.shuffled, 'fit_metric_shuff')
+            % New ModelSelectionTuning format - use fit metric (R²)
+            shuff_values = accel_tuning_data.shuffled.fit_metric_shuff;
+            obs_value = accel_tuning_data.shuffled.best_model_info.fit_metric;
+            x_label = 'R^2';
+            x_lim = [min([0, min(shuff_values)-0.1]), max([1, max(shuff_values)+0.1])];
+        elseif isfield(accel_tuning_data.shuffled, 'r_shuff')
+            % Old ShuffleTuning format - use correlation
+            shuff_values = accel_tuning_data.shuffled.r_shuff;
+            obs_value = accel_tuning_data.shuffled.r;
+            x_label = 'r';
+            x_lim = [-0.5, 0.5];
+        else
+            % No shuffle data available
+            text(0.5, 0.5, 'No shuffle data', 'Units', 'normalized', ...
+                'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
+            axis off;
+            return;
+        end
+        
+        % Create histogram
+        [n, c] = histcounts(shuff_values, 50);
         bin_centers = (c(1:end-1) + c(2:end)) / 2;
         bar(ax_accel_hist, bin_centers, n, 'FaceColor', [0.6, 0.6, 0.6], 'EdgeColor', 'none', 'BarWidth', 1);
         
         hold on;
-        % Plot observed r value as a dot
-        r_obs = accel_tuning_data.shuffled.r;
-        y_at_r = interp1(bin_centers, n, r_obs, 'linear', 0);
-        scatter(ax_accel_hist, r_obs, y_at_r, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+        % Plot observed value as a dot
+        y_at_obs = interp1(bin_centers, n, obs_value, 'linear', 0);
+        scatter(ax_accel_hist, obs_value, y_at_obs, 100, 'k', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
         hold off;
         
-        xlabel('r');
+        xlabel(x_label);
         ylabel('Count');
-        xlim([-0.5, 0.5]);
+        xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
         % Add p-value text
@@ -1286,9 +1361,103 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
-    %% Panel 13 (row 4, col 1): Velocity × Position contour (long trials)
+    %% ROW 4: Velocity & Acceleration Tuning (Split by Trial Type)
+    
+    %% Panel 13 (row 4, col 1): Velocity tuning curve (long trials only)
+    if ~isempty(tuning_data_long) && isstruct(tuning_data_long)
+        ax_tuning_long = subplot(6, 4, 13, 'Parent', fig);
+        
+        % Extract tuning curve data
+        fr = nanmean(tuning_data_long.tuning, 2);
+        sd = nanstd(tuning_data_long.tuning, [], 2);
+        n = sum(~isnan(tuning_data_long.tuning), 2);
+        x = tuning_data_long.bin_centers;
+        
+        % Plot mean firing rate with error bars (SEM)
+        hold on;
+        errorbar(ax_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
+                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('Speed (cm/s)');
+        ylabel('Firing rate (Hz)');
+        title('Long trials', 'Color', group_colors.long, 'FontWeight', 'bold');
+        grid on;
+        xlim([-5, max(x)+5]);
+    end
+    
+    %% Panel 14 (row 4, col 2): Velocity tuning curve (short trials only)
+    if ~isempty(tuning_data_short) && isstruct(tuning_data_short)
+        ax_tuning_short = subplot(6, 4, 14, 'Parent', fig);
+        
+        % Extract tuning curve data
+        fr = nanmean(tuning_data_short.tuning, 2);
+        sd = nanstd(tuning_data_short.tuning, [], 2);
+        n = sum(~isnan(tuning_data_short.tuning), 2);
+        x = tuning_data_short.bin_centers;
+        
+        % Plot mean firing rate with error bars (SEM)
+        hold on;
+        errorbar(ax_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
+                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('Speed (cm/s)');
+        ylabel('Firing rate (Hz)');
+        title('Short trials', 'Color', group_colors.short, 'FontWeight', 'bold');
+        grid on;
+        xlim([-5, max(x)+5]);
+    end
+    
+    %% Panel 15 (row 4, col 3): Acceleration tuning curve (long trials only)
+    if ~isempty(accel_tuning_data_long) && isstruct(accel_tuning_data_long)
+        ax_accel_tuning_long = subplot(6, 4, 15, 'Parent', fig);
+        
+        % Extract tuning curve data
+        fr = nanmean(accel_tuning_data_long.tuning, 2);
+        sd = nanstd(accel_tuning_data_long.tuning, [], 2);
+        n = sum(~isnan(accel_tuning_data_long.tuning), 2);
+        x = accel_tuning_data_long.bin_centers;
+        
+        % Plot mean firing rate with error bars (SEM)
+        hold on;
+        errorbar(ax_accel_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
+                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('Acceleration (cm/s^2)');
+        ylabel('Firing rate (Hz)');
+        title('Long trials', 'Color', group_colors.long, 'FontWeight', 'bold');
+        grid on;
+        xlim([min(x)-5, max(x)+5]);
+    end
+    
+    %% Panel 16 (row 4, col 4): Acceleration tuning curve (short trials only)
+    if ~isempty(accel_tuning_data_short) && isstruct(accel_tuning_data_short)
+        ax_accel_tuning_short = subplot(6, 4, 16, 'Parent', fig);
+        
+        % Extract tuning curve data
+        fr = nanmean(accel_tuning_data_short.tuning, 2);
+        sd = nanstd(accel_tuning_data_short.tuning, [], 2);
+        n = sum(~isnan(accel_tuning_data_short.tuning), 2);
+        x = accel_tuning_data_short.bin_centers;
+        
+        % Plot mean firing rate with error bars (SEM)
+        hold on;
+        errorbar(ax_accel_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
+                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold off;
+        
+        xlabel('Acceleration (cm/s^2)');
+        ylabel('Firing rate (Hz)');
+        title('Short trials', 'Color', group_colors.short, 'FontWeight', 'bold');
+        grid on;
+        xlim([min(x)-5, max(x)+5]);
+    end
+    
+    %% Panel 17 (row 5, col 1): Velocity × Position contour (long trials)
     if isfield(rate_maps_2d, 'vel_long') && ~isempty(rate_maps_2d.vel_long)
-        ax_vel_long = subplot(5, 4, 13, 'Parent', fig);
+        ax_vel_long = subplot(6, 4, 17, 'Parent', fig);
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_long;
@@ -1325,9 +1494,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Vel x Pos (Long)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 14 (row 4, col 2): Velocity × Position contour (short trials)
+    %% Panel 18 (row 5, col 2): Velocity × Position contour (short trials)
     if isfield(rate_maps_2d, 'vel_short') && ~isempty(rate_maps_2d.vel_short)
-        ax_vel_short = subplot(5, 4, 14, 'Parent', fig);
+        ax_vel_short = subplot(6, 4, 18, 'Parent', fig);
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_short;
@@ -1364,9 +1533,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Vel x Pos (Short)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 15 (row 4, col 3): Acceleration × Position contour (long trials)
+    %% Panel 19 (row 5, col 3): Acceleration × Position contour (long trials)
     if isfield(rate_maps_2d, 'accel_long') && ~isempty(rate_maps_2d.accel_long)
-        ax_accel_long = subplot(5, 4, 15, 'Parent', fig);
+        ax_accel_long = subplot(6, 4, 19, 'Parent', fig);
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_long;
@@ -1403,9 +1572,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Accel x Pos (Long)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 16 (row 4, col 4): Acceleration × Position contour (short trials)
+    %% Panel 20 (row 5, col 4): Acceleration × Position contour (short trials)
     if isfield(rate_maps_2d, 'accel_short') && ~isempty(rate_maps_2d.accel_short)
-        ax_accel_short = subplot(5, 4, 16, 'Parent', fig);
+        ax_accel_short = subplot(6, 4, 20, 'Parent', fig);
         
         % Get bin edges and data
         pos_edges = rate_maps_2d.pos_bin_edges_short;
@@ -1442,9 +1611,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Accel x Pos (Short)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 17 (row 5, col 1): Velocity × Relative TTG contour (long trials)
+    %% Panel 21 (row 6, col 1): Velocity × Relative TTG contour (long trials)
     if isfield(rate_maps_2d, 'ttg_vel_long') && ~isempty(rate_maps_2d.ttg_vel_long)
-        ax_ttg_vel_long = subplot(5, 4, 17, 'Parent', fig);
+        ax_ttg_vel_long = subplot(6, 4, 21, 'Parent', fig);
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_long;
@@ -1488,9 +1657,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Vel x TTG (Long)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 18 (row 5, col 2): Velocity × Relative TTG contour (short trials)
+    %% Panel 22 (row 6, col 2): Velocity × Relative TTG contour (short trials)
     if isfield(rate_maps_2d, 'ttg_vel_short') && ~isempty(rate_maps_2d.ttg_vel_short)
-        ax_ttg_vel_short = subplot(5, 4, 18, 'Parent', fig);
+        ax_ttg_vel_short = subplot(6, 4, 22, 'Parent', fig);
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_short;
@@ -1534,9 +1703,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Vel x TTG (Short)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 19 (row 5, col 3): Acceleration × Relative TTG contour (long trials)
+    %% Panel 23 (row 6, col 3): Acceleration × Relative TTG contour (long trials)
     if isfield(rate_maps_2d, 'ttg_accel_long') && ~isempty(rate_maps_2d.ttg_accel_long)
-        ax_ttg_accel_long = subplot(5, 4, 19, 'Parent', fig);
+        ax_ttg_accel_long = subplot(6, 4, 23, 'Parent', fig);
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_long;
@@ -1580,9 +1749,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Accel x TTG (Long)', 'Units', 'normalized', 'Position', [0.5, 1.02, 0]);
     end
     
-    %% Panel 20 (row 5, col 4): Acceleration × Relative TTG contour (short trials)
+    %% Panel 24 (row 6, col 4): Acceleration × Relative TTG contour (short trials)
     if isfield(rate_maps_2d, 'ttg_accel_short') && ~isempty(rate_maps_2d.ttg_accel_short)
-        ax_ttg_accel_short = subplot(5, 4, 20, 'Parent', fig);
+        ax_ttg_accel_short = subplot(6, 4, 24, 'Parent', fig);
         
         % Get bin edges and data
         ttg_edges = rate_maps_2d.ttg_bin_edges_short;
@@ -1650,7 +1819,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
     
     % Calculate subplot dimensions
     n_cols = 4;
-    n_rows = 5;
+    n_rows = 6;
     subplot_width = (total_width - (n_cols - 1) * h_spacing) / n_cols;
     subplot_height = (total_height - (n_rows - 1) * v_spacing) / n_rows;
     
@@ -1673,13 +1842,13 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         % More robust: find closest match to expected subplot positions
         % Expected left positions for columns 1-4
         expected_lefts = [0.13, 0.3425, 0.555, 0.7675];
-        % Expected bottom positions for rows 1-5
-        expected_bottoms = [0.7814, 0.6244, 0.4674, 0.3104, 0.1534];
+        % Expected bottom positions for rows 1-6
+        expected_bottoms = [0.8174, 0.6873, 0.5571, 0.4270, 0.2968, 0.1667];
         
         % Find which column (1-4)
         [~, col] = min(abs(pos(1) - expected_lefts));
         
-        % Find which row (1-5)
+        % Find which row (1-6)
         [~, row] = min(abs(pos(2) - expected_bottoms));
         
         % Calculate new position
@@ -1750,5 +1919,68 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         text(ax_text, 0.01, 0.5, text_content, 'FontName', 'FixedWidth', 'FontSize', 4, ...
              'VerticalAlignment', 'middle', 'HorizontalAlignment', 'left', ...
              'Interpreter', 'tex');
+    end
+end
+
+%% Helper function to evaluate different model types
+function y = evaluate_model(model_name, beta, x)
+    % EVALUATE_MODEL Evaluate fitted model at given x values
+    %
+    % INPUTS:
+    %   model_name - String name of model ('flat', 'linear', 'quadratic', etc.)
+    %   beta       - Model parameters
+    %   x          - x values to evaluate at
+    %
+    % OUTPUT:
+    %   y          - Model predictions at x
+    
+    switch model_name
+        case 'flat'
+            y = repmat(beta(1), size(x));
+        case {'linear', 'quadratic', 'cubic'}
+            y = polyval(beta, x);
+        case 'gaussian'
+            % beta = [amplitude, mu, sigma, baseline]
+            y = beta(1) * exp(-(x - beta(2)).^2 / (2*beta(3)^2)) + beta(4);
+        case 'relu'
+            % beta = [intercept, slope]
+            y = max(0, beta(1) + beta(2) * x);
+        case 'sigmoid'
+            % beta = [amplitude, steepness, midpoint, baseline]
+            y = beta(1) ./ (1 + exp(-beta(2) * (x - beta(3)))) + beta(4);
+        otherwise
+            warning('Unknown model type: %s', model_name);
+            y = zeros(size(x));
+    end
+end
+
+%% Helper function to format model parameters as text
+function param_str = format_model_parameters(model_name, beta)
+    % FORMAT_MODEL_PARAMETERS Format model parameters as a readable string
+    %
+    % INPUTS:
+    %   model_name - String name of model
+    %   beta       - Model parameters
+    %
+    % OUTPUT:
+    %   param_str  - Formatted string for display
+    
+    switch model_name
+        case 'flat'
+            param_str = sprintf('y = %.2f', beta(1));
+        case 'linear'
+            param_str = sprintf('y = %.2fx %+.2f', beta(1), beta(2));
+        case 'quadratic'
+            param_str = sprintf('y = %.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3));
+        case 'cubic'
+            param_str = sprintf('y = %.2fx^3 %+.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3), beta(4));
+        case 'gaussian'
+            param_str = sprintf('A=%.2f, \\mu=%.2f, \\sigma=%.2f', beta(1), beta(2), abs(beta(3)));
+        case 'relu'
+            param_str = sprintf('y = max(0, %.2fx %+.2f)', beta(2), beta(1));
+        case 'sigmoid'
+            param_str = sprintf('A=%.2f, x_0=%.2f, k=%.2f', beta(1), beta(3), beta(2));
+        otherwise
+            param_str = 'unknown model';
     end
 end

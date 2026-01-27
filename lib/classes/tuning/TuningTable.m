@@ -20,7 +20,7 @@ classdef TuningTable < handle
 %   equal amounts of data in each bin.  `tuning_curve` can then be used to
 %   get the velocity tuning curve information for a cluster.
 %
-%   See also: ShuffleTuning, VelocityBins, VelocityTuningCurve
+%   See also: ModelSelectionTuning, VelocityBins, VelocityTuningCurve
 
     properties
         
@@ -95,10 +95,10 @@ classdef TuningTable < handle
         %       bin_edges       - bounds of the velocity bins
         %       bin_centers     - centers of the velocity bins
         %       prc_per_bin     - amount of data in each velocity bin
-        %       shuffled        - structure containing details about linear
-        %       fits to the data as well as fits to shuffled data, see ShuffleTuning
+        %       shuffled        - structure containing details about model selection
+        %       using BIC and fits to shuffled data, see ModelSelectionTuning
         %
-        %   See also: ShuffleTuning, VelocityTuningCurve
+        %   See also: ModelSelectionTuning, VelocityTuningCurve
         
             [tuning, timing, stat_rate, stat_time] = obj.vtc.fr_curve(cluster);
             
@@ -110,7 +110,7 @@ classdef TuningTable < handle
 %             end
 %             % end of hack
             
-            shuff = ShuffleTuning(tuning, obj.velocity_bins.bin_centers);
+            shuff = ModelSelectionTuning(tuning, obj.velocity_bins.bin_centers);
             
             curve_info.probe_id = obj.probe_id;
             curve_info.cluster_id = cluster.id;

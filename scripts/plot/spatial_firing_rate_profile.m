@@ -1,7 +1,7 @@
  % Plot spatial firing rate profile for each cluster using position as x-axis
 % For experiment group 'training_running', bin position into 2-cm bins,
 % normalize spike counts by occupancy, and smooth with a Gaussian kernel (8-cm s.d.)
-%
+% 
 % REFACTORED VERSION using SpatialTuningAnalyzer class and modular helper functions
 %
 % HELPER FUNCTIONS (in lib/spatial_analysis/):

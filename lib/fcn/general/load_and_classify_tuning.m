@@ -1,5 +1,5 @@
-function [beta_matrix, sig_vector, is_linear_vector] = load_and_classify_tuning(data, clusters, trial_group_label, tuning_type, p_thresh)
-% LOAD_AND_CLASSIFY_TUNING Load tuning data and classify as linear or quadratic
+function [beta_matrix, sig_vector, model_type_vector] = load_and_classify_tuning(data, clusters, trial_group_label, tuning_type, p_thresh)
+% LOAD_AND_CLASSIFY_TUNING Load tuning data and classify by best model type
 %
 % Inputs:
 %   data              - Data object with load_tuning_curves methods
@@ -9,18 +9,22 @@ function [beta_matrix, sig_vector, is_linear_vector] = load_and_classify_tuning(
 %   p_thresh          - Significance threshold (default: 0.05)
 %
 % Outputs:
-%   beta_matrix       - n_clusters x 3 matrix of beta coefficients [x², x¹, x⁰]
-%   sig_vector        - n_clusters logical vector indicating significance
-%   is_linear_vector  - n_clusters logical vector indicating linear fit is sufficient
+%   beta_matrix        - n_clusters x max_params matrix of model parameters
+%   sig_vector         - n_clusters logical vector indicating significance
+%   model_type_vector  - n_clusters cell array with best model names
+%
+% Note: This function now uses ModelSelectionTuning which selects the best
+% model (flat, linear, quadratic, cubic, gaussian, relu, sigmoid) based on BIC.
 
 if nargin < 5
     p_thresh = 0.05;
 end
 
 n_clusters = length(clusters);
-beta_matrix = nan(n_clusters, 3);
+max_params = 4;  % Maximum number of parameters across all models
+beta_matrix = nan(n_clusters, max_params);
 sig_vector = false(n_clusters, 1);
-is_linear_vector = false(n_clusters, 1);
+model_type_vector = cell(n_clusters, 1);
 
 for c = 1:n_clusters
     cluster_id = clusters(c).id;
@@ -40,31 +44,44 @@ for c = 1:n_clusters
             error('Invalid tuning_type. Must be "velocity" or "acceleration".');
         end
         
-        % Check if tuning data is valid
+        % Check if tuning data has new ModelSelectionTuning structure
         if ~isstruct(tuning) || ~isfield(tuning, 'shuffled') || ...
-           ~isstruct(tuning.shuffled) || ~isfield(tuning.shuffled, 'beta') || ...
-           length(tuning.shuffled.beta) < 3
+           ~isstruct(tuning.shuffled)
             continue;
         end
         
-        % Store beta coefficients
-        beta_matrix(c, :) = tuning.shuffled.beta;
-        
-        % Check significance
-        if isfield(tuning.shuffled, 'p')
-            sig_vector(c) = tuning.shuffled.p < p_thresh;
-        end
-        
-        % Classify as linear or quadratic using F-test
-        if sig_vector(c) && isfield(tuning, 'tuning') && isfield(tuning, 'bin_centers')
-            x_data = tuning.bin_centers(:);
-            y_data = nanmean(tuning.tuning, 2);  % Average firing rate per bin
+        % Extract model selection results
+        if isfield(tuning.shuffled, 'best_model') && isfield(tuning.shuffled, 'best_model_info')
+            model_name = tuning.shuffled.best_model;
+            model_info = tuning.shuffled.best_model_info;
             
-            is_linear_vector(c) = test_linear_vs_quadratic_fit(x_data, y_data, tuning.shuffled.beta, p_thresh);
+            % Store model type
+            model_type_vector{c} = model_name;
+            
+            % Store beta coefficients (pad with NaN if fewer parameters)
+            if isfield(model_info, 'beta')
+                n_beta = length(model_info.beta);
+                beta_matrix(c, 1:n_beta) = model_info.beta;
+            end
+            
+            % Check significance
+            if isfield(tuning.shuffled, 'p')
+                sig_vector(c) = tuning.shuffled.p < p_thresh;
+            end
+        else
+            % Fallback for old ShuffleTuning format (backward compatibility)
+            if isfield(tuning.shuffled, 'beta') && length(tuning.shuffled.beta) >= 3
+                beta_matrix(c, 1:3) = tuning.shuffled.beta;
+                model_type_vector{c} = 'quadratic';  % Assume old format was quadratic
+                
+                if isfield(tuning.shuffled, 'p')
+                    sig_vector(c) = tuning.shuffled.p < p_thresh;
+                end
+            end
         end
         
     catch ME
-        % Silently continue on errors (warnings already printed in main script)
+        % Silently continue on errors
         continue;
     end
 end

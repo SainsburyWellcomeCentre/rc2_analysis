@@ -21,7 +21,7 @@ classdef TuningTableAcc < handle
     %   each bin based on the specified mode. `tuning_curve` can then be used 
     %   to get the acceleration tuning curve information for a cluster.
     %
-    %   See also: ShuffleTuning, AccelerationBins, AccelerationTuningCurve
+    %   See also: ModelSelectionTuning, AccelerationBins, AccelerationTuningCurve
     
         properties
             probe_id            % String identifier for the probe recording
@@ -88,8 +88,8 @@ classdef TuningTableAcc < handle
             %       bin_edges       - acceleration bin boundaries
             %       bin_centers     - centers of the acceleration bins
             %       prc_per_bin     - percentage of data in each acceleration bin
-            %       shuffled        - structure with details of linear fits and
-            %                         shuffled data, see ShuffleTuning.
+            %       shuffled        - structure with details of model selection using BIC
+            %                         and shuffled data, see ModelSelectionTuning.
             
                 [tuning, timing, stat_rate, stat_time] = obj.atc.fr_curve(cluster);
                 
@@ -101,7 +101,7 @@ classdef TuningTableAcc < handle
                 end
                 % end of hack
                 
-                shuff = ShuffleTuning(tuning, obj.acceleration_bins.bin_centers);
+                shuff = ModelSelectionTuning(tuning, obj.acceleration_bins.bin_centers);
                 
                 curve_info.probe_id = obj.probe_id;
                 curve_info.cluster_id = cluster.id;
