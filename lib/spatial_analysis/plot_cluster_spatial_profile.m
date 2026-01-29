@@ -1123,8 +1123,8 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             model_info.beta = tuning_data.shuffled.beta;
         end
         
-        % Determine if significant (flat model is never significant)
-        is_significant = (tuning_data.shuffled.p < 0.05) && ~strcmp(best_model, 'flat');
+        % Determine if significant
+        is_significant = (tuning_data.shuffled.p < 0.05);
         
         % Set colors: data points always gray, fit line changes based on significance
         % Dark brown-orange for tuned: RGB(139, 69, 19) = [0.545, 0.271, 0.075]
@@ -1136,17 +1136,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
-        % Plot shuffled fits in background (light grey, dashed)
-        hold on;
-        if isfield(tuning_data.shuffled, 'shuff_tuning') && ~isempty(tuning_data.shuffled.shuff_tuning)
-            n_shuffs_to_plot = min(4, size(tuning_data.shuffled.shuff_tuning, 2));
-            for i = 1:n_shuffs_to_plot
-                plot(ax_tuning, x, tuning_data.shuffled.shuff_tuning(:, i), '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
-            end
-        end
-        
         % Plot mean firing rate with error bars (SEM)
-        errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold on;
+        errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
         
         % Plot fitted model curve
         if ~isempty(model_info) && isfield(model_info, 'beta')
@@ -1161,14 +1153,26 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         grid on;
         xlim([-5, max(x)+5]);
         
-        % Add significance indicator and model name
-        if is_significant
-            % Add model name in top-right if significant
-            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+        % Add model name and BIC in top-right with smaller text
+        if ~isempty(model_info) && isfield(model_info, 'bic')
+            if is_significant
+                % Show model name and BIC if significant
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model), model_info.bic);
+                text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                     'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            else
+                % Show NS and BIC if not significant
+                model_str = sprintf('NS (BIC=%.1f)', model_info.bic);
+                text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                     'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            end
+        elseif is_significant
+            % Fallback: just show model name if BIC not available
+            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
                  'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         else
-            % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+            % Fallback: just show NS if not significant
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
                  'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         end
         
@@ -1187,11 +1191,19 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         
         % Handle both old and new formats
         if isfield(tuning_data.shuffled, 'fit_metric_shuff')
-            % New ModelSelectionTuning format - use fit metric (R²)
+            % New ModelSelectionTuning format - use fit metric (log-likelihood)
             shuff_values = tuning_data.shuffled.fit_metric_shuff;
             obs_value = tuning_data.shuffled.best_model_info.fit_metric;
-            x_label = 'R^2';
-            x_lim = [min([0, min(shuff_values)-0.1]), max([1, max(shuff_values)+0.1])];
+            x_label = 'Log-likelihood';
+            % Dynamic x-axis limits based on data
+            x_min = min([min(shuff_values), obs_value]);
+            x_max = max([max(shuff_values), obs_value]);
+            % Safety check: ensure valid limits
+            if isnan(x_min) || isnan(x_max) || x_min >= x_max
+                x_lim = [-100, 0];  % Default fallback
+            else
+                x_lim = [x_min * 1.1, x_max * 1.1];
+            end
         elseif isfield(tuning_data.shuffled, 'r_shuff')
             % Old ShuffleTuning format - use correlation
             shuff_values = tuning_data.shuffled.r_shuff;
@@ -1222,13 +1234,16 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
-        % Add p-value text
+        % Add p-value and log-likelihood value text with smaller font
         if tuning_data.shuffled.p < 0.001
             p_str = 'p < 0.001';
         else
             p_str = sprintf('p = %.3f', tuning_data.shuffled.p);
         end
-        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
+        % Add observed log-likelihood value
+        loglik_str = sprintf('LL = %.1f', obs_value);
+        combined_str = sprintf('%s\n%s', p_str, loglik_str);
+        text(0.98, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
@@ -1252,8 +1267,8 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             model_info.beta = accel_tuning_data.shuffled.beta;
         end
         
-        % Determine if significant (flat model is never significant)
-        is_significant = (accel_tuning_data.shuffled.p < 0.05) && ~strcmp(best_model, 'flat');
+        % Determine if significant
+        is_significant = (accel_tuning_data.shuffled.p < 0.05);
         
         % Set colors: data points always gray, fit line changes based on significance
         % Dark brown-orange for tuned: RGB(139, 69, 19) = [0.545, 0.271, 0.075]
@@ -1265,17 +1280,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
-        % Plot shuffled fits in background (light grey, dashed)
-        hold on;
-        if isfield(accel_tuning_data.shuffled, 'shuff_tuning') && ~isempty(accel_tuning_data.shuffled.shuff_tuning)
-            n_shuffs_to_plot = min(4, size(accel_tuning_data.shuffled.shuff_tuning, 2));
-            for i = 1:n_shuffs_to_plot
-                plot(ax_accel_tuning, x, accel_tuning_data.shuffled.shuff_tuning(:, i), '--', 'Color', [0.85, 0.85, 0.85], 'LineWidth', 1.5);
-            end
-        end
-        
         % Plot mean firing rate with error bars (SEM)
-        errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 6, 'LineWidth', 1.5);
+        hold on;
+        errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
         
         % Plot fitted model curve
         if ~isempty(model_info) && isfield(model_info, 'beta')
@@ -1290,14 +1297,26 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         grid on;
         xlim([min(x)-5, max(x)+5]);
         
-        % Add significance indicator and model name
-        if is_significant
-            % Add model name in top-right if significant
-            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+        % Add model name and BIC in top-right with smaller text
+        if ~isempty(model_info) && isfield(model_info, 'bic')
+            if is_significant
+                % Show model name and BIC if significant
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model), model_info.bic);
+                text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                     'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            else
+                % Show NS and BIC if not significant
+                model_str = sprintf('NS (BIC=%.1f)', model_info.bic);
+                text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                     'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+            end
+        elseif is_significant
+            % Fallback: just show model name if BIC not available
+            text(0.95, 0.95, upper(best_model), 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
                  'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         else
-            % Add "NS" in top-right if not significant
-            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 12, 'FontWeight', 'bold', ...
+            % Fallback: just show NS if not significant
+            text(0.95, 0.95, 'NS', 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
                  'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
         end
         
@@ -1316,11 +1335,19 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         
         % Handle both old and new formats
         if isfield(accel_tuning_data.shuffled, 'fit_metric_shuff')
-            % New ModelSelectionTuning format - use fit metric (R²)
+            % New ModelSelectionTuning format - use fit metric (log-likelihood)
             shuff_values = accel_tuning_data.shuffled.fit_metric_shuff;
             obs_value = accel_tuning_data.shuffled.best_model_info.fit_metric;
-            x_label = 'R^2';
-            x_lim = [min([0, min(shuff_values)-0.1]), max([1, max(shuff_values)+0.1])];
+            x_label = 'Log-likelihood';
+            % Dynamic x-axis limits based on data
+            x_min = min([min(shuff_values), obs_value]);
+            x_max = max([max(shuff_values), obs_value]);
+            % Safety check: ensure valid limits
+            if isnan(x_min) || isnan(x_max) || x_min >= x_max
+                x_lim = [-100, 0];  % Default fallback
+            else
+                x_lim = [x_min * 1.1, x_max * 1.1];
+            end
         elseif isfield(accel_tuning_data.shuffled, 'r_shuff')
             % Old ShuffleTuning format - use correlation
             shuff_values = accel_tuning_data.shuffled.r_shuff;
@@ -1351,13 +1378,16 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
-        % Add p-value text
+        % Add p-value and log-likelihood value text with smaller font
         if accel_tuning_data.shuffled.p < 0.001
             p_str = 'p < 0.001';
         else
             p_str = sprintf('p = %.3f', accel_tuning_data.shuffled.p);
         end
-        text(0.98, 0.95, p_str, 'Units', 'normalized', 'FontSize', 9, ...
+        % Add observed log-likelihood value
+        loglik_str = sprintf('LL = %.1f', obs_value);
+        combined_str = sprintf('%s\n%s', p_str, loglik_str);
+        text(0.98, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
              'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
     
@@ -1376,7 +1406,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         % Plot mean firing rate with error bars (SEM)
         hold on;
         errorbar(ax_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
-                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 6, 'LineWidth', 1.5);
+                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 2, 'LineWidth', 0.75);
         hold off;
         
         xlabel('Speed (cm/s)');
@@ -1399,7 +1429,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         % Plot mean firing rate with error bars (SEM)
         hold on;
         errorbar(ax_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
-                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 6, 'LineWidth', 1.5);
+                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 2, 'LineWidth', 0.75);
         hold off;
         
         xlabel('Speed (cm/s)');
@@ -1422,7 +1452,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         % Plot mean firing rate with error bars (SEM)
         hold on;
         errorbar(ax_accel_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
-                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 6, 'LineWidth', 1.5);
+                 'MarkerFaceColor', group_colors.long, 'MarkerSize', 2, 'LineWidth', 0.75);
         hold off;
         
         xlabel('Acceleration (cm/s^2)');
@@ -1445,7 +1475,7 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         % Plot mean firing rate with error bars (SEM)
         hold on;
         errorbar(ax_accel_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
-                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 6, 'LineWidth', 1.5);
+                 'MarkerFaceColor', group_colors.short, 'MarkerSize', 2, 'LineWidth', 0.75);
         hold off;
         
         xlabel('Acceleration (cm/s^2)');

@@ -6,7 +6,6 @@ classdef ModelSelectionTuning < handle
 %     2. Generate null distribution by shuffling data for the selected model
 %
 %   Candidate Models:
-%     - Flat:      constant firing rate (baseline)
 %     - Linear:    β₀ + β₁·x
 %     - Quadratic: β₀ + β₁·x + β₂·x²
 %     - Cubic:     β₀ + β₁·x + β₂·x² + β₃·x³
@@ -26,7 +25,7 @@ classdef ModelSelectionTuning < handle
 %         best_model_info - struct with fit details of best model
 %         
 %         bic_shuff       - n_reps x 1 vector, BIC values for shuffled data
-%         fit_metric_shuff - n_reps x 1 vector, fit metric (R² or likelihood) for shuffled
+%         fit_metric_shuff - n_reps x 1 vector, fit metric (log-likelihood) for shuffled
 %         shuff_tuning    - # bins x n_reps containing average for each shuffle
 %         shuff_sd        - # bins x n_reps containing SD for each shuffle
 %         shuff_n         - # bins x n_reps containing n trials averaged for each shuffle
@@ -79,9 +78,8 @@ classdef ModelSelectionTuning < handle
         %   The constructor:
         %     1. Fits all candidate models to the data
         %     2. Selects the best model using BIC
-        %     3. If best model is 'flat' (no tuning), sets p=1.0 and skips shuffling
-        %     4. Otherwise, generates null distribution by shuffling for the best model
-        %     5. Computes p-value by comparing true fit to null distribution
+        %     3. Generates null distribution by shuffling for the best model
+        %     4. Computes p-value by comparing true fit to null distribution
         
             obj.x = x(:); % n bins x 1
             obj.tuning = tuning; % n bins x n trials
@@ -94,26 +92,15 @@ classdef ModelSelectionTuning < handle
             % Step 2: Select best model
             obj.select_best_model();
             
-            % Step 3: Generate null distribution for best model (skip if flat)
-            if strcmp(obj.best_model, 'flat')
-                % Flat model = no tuning, mark as not significant
-                obj.p = 1.0;  % Not significant
-                % No need to shuffle
-                obj.bic_shuff = [];
-                obj.fit_metric_shuff = [];
-                obj.shuff_tuning = [];
-                obj.shuff_sd = [];
-                obj.shuff_n = [];
+            % Step 3: Generate null distribution for best model
+            obj.get_shuffled_null();
+            
+            % Step 4: Compute p-value
+            if isnan(obj.best_model_info.fit_metric)
+                obj.p = nan;
             else
-                obj.get_shuffled_null();
-                
-                % Step 4: Compute p-value
-                if isnan(obj.best_model_info.fit_metric)
-                    obj.p = nan;
-                else
-                    % One-tailed test: is the true fit better than shuffled?
-                    obj.p = sum(obj.fit_metric_shuff >= obj.best_model_info.fit_metric) / obj.n_reps;
-                end
+                % One-tailed test: is the true fit better than shuffled?
+                obj.p = sum(obj.fit_metric_shuff >= obj.best_model_info.fit_metric) / obj.n_reps;
             end
         end
         
@@ -138,25 +125,22 @@ classdef ModelSelectionTuning < handle
             % Initialize models struct
             obj.models = struct();
             
-            % 1. Flat (constant) model
-            obj.models.flat = obj.fit_flat(x_valid, y_valid, n_valid);
-            
-            % 2. Linear model
+            % 1. Linear model
             obj.models.linear = obj.fit_polynomial(x_valid, y_valid, n_valid, 1);
             
-            % 3. Quadratic model
+            % 2. Quadratic model
             obj.models.quadratic = obj.fit_polynomial(x_valid, y_valid, n_valid, 2);
             
-            % 4. Cubic model
+            % 3. Cubic model
             obj.models.cubic = obj.fit_polynomial(x_valid, y_valid, n_valid, 3);
             
-            % 5. Gaussian model
+            % 4. Gaussian model
             obj.models.gaussian = obj.fit_gaussian(x_valid, y_valid, n_valid);
             
-            % 6. ReLU model
+            % 5. ReLU model
             obj.models.relu = obj.fit_relu(x_valid, y_valid, n_valid);
             
-            % 7. Sigmoid model
+            % 6. Sigmoid model
             obj.models.sigmoid = obj.fit_sigmoid(x_valid, y_valid, n_valid);
         end
         
@@ -179,8 +163,8 @@ classdef ModelSelectionTuning < handle
             obj.best_model = model_names{min_idx};
             obj.best_model_info = obj.models.(obj.best_model);
             
-            % Store BIC difference from flat model for reference
-            obj.best_model_info.delta_bic_from_flat = min_bic - obj.models.flat.bic;
+            % Store BIC difference from linear model for reference
+            obj.best_model_info.delta_bic_from_linear = min_bic - obj.models.linear.bic;
         end
         
         
@@ -216,8 +200,6 @@ classdef ModelSelectionTuning < handle
                 
                 % Fit the best model to shuffled data
                 switch obj.best_model
-                    case 'flat'
-                        fit_result = obj.fit_flat(x_valid, y_valid, n_valid);
                     case 'linear'
                         fit_result = obj.fit_polynomial(x_valid, y_valid, n_valid, 1);
                     case 'quadratic'
@@ -266,39 +248,6 @@ classdef ModelSelectionTuning < handle
     
     methods (Static = true)
         
-        function model_info = fit_flat(x, y, n)
-        %%fit_flat Fit constant (flat) model
-        %
-        %   MODEL = fit_flat(X, Y, N) fits y = β₀
-        
-            beta = mean(y);
-            y_pred = repmat(beta, size(y));
-            
-            % Compute fit metrics
-            residuals = y - y_pred;
-            rss = sum(residuals.^2);
-            tss = sum((y - mean(y)).^2);
-            rsq = 1 - rss/tss;
-            
-            % Log-likelihood (assuming Gaussian errors)
-            sigma2 = rss / n;
-            log_likelihood = -0.5 * n * (log(2*pi*sigma2) + 1);
-            
-            % BIC: -2*log(L) + k*log(n)
-            k = 1;  % 1 parameter (mean)
-            bic = -2*log_likelihood + k*log(n);
-            
-            % Store results
-            model_info.name = 'flat';
-            model_info.beta = beta;
-            model_info.rsq = rsq;
-            model_info.bic = bic;
-            model_info.n_params = k;
-            model_info.fit_metric = rsq;  % Use R² as fit metric
-        end
-        
-        
-        
         function model_info = fit_polynomial(x, y, n, degree)
         %%fit_polynomial Fit polynomial model of specified degree
         %
@@ -340,9 +289,10 @@ classdef ModelSelectionTuning < handle
             model_info.beta = beta;
             model_info.rsq = rsq;
             model_info.r = r;
+            model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = k;
-            model_info.fit_metric = rsq;
+            model_info.fit_metric = log_likelihood;
         end
         
         
@@ -400,9 +350,10 @@ classdef ModelSelectionTuning < handle
             model_info.name = 'gaussian';
             model_info.beta = params;  % [amplitude, mu, sigma, baseline]
             model_info.rsq = rsq;
+            model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 4;
-            model_info.fit_metric = rsq;
+            model_info.fit_metric = log_likelihood;
         end
         
         
@@ -445,15 +396,17 @@ classdef ModelSelectionTuning < handle
                 params = params_init;
                 rsq = -inf;
                 bic = inf;
+                log_likelihood = -inf;
             end
             
             % Store results
             model_info.name = 'relu';
             model_info.beta = params;  % [intercept, slope]
             model_info.rsq = rsq;
+            model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 2;
-            model_info.fit_metric = rsq;
+            model_info.fit_metric = log_likelihood;
         end
         
         
@@ -504,15 +457,17 @@ classdef ModelSelectionTuning < handle
                 params = params_init;
                 rsq = -inf;
                 bic = inf;
+                log_likelihood = -inf;
             end
             
             % Store results
             model_info.name = 'sigmoid';
             model_info.beta = params;  % [amplitude, k, x0, baseline]
             model_info.rsq = rsq;
+            model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 4;
-            model_info.fit_metric = rsq;
+            model_info.fit_metric = log_likelihood;
         end
     end
 end

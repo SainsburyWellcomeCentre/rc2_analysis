@@ -161,6 +161,19 @@ for pid = 1:length(probe_ids)
         trial_group_label_for_tuning, trial_group_label_for_accel_tuning, ...
         bin_size_cm, gauss_sigma_cm, probe_ids{pid}, save_figs, ctl);
     
+    % Save model comparison tables (BIC values for all models)
+    if save_figs
+        fprintf('  Saving model comparison tables...\n');
+        % Load tuning curves to extract model BIC values
+        [tuning_curves, accel_tuning_curves] = load_tuning_curves_for_clusters(...
+            data, analyzer.cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
+            trial_group_label_for_tuning, trial_group_label_for_accel_tuning);
+        
+        % Save to CSV files
+        save_model_comparison_table(tuning_curves, accel_tuning_curves, ...
+            analyzer.cluster_ids, ctl.figs.curr_dir, probe_ids{pid});
+    end
+    
     % Plot distribution comparison contingency table
     if save_figs
         fprintf('  Creating distribution comparison contingency table...\n');
