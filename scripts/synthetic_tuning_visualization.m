@@ -18,7 +18,7 @@ trial_index_short = 'all';  % Which short trial's velocity profile to use (1-bas
 % --- Primary Tuning Type ---
 % Choose which tuning characteristic to start from
 % Options: 'absolute_space', 'relative_space', 'velocity', 'acceleration'
-primary_tuning = 'acceleration';
+primary_tuning = 'velocity';
 
 % --- Absolute Space Tuning Parameters (for absolute positions on track) ---
 % Long trials: 0-120 cm, Short trials: 60-120 cm
@@ -44,9 +44,9 @@ rel_space.baseline = 2;       % Baseline firing rate (Hz)
 vel_tuning = struct();
 vel_tuning.enabled = true;
 vel_tuning.type = 'gaussian';  % 'linear_positive', 'linear_negative', 'gaussian', 'sigmoid'
-vel_tuning.mu = 1;            % Peak velocity (cm/s) for Gaussian
+vel_tuning.mu = 15;            % Peak velocity (cm/s) for Gaussian
 vel_tuning.sigma = 1;         % Width for Gaussian (cm/s)
-vel_tuning.amplitude = 100;     % Peak firing rate (Hz)
+vel_tuning.amplitude = 50;     % Peak firing rate (Hz)
 vel_tuning.baseline = 10;       % Baseline firing rate (Hz)
 vel_tuning.slope = 2;        % Slope for linear (Hz per cm/s)
 vel_tuning.midpoint = 10;      % Midpoint for sigmoid (cm/s)
@@ -55,7 +55,7 @@ vel_tuning.steepness = 0.5;    % Steepness for sigmoid
 % --- Acceleration Tuning Parameters ---
 accel_tuning = struct();
 accel_tuning.enabled = true;
-accel_tuning.type = 'u_shaped_positive';  % 'linear_positive', 'linear_negative', 'sigmoid', 
+accel_tuning.type = 'u_shaped_negative';  % 'linear_positive', 'linear_negative', 'sigmoid', 
                                            % 'u_shaped_positive', 'u_shaped_negative'
 accel_tuning.amplitude = 30;     % Amplitude (Hz)
 accel_tuning.baseline = 1;      % Baseline firing rate (Hz)
@@ -109,8 +109,9 @@ if ~isfield(cache, 'all_vel_per_trial_by_group')
 end
 
 vel_per_trial = cache.all_vel_per_trial_by_group;
-if ~isfield(vel_per_trial, trial_type)
-    error('Trial type ''%s'' not found in cache', trial_type);
+% Verify the cache has both long and short trial data
+if ~isfield(vel_per_trial, 'long') || ~isfield(vel_per_trial, 'short')
+    error('Cache file does not contain both long and short trial data');
 end
 
 % Get position data (stored as spike positions per trial, but we can reconstruct from bin centers)
