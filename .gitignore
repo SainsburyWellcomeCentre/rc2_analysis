@@ -1,3 +1,5 @@
 # List of untracked files to ignore
 
-.asv
+.asv*.asv
+.DS_Store
+.Rhistory
