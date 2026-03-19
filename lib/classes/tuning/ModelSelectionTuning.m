@@ -271,7 +271,8 @@ classdef ModelSelectionTuning < handle
             bic = -2*log_likelihood + k*log(n);
             
             % Correlation
-            r = corr(x, y);
+            r = corr(polyval(beta, x), y);  % correlation between predicted and actual
+            model_info.fit_metric = r;
             
             % Store results
             switch degree
@@ -292,7 +293,7 @@ classdef ModelSelectionTuning < handle
             model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = k;
-            model_info.fit_metric = log_likelihood;
+            model_info.fit_metric = r;
         end
         
         
@@ -337,6 +338,10 @@ classdef ModelSelectionTuning < handle
                 % BIC
                 k = 4;  % 4 parameters (amplitude, mu, sigma, baseline)
                 bic = -2*log_likelihood + k*log(n);
+                %r
+                r = corr(y_pred(:), y(:));
+                model_info.r = r;
+                model_info.fit_metric = r;
                 
             catch
                 % If fit fails, return poor metrics
@@ -344,6 +349,7 @@ classdef ModelSelectionTuning < handle
                 rsq = -inf;
                 bic = inf;
                 log_likelihood = -inf;
+                r = -inf;  %
             end
             
             % Store results
@@ -353,7 +359,7 @@ classdef ModelSelectionTuning < handle
             model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 4;
-            model_info.fit_metric = log_likelihood;
+            model_info.fit_metric = r;
         end
         
         
@@ -390,6 +396,11 @@ classdef ModelSelectionTuning < handle
                 % BIC
                 k = 2;  % 2 parameters (intercept, slope)
                 bic = -2*log_likelihood + k*log(n);
+
+                % r
+                r = corr(y_pred(:), y(:));
+                model_info.r = r;
+                model_info.fit_metric = r;
                 
             catch
                 % If fit fails, return poor metrics
@@ -397,6 +408,7 @@ classdef ModelSelectionTuning < handle
                 rsq = -inf;
                 bic = inf;
                 log_likelihood = -inf;
+                r = -inf;
             end
             
             % Store results
@@ -406,7 +418,7 @@ classdef ModelSelectionTuning < handle
             model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 2;
-            model_info.fit_metric = log_likelihood;
+            model_info.fit_metric = r;
         end
         
         
@@ -451,6 +463,10 @@ classdef ModelSelectionTuning < handle
                 % BIC
                 k = 4;  % 4 parameters
                 bic = -2*log_likelihood + k*log(n);
+                %r
+                r = corr(y_pred(:), y(:));
+                model_info.r = r;
+                model_info.fit_metric = r;
                 
             catch
                 % If fit fails, return poor metrics
@@ -458,6 +474,7 @@ classdef ModelSelectionTuning < handle
                 rsq = -inf;
                 bic = inf;
                 log_likelihood = -inf;
+                r = -inf;
             end
             
             % Store results
@@ -467,7 +484,7 @@ classdef ModelSelectionTuning < handle
             model_info.log_likelihood = log_likelihood;
             model_info.bic = bic;
             model_info.n_params = 4;
-            model_info.fit_metric = log_likelihood;
+            model_info.fit_metric = r;
         end
     end
 end

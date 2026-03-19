@@ -1136,9 +1136,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
-        % Plot mean firing rate with error bars (SEM)
+        % Plot mean firing rate with error bars (SD)
         hold on;
-        errorbar(ax_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
+        errorbar(ax_tuning, x, fr, sd, 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
         
         % Plot fitted model curve
         if ~isempty(model_info) && isfield(model_info, 'beta')
@@ -1185,31 +1185,25 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         end
     end
     
-    %% Panel 10 (row 3, col 2): Velocity tuning shuffle histogram
+   %% Panel 10 (row 3, col 2): Velocity tuning shuffle histogram
     if ~isempty(tuning_data) && isstruct(tuning_data)
         ax_hist = subplot(6, 4, 10, 'Parent', fig);
         
         % Handle both old and new formats
         if isfield(tuning_data.shuffled, 'fit_metric_shuff')
-            % New ModelSelectionTuning format - use fit metric (log-likelihood)
+            % New ModelSelectionTuning format - use Pearson r
             shuff_values = tuning_data.shuffled.fit_metric_shuff;
             obs_value = tuning_data.shuffled.best_model_info.fit_metric;
-            x_label = 'Log-likelihood';
-            % Dynamic x-axis limits based on data
-            x_min = min([min(shuff_values), obs_value]);
-            x_max = max([max(shuff_values), obs_value]);
-            % Safety check: ensure valid limits
-            if isnan(x_min) || isnan(x_max) || x_min >= x_max
-                x_lim = [-100, 0];  % Default fallback
-            else
-                x_lim = [x_min * 1.1, x_max * 1.1];
-            end
+            x_label = 'r';
+            x_lim = [-1, 1];
+            
         elseif isfield(tuning_data.shuffled, 'r_shuff')
             % Old ShuffleTuning format - use correlation
             shuff_values = tuning_data.shuffled.r_shuff;
             obs_value = tuning_data.shuffled.r;
             x_label = 'r';
-            x_lim = [-0.5, 0.5];
+            x_lim = [-1, 1];
+            
         else
             % No shuffle data available
             text(0.5, 0.5, 'No shuffle data', 'Units', 'normalized', ...
@@ -1234,19 +1228,19 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
-        % Add p-value and log-likelihood value text with smaller font
+        % Add p-value text
         if tuning_data.shuffled.p < 0.001
             p_str = 'p < 0.001';
         else
             p_str = sprintf('p = %.3f', tuning_data.shuffled.p);
         end
-        % Add observed log-likelihood value
-        loglik_str = sprintf('LL = %.1f', obs_value);
-        combined_str = sprintf('%s\n%s', p_str, loglik_str);
+        
+        % Add observed r value
+        r_str = sprintf('r = %.3f', obs_value);
+        combined_str = sprintf('%s\n%s', p_str, r_str);
         text(0.98, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
-             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+            'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
-    
     %% Panel 11 (row 3, col 3): Acceleration tuning curve
     if ~isempty(accel_tuning_data) && isstruct(accel_tuning_data)
         ax_accel_tuning = subplot(6, 4, 11, 'Parent', fig);
@@ -1280,9 +1274,9 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
             fit_color = [0.627, 0.549, 0.471];  % Desaturated orange-gray for not tuned
         end
         
-        % Plot mean firing rate with error bars (SEM)
+        % Plot mean firing rate with error bars (SD)
         hold on;
-        errorbar(ax_accel_tuning, x, fr, sd./sqrt(n), 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
+        errorbar(ax_accel_tuning, x, fr, sd, 'o', 'Color', data_color, 'MarkerFaceColor', data_color, 'MarkerSize', 2, 'LineWidth', 0.75);
         
         % Plot fitted model curve
         if ~isempty(model_info) && isfield(model_info, 'beta')
@@ -1335,25 +1329,19 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         
         % Handle both old and new formats
         if isfield(accel_tuning_data.shuffled, 'fit_metric_shuff')
-            % New ModelSelectionTuning format - use fit metric (log-likelihood)
+            % New ModelSelectionTuning format - use Pearson r
             shuff_values = accel_tuning_data.shuffled.fit_metric_shuff;
             obs_value = accel_tuning_data.shuffled.best_model_info.fit_metric;
-            x_label = 'Log-likelihood';
-            % Dynamic x-axis limits based on data
-            x_min = min([min(shuff_values), obs_value]);
-            x_max = max([max(shuff_values), obs_value]);
-            % Safety check: ensure valid limits
-            if isnan(x_min) || isnan(x_max) || x_min >= x_max
-                x_lim = [-100, 0];  % Default fallback
-            else
-                x_lim = [x_min * 1.1, x_max * 1.1];
-            end
+            x_label = 'r';
+            x_lim = [-1, 1];
+            
         elseif isfield(accel_tuning_data.shuffled, 'r_shuff')
             % Old ShuffleTuning format - use correlation
             shuff_values = accel_tuning_data.shuffled.r_shuff;
             obs_value = accel_tuning_data.shuffled.r;
             x_label = 'r';
-            x_lim = [-0.5, 0.5];
+            x_lim = [-1, 1];
+            
         else
             % No shuffle data available
             text(0.5, 0.5, 'No shuffle data', 'Units', 'normalized', ...
@@ -1378,19 +1366,19 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         xlim(x_lim);
         set(gca, 'PlotBoxAspectRatio', [2, 1, 1]);
         
-        % Add p-value and log-likelihood value text with smaller font
+        % Add p-value text
         if accel_tuning_data.shuffled.p < 0.001
             p_str = 'p < 0.001';
         else
             p_str = sprintf('p = %.3f', accel_tuning_data.shuffled.p);
         end
-        % Add observed log-likelihood value
-        loglik_str = sprintf('LL = %.1f', obs_value);
-        combined_str = sprintf('%s\n%s', p_str, loglik_str);
+        
+        % Add observed r value
+        r_str = sprintf('r = %.3f', obs_value);
+        combined_str = sprintf('%s\n%s', p_str, r_str);
         text(0.98, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
-             'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+            'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
     end
-    
     %% ROW 4: Velocity & Acceleration Tuning (Split by Trial Type)
     
     %% Panel 13 (row 4, col 1): Velocity tuning curve (long trials only)
@@ -1403,10 +1391,42 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(tuning_data_long.tuning), 2);
         x = tuning_data_long.bin_centers;
         
-        % Plot mean firing rate with error bars (SEM)
+        % Get best model
+        best_model_long = [];
+        model_info_long = [];
+        is_significant_long = false;
+        
+        if isstruct(tuning_data_long) && isfield(tuning_data_long, 'shuffled') && ~isempty(tuning_data_long.shuffled)
+            if isfield(tuning_data_long.shuffled, 'best_model')
+                best_model_long = tuning_data_long.shuffled.best_model;
+                model_info_long = tuning_data_long.shuffled.best_model_info;
+            elseif isfield(tuning_data_long.shuffled, 'beta') && ~isempty(tuning_data_long.shuffled.beta)
+                best_model_long = 'quadratic';
+                model_info_long.beta = tuning_data_long.shuffled.beta;
+            end
+            if isfield(tuning_data_long.shuffled, 'p')
+                is_significant_long = (tuning_data_long.shuffled.p < 0.05);
+            end
+        end
+        
+        % Set colors based on significance
+        if is_significant_long
+            fit_color = [0.545, 0.271, 0.075];
+        else
+            fit_color = [0.627, 0.549, 0.471];
+        end
+        
+        % Plot mean firing rate with error bars (SD)
         hold on;
-        errorbar(ax_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
+        errorbar(ax_tuning_long, x, fr, sd, 'o', 'Color', group_colors.long, ...
                  'MarkerFaceColor', group_colors.long, 'MarkerSize', 2, 'LineWidth', 0.75);
+        
+        % Plot fitted model curve
+        if ~isempty(model_info_long) && isfield(model_info_long, 'beta')
+            x_fit = linspace(min(x), max(x), 100);
+            y_fit = evaluate_model(best_model_long, model_info_long.beta, x_fit);
+            plot(ax_tuning_long, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
         hold off;
         
         xlabel('Speed (cm/s)');
@@ -1414,6 +1434,38 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Long trials', 'Color', group_colors.long, 'FontWeight', 'bold');
         grid on;
         xlim([-5, max(x)+5]);
+        
+        % Add model name and BIC annotation
+        if ~isempty(model_info_long) && isfield(model_info_long, 'bic')
+            if is_significant_long
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model_long), model_info_long.bic);
+            else
+                model_str = sprintf('NS (BIC=%.1f)', model_info_long.bic);
+            end
+            text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+        
+        % Add p-value and r text
+        if ~isempty(model_info_long) && isfield(tuning_data_long.shuffled, 'p')
+            if tuning_data_long.shuffled.p < 0.001
+                p_str = 'p < 0.001';
+            else
+                p_str = sprintf('p = %.3f', tuning_data_long.shuffled.p);
+            end
+            r_str = sprintf('r = %.3f', model_info_long.fit_metric);
+            combined_str = sprintf('%s\n%s', p_str, r_str);
+            text(0.05, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        end
+        
+        % Add model parameters text
+        if ~isempty(model_info_long) && isfield(model_info_long, 'beta')
+            param_str = format_model_parameters(best_model_long, model_info_long.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
+                 'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
+        end
     end
     
     %% Panel 14 (row 4, col 2): Velocity tuning curve (short trials only)
@@ -1426,10 +1478,42 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(tuning_data_short.tuning), 2);
         x = tuning_data_short.bin_centers;
         
-        % Plot mean firing rate with error bars (SEM)
+        % Get best model
+        best_model_short = [];
+        model_info_short = [];
+        is_significant_short = false;
+        
+        if isstruct(tuning_data_short) && isfield(tuning_data_short, 'shuffled') && ~isempty(tuning_data_short.shuffled)
+            if isfield(tuning_data_short.shuffled, 'best_model')
+                best_model_short = tuning_data_short.shuffled.best_model;
+                model_info_short = tuning_data_short.shuffled.best_model_info;
+            elseif isfield(tuning_data_short.shuffled, 'beta') && ~isempty(tuning_data_short.shuffled.beta)
+                best_model_short = 'quadratic';
+                model_info_short.beta = tuning_data_short.shuffled.beta;
+            end
+            if isfield(tuning_data_short.shuffled, 'p')
+                is_significant_short = (tuning_data_short.shuffled.p < 0.05);
+            end
+        end
+        
+        % Set colors based on significance
+        if is_significant_short
+            fit_color = [0.545, 0.271, 0.075];
+        else
+            fit_color = [0.627, 0.549, 0.471];
+        end
+        
+        % Plot mean firing rate with error bars (SD)
         hold on;
-        errorbar(ax_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
+        errorbar(ax_tuning_short, x, fr, sd, 'o', 'Color', group_colors.short, ...
                  'MarkerFaceColor', group_colors.short, 'MarkerSize', 2, 'LineWidth', 0.75);
+        
+        % Plot fitted model curve
+        if ~isempty(model_info_short) && isfield(model_info_short, 'beta')
+            x_fit = linspace(min(x), max(x), 100);
+            y_fit = evaluate_model(best_model_short, model_info_short.beta, x_fit);
+            plot(ax_tuning_short, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
         hold off;
         
         xlabel('Speed (cm/s)');
@@ -1437,6 +1521,38 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Short trials', 'Color', group_colors.short, 'FontWeight', 'bold');
         grid on;
         xlim([-5, max(x)+5]);
+        
+        % Add model name and BIC annotation
+        if ~isempty(model_info_short) && isfield(model_info_short, 'bic')
+            if is_significant_short
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model_short), model_info_short.bic);
+            else
+                model_str = sprintf('NS (BIC=%.1f)', model_info_short.bic);
+            end
+            text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+        
+        % Add p-value and r text
+        if ~isempty(model_info_short) && isfield(tuning_data_short.shuffled, 'p')
+            if tuning_data_short.shuffled.p < 0.001
+                p_str = 'p < 0.001';
+            else
+                p_str = sprintf('p = %.3f', tuning_data_short.shuffled.p);
+            end
+            r_str = sprintf('r = %.3f', model_info_short.fit_metric);
+            combined_str = sprintf('%s\n%s', p_str, r_str);
+            text(0.05, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        end
+        
+        % Add model parameters text
+        if ~isempty(model_info_short) && isfield(model_info_short, 'beta')
+            param_str = format_model_parameters(best_model_short, model_info_short.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
+                 'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
+        end
     end
     
     %% Panel 15 (row 4, col 3): Acceleration tuning curve (long trials only)
@@ -1449,10 +1565,42 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(accel_tuning_data_long.tuning), 2);
         x = accel_tuning_data_long.bin_centers;
         
-        % Plot mean firing rate with error bars (SEM)
+        % Get best model
+        best_model_accel_long = [];
+        model_info_accel_long = [];
+        is_significant_accel_long = false;
+        
+        if isstruct(accel_tuning_data_long) && isfield(accel_tuning_data_long, 'shuffled') && ~isempty(accel_tuning_data_long.shuffled)
+            if isfield(accel_tuning_data_long.shuffled, 'best_model')
+                best_model_accel_long = accel_tuning_data_long.shuffled.best_model;
+                model_info_accel_long = accel_tuning_data_long.shuffled.best_model_info;
+            elseif isfield(accel_tuning_data_long.shuffled, 'beta') && ~isempty(accel_tuning_data_long.shuffled.beta)
+                best_model_accel_long = 'quadratic';
+                model_info_accel_long.beta = accel_tuning_data_long.shuffled.beta;
+            end
+            if isfield(accel_tuning_data_long.shuffled, 'p')
+                is_significant_accel_long = (accel_tuning_data_long.shuffled.p < 0.05);
+            end
+        end
+        
+        % Set colors based on significance
+        if is_significant_accel_long
+            fit_color = [0.545, 0.271, 0.075];
+        else
+            fit_color = [0.627, 0.549, 0.471];
+        end
+        
+        % Plot mean firing rate with error bars (Sd)
         hold on;
-        errorbar(ax_accel_tuning_long, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.long, ...
+        errorbar(ax_accel_tuning_long, x, fr, sd, 'o', 'Color', group_colors.long, ...
                  'MarkerFaceColor', group_colors.long, 'MarkerSize', 2, 'LineWidth', 0.75);
+        
+        % Plot fitted model curve
+        if ~isempty(model_info_accel_long) && isfield(model_info_accel_long, 'beta')
+            x_fit = linspace(min(x), max(x), 100);
+            y_fit = evaluate_model(best_model_accel_long, model_info_accel_long.beta, x_fit);
+            plot(ax_accel_tuning_long, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
         hold off;
         
         xlabel('Acceleration (cm/s^2)');
@@ -1460,6 +1608,38 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Long trials', 'Color', group_colors.long, 'FontWeight', 'bold');
         grid on;
         xlim([min(x)-5, max(x)+5]);
+        
+        % Add model name and BIC annotation
+        if ~isempty(model_info_accel_long) && isfield(model_info_accel_long, 'bic')
+            if is_significant_accel_long
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model_accel_long), model_info_accel_long.bic);
+            else
+                model_str = sprintf('NS (BIC=%.1f)', model_info_accel_long.bic);
+            end
+            text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+        
+        % Add p-value and r text
+        if ~isempty(model_info_accel_long) && isfield(accel_tuning_data_long.shuffled, 'p')
+            if accel_tuning_data_long.shuffled.p < 0.001
+                p_str = 'p < 0.001';
+            else
+                p_str = sprintf('p = %.3f', accel_tuning_data_long.shuffled.p);
+            end
+            r_str = sprintf('r = %.3f', model_info_accel_long.fit_metric);
+            combined_str = sprintf('%s\n%s', p_str, r_str);
+            text(0.05, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        end
+        
+        % Add model parameters text
+        if ~isempty(model_info_accel_long) && isfield(model_info_accel_long, 'beta')
+            param_str = format_model_parameters(best_model_accel_long, model_info_accel_long.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
+                 'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
+        end
     end
     
     %% Panel 16 (row 4, col 4): Acceleration tuning curve (short trials only)
@@ -1472,10 +1652,42 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         n = sum(~isnan(accel_tuning_data_short.tuning), 2);
         x = accel_tuning_data_short.bin_centers;
         
-        % Plot mean firing rate with error bars (SEM)
+        % Get best model
+        best_model_accel_short = [];
+        model_info_accel_short = [];
+        is_significant_accel_short = false;
+        
+        if isstruct(accel_tuning_data_short) && isfield(accel_tuning_data_short, 'shuffled') && ~isempty(accel_tuning_data_short.shuffled)
+            if isfield(accel_tuning_data_short.shuffled, 'best_model')
+                best_model_accel_short = accel_tuning_data_short.shuffled.best_model;
+                model_info_accel_short = accel_tuning_data_short.shuffled.best_model_info;
+            elseif isfield(accel_tuning_data_short.shuffled, 'beta') && ~isempty(accel_tuning_data_short.shuffled.beta)
+                best_model_accel_short = 'quadratic';
+                model_info_accel_short.beta = accel_tuning_data_short.shuffled.beta;
+            end
+            if isfield(accel_tuning_data_short.shuffled, 'p')
+                is_significant_accel_short = (accel_tuning_data_short.shuffled.p < 0.05);
+            end
+        end
+        
+        % Set colors based on significance
+        if is_significant_accel_short
+            fit_color = [0.545, 0.271, 0.075];
+        else
+            fit_color = [0.627, 0.549, 0.471];
+        end
+        
+        % Plot mean firing rate with error bars (SD)
         hold on;
-        errorbar(ax_accel_tuning_short, x, fr, sd./sqrt(n), 'o', 'Color', group_colors.short, ...
+        errorbar(ax_accel_tuning_short, x, fr, sd, 'o', 'Color', group_colors.short, ...
                  'MarkerFaceColor', group_colors.short, 'MarkerSize', 2, 'LineWidth', 0.75);
+        
+        % Plot fitted model curve
+        if ~isempty(model_info_accel_short) && isfield(model_info_accel_short, 'beta')
+            x_fit = linspace(min(x), max(x), 100);
+            y_fit = evaluate_model(best_model_accel_short, model_info_accel_short.beta, x_fit);
+            plot(ax_accel_tuning_short, x_fit, y_fit, '-', 'Color', fit_color, 'LineWidth', 3.5);
+        end
         hold off;
         
         xlabel('Acceleration (cm/s^2)');
@@ -1483,6 +1695,38 @@ function [fig, ttg_fields] = plot_cluster_spatial_profile(cluster_id, bin_center
         title('Short trials', 'Color', group_colors.short, 'FontWeight', 'bold');
         grid on;
         xlim([min(x)-5, max(x)+5]);
+        
+        % Add model name and BIC annotation
+        if ~isempty(model_info_accel_short) && isfield(model_info_accel_short, 'bic')
+            if is_significant_accel_short
+                model_str = sprintf('%s (BIC=%.1f)', upper(best_model_accel_short), model_info_accel_short.bic);
+            else
+                model_str = sprintf('NS (BIC=%.1f)', model_info_accel_short.bic);
+            end
+            text(0.95, 0.95, model_str, 'Units', 'normalized', 'FontSize', 8, 'FontWeight', 'bold', ...
+                 'Color', fit_color, 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top');
+        end
+        
+        % Add p-value and r text
+        if ~isempty(model_info_accel_short) && isfield(accel_tuning_data_short.shuffled, 'p')
+            if accel_tuning_data_short.shuffled.p < 0.001
+                p_str = 'p < 0.001';
+            else
+                p_str = sprintf('p = %.3f', accel_tuning_data_short.shuffled.p);
+            end
+            r_str = sprintf('r = %.3f', model_info_accel_short.fit_metric);
+            combined_str = sprintf('%s\n%s', p_str, r_str);
+            text(0.05, 0.95, combined_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'top', 'FontWeight', 'bold');
+        end
+        
+        % Add model parameters text
+        if ~isempty(model_info_accel_short) && isfield(model_info_accel_short, 'beta')
+            param_str = format_model_parameters(best_model_accel_short, model_info_accel_short.beta);
+            text(0.05, 0.05, param_str, 'Units', 'normalized', 'FontSize', 7, ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom', 'FontWeight', 'normal', ...
+                 'BackgroundColor', [1 1 1 0.7], 'Interpreter', 'tex');
+        end
     end
     
     %% Panel 17 (row 5, col 1): Velocity × Position contour (long trials)
@@ -1997,19 +2241,47 @@ function param_str = format_model_parameters(model_name, beta)
     
     switch model_name
         case 'flat'
-            param_str = sprintf('y = %.2f', beta(1));
+            if length(beta) >= 1
+                param_str = sprintf('y = %.2f', beta(1));
+            else
+                param_str = 'flat (invalid params)';
+            end
         case 'linear'
-            param_str = sprintf('y = %.2fx %+.2f', beta(1), beta(2));
+            if length(beta) >= 2
+                param_str = sprintf('y = %.2fx %+.2f', beta(1), beta(2));
+            else
+                param_str = 'linear (invalid params)';
+            end
         case 'quadratic'
-            param_str = sprintf('y = %.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3));
+            if length(beta) >= 3
+                param_str = sprintf('y = %.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3));
+            else
+                param_str = 'quadratic (invalid params)';
+            end
         case 'cubic'
-            param_str = sprintf('y = %.2fx^3 %+.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3), beta(4));
+            if length(beta) >= 4
+                param_str = sprintf('y = %.2fx^3 %+.2fx^2 %+.2fx %+.2f', beta(1), beta(2), beta(3), beta(4));
+            else
+                param_str = 'cubic (invalid params)';
+            end
         case 'gaussian'
-            param_str = sprintf('A=%.2f, \\mu=%.2f, \\sigma=%.2f', beta(1), beta(2), abs(beta(3)));
+            if length(beta) >= 3
+                param_str = sprintf('A=%.2f, mu=%.2f, sigma=%.2f', beta(1), beta(2), abs(beta(3)));
+            else
+                param_str = 'gaussian (invalid params)';
+            end
         case 'relu'
-            param_str = sprintf('y = max(0, %.2fx %+.2f)', beta(2), beta(1));
+            if length(beta) >= 2
+                param_str = sprintf('y = max(0, %.2fx %+.2f)', beta(2), beta(1));
+            else
+                param_str = 'relu (invalid params)';
+            end
         case 'sigmoid'
-            param_str = sprintf('A=%.2f, x_0=%.2f, k=%.2f', beta(1), beta(3), beta(2));
+            if length(beta) >= 3
+                param_str = sprintf('A=%.2f, x_0=%.2f, k=%.2f', beta(1), beta(3), beta(2));
+            else
+                param_str = 'sigmoid (invalid params)';
+            end
         otherwise
             param_str = 'unknown model';
     end

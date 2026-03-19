@@ -2,7 +2,7 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
     plot_single_cluster_fig, analyzer, clusters, data, ...
     plot_velocity_tuning, plot_acceleration_tuning, ...
     trial_group_label_for_tuning, trial_group_label_for_accel_tuning, ...
-    bin_size_cm, gauss_sigma_cm, probe_id, save_figs, ctl)
+    bin_size_cm, gauss_sigma_cm, probe_id, save_figs, ctl, re_run_analysis)
 % CREATE_SINGLE_CLUSTER_FIGURES Create individual spatial profile figures for each cluster
 %
 % Creates a combined 6-row figure for each cluster showing spatial firing rate profiles,
@@ -52,12 +52,25 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
         data, analyzer.cluster_ids, plot_velocity_tuning, plot_acceleration_tuning, ...
         trial_group_label_for_tuning, trial_group_label_for_accel_tuning);
     
-    % Compute split tuning curves (by trial type: long vs short) WITHOUT SHUFFLING
-    % Pass the combined tuning curves to reuse the best model
-    [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, accel_tuning_curves_short] = ...
-        compute_split_tuning_curves(data, clusters, analyzer.trial_groups, ...
-                                     plot_velocity_tuning, plot_acceleration_tuning, ...
-                                     tuning_curves, accel_tuning_curves);
+    % Compute split tuning curves with caching
+    split_cache_filename = sprintf('%s_split_tuning_cache.mat', probe_id);
+    split_cache_filepath = fullfile(ctl.figs.curr_dir, split_cache_filename);
+    
+    if exist(split_cache_filepath, 'file') && ~re_run_analysis
+        fprintf('  Loading split tuning curves from cache...\n');
+        load(split_cache_filepath, 'tuning_curves_long', 'tuning_curves_short', ...
+             'accel_tuning_curves_long', 'accel_tuning_curves_short');
+    else
+        fprintf('  Computing split tuning curves (this may take a while)...\n');
+        [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, accel_tuning_curves_short] = ...
+            compute_split_tuning_curves(data, clusters, analyzer.trial_groups, ...
+                                         plot_velocity_tuning, plot_acceleration_tuning, ...
+                                         tuning_curves, accel_tuning_curves);
+        % Save to cache
+        fprintf('  Saving split tuning curves to cache...\n');
+        save(split_cache_filepath, 'tuning_curves_long', 'tuning_curves_short', ...
+             'accel_tuning_curves_long', 'accel_tuning_curves_short', '-v7.3');
+    end
     
     for c = 1:length(analyzer.cluster_ids)
         % Show progress every 10 clusters to avoid cursor stealing
@@ -130,5 +143,13 @@ function [all_ttg_rates, ttg_norm_bin_centers, all_ttg_fields] = create_single_c
         else
             close(fig_cluster);
         end
+    end
+    % Save tuning summary text file
+    if save_figs
+        fprintf('  Saving tuning summary...\n');
+        save_tuning_summary(tuning_curves, accel_tuning_curves, ...
+                    tuning_curves_long, tuning_curves_short, ...
+                    accel_tuning_curves_long, accel_tuning_curves_short, ...
+                    analyzer.cluster_ids, ctl.figs.curr_dir, probe_id);
     end
 end

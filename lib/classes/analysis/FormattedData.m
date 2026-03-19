@@ -203,7 +203,7 @@ classdef FormattedData < handle
         %   See also: create_tuning_curves, RC2Analysis.create_tuning_curves
         
             tbl = obj.ctl.load_tuning_curves(obj.probe_id);
-            group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
+            group_idx = cellfun(@(x)(isequal(x, trial_group{1})), tbl.trial_groups);
             tuning_curves = tbl.tuning_curves{group_idx};
             cluster_idx = [tuning_curves(:).cluster_id] == cluster_id;
             tuning_curve = tuning_curves(cluster_idx);
@@ -229,7 +229,7 @@ classdef FormattedData < handle
             tuning_curve = {};
             for i_table = 1 : 3
                 tbl = obj.ctl.load_tuning_curves_acceleration(obj.probe_id, i_table);
-                group_idx = cellfun(@(x)(isequal(x, trial_group)), tbl.trial_groups);
+                group_idx = cellfun(@(x)(isequal(x, trial_group{1})), tbl.trial_groups);
                 tbl = tbl.tuning_curves{group_idx};
                 
                 cluster_idx = [tbl(:).cluster_id] == cluster_id;

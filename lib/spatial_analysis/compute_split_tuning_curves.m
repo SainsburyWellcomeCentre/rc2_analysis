@@ -61,6 +61,10 @@ function [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, acc
                 tuning_curves_long{c}.bin_edges = tt_long.velocity_bins.bin_edges;
                 tuning_curves_long{c}.bin_centers = tt_long.velocity_bins.bin_centers;
                 tuning_curves_long{c}.tuning = tuning_long;  % n_bins x n_trials matrix
+
+                % Add model selection and shuffling
+                mst = ModelSelectionTuning(tuning_long, tt_long.velocity_bins.bin_centers);
+                tuning_curves_long{c}.shuffled = mst.get_summary();
                 
             catch ME
                 fprintf('    Warning: Could not compute velocity tuning (long) for cluster %d\n', ...
@@ -78,6 +82,10 @@ function [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, acc
                 tuning_curves_short{c}.bin_edges = tt_short.velocity_bins.bin_edges;
                 tuning_curves_short{c}.bin_centers = tt_short.velocity_bins.bin_centers;
                 tuning_curves_short{c}.tuning = tuning_short;  % n_bins x n_trials matrix
+
+                % Add model selection and shuffling
+                mst = ModelSelectionTuning(tuning_short, tt_short.velocity_bins.bin_centers);
+                tuning_curves_short{c}.shuffled = mst.get_summary();
                 
             catch ME
                 fprintf('    Warning: Could not compute velocity tuning (short) for cluster %d\n', ...
@@ -108,6 +116,10 @@ function [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, acc
                 accel_tuning_curves_long{c}.bin_edges = tta_long.acceleration_bins.bin_edges;
                 accel_tuning_curves_long{c}.bin_centers = tta_long.acceleration_bins.bin_centers;
                 accel_tuning_curves_long{c}.tuning = tuning_long;  % n_bins x n_trials matrix
+
+                % Add model selection and shuffling
+                mst = ModelSelectionTuning(tuning_long, tta_long.acceleration_bins.bin_centers);
+                accel_tuning_curves_long{c}.shuffled = mst.get_summary();
                 
             catch ME
                 fprintf('    Warning: Could not compute acceleration tuning (long) for cluster %d\n', ...
@@ -125,6 +137,10 @@ function [tuning_curves_long, tuning_curves_short, accel_tuning_curves_long, acc
                 accel_tuning_curves_short{c}.bin_edges = tta_short.acceleration_bins.bin_edges;
                 accel_tuning_curves_short{c}.bin_centers = tta_short.acceleration_bins.bin_centers;
                 accel_tuning_curves_short{c}.tuning = tuning_short;  % n_bins x n_trials matrix
+
+                % Add model selection and shuffling
+                mst = ModelSelectionTuning(tuning_short, tta_short.acceleration_bins.bin_centers);
+                accel_tuning_curves_short{c}.shuffled = mst.get_summary();
                 
             catch ME
                 fprintf('    Warning: Could not compute acceleration tuning (short) for cluster %d\n', ...

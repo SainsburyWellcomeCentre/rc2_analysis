@@ -35,7 +35,7 @@ function [tuning_curves, accel_tuning_curves] = load_tuning_curves_for_clusters(
         for c = 1:n_clusters
             try
                 tuning_curves{c} = data.load_tuning_curves(...
-                    cluster_ids(c), trial_group_label_velocity);
+                    cluster_ids(c), {trial_group_label_velocity});
             catch ME
                 fprintf('    Warning: Could not load velocity tuning curve for cluster %d\n', ...
                         cluster_ids(c));
@@ -52,7 +52,7 @@ function [tuning_curves, accel_tuning_curves] = load_tuning_curves_for_clusters(
                 % load_tuning_curves_acceleration returns {all, acc, dec}
                 % We want the 'all' table (index 1) for combined acceleration
                 accel_data = data.load_tuning_curves_acceleration(...
-                    cluster_ids(c), trial_group_label_accel);
+                    cluster_ids(c), {trial_group_label_accel});
                 if ~isempty(accel_data) && length(accel_data) >= 1
                     accel_tuning_curves{c} = accel_data{1};  % Extract 'all' table
                 else

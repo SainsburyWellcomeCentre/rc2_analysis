@@ -34,7 +34,7 @@
 % Prevent figures from popping up on screen and stealing focus
 % Reset any previously set CreateFcn that might cause errors
 set(groot, 'DefaultFigureCreateFcn', '');  % Clear any previous CreateFcn
-set(groot, 'DefaultFigureVisible', 'off');
+set(groot, 'DefaultFigureVisible', 'on');
 
 % Configuration
 experiment_groups        = {'ambient_light'};
@@ -43,13 +43,13 @@ overwrite                = true;
 figure_dir               = {'spatial_firing_rate', 'ambient_light'};
 plot_single_cluster_fig  = true;
 plot_heatmap_cluster_fig = true;
-re_run_analysis          = false;  % Set to true to recompute all metrics, false to load cached data
+re_run_analysis          = true;  % Set to true to recompute all metrics, false to load cached data
 plot_velocity_tuning     = true;   % Set to false to skip velocity tuning plots
 plot_acceleration_tuning = true;   % Set to false to skip acceleration tuning plots
 
 % Parallel processing configuration
 use_parallel            = true;   % Set to false to disable parallel processing entirely
-max_workers             = 4;      % Maximum number of parallel workers
+max_workers             = 2;      % Maximum number of parallel workers
 
 % Analysis parameters
 bin_size_cm = 2;
@@ -75,6 +75,8 @@ pThresh = 0.05;             % significance threshold
 % Initialize controller and get probe IDs
 ctl = RC2Analysis();
 probe_ids = ctl.get_probe_ids(experiment_groups{:});
+% --- SAFETY: run only ONE probe to avoid RAM blow-ups ---
+probe_ids = probe_ids(1);
 ctl.setup_figures(figure_dir, save_figs);
 
 fprintf('Found %d probe(s) for experiment group(s): %s\n', length(probe_ids), strjoin(experiment_groups, ', '));
@@ -89,6 +91,7 @@ for pid = 1:length(probe_ids)
     % Load data
     data = ctl.load_formatted_data(probe_ids{pid});
     clusters = data.selected_clusters();
+    %clusters = clusters(5);  % DEBUG: only first cluster
     sessions = data.motion_sessions();
     
     fprintf('  Found %d clusters and %d sessions\n', length(clusters), length(sessions));
@@ -124,7 +127,7 @@ for pid = 1:length(probe_ids)
         % Load from existing cache
         analyzer = load_spatial_analysis_cache(clusters, sessions, cache_filepath);
     end
-    
+    %analyzer.cluster_ids = analyzer.cluster_ids(1);  % DEBUG: only first cluster
     % Initialize TTG rate storage for heatmap plotting
     all_ttg_rates = struct('long', [], 'short', []);
     ttg_norm_bin_centers = [];
@@ -159,7 +162,7 @@ for pid = 1:length(probe_ids)
         plot_single_cluster_fig, analyzer, clusters, data, ...
         plot_velocity_tuning, plot_acceleration_tuning, ...
         trial_group_label_for_tuning, trial_group_label_for_accel_tuning, ...
-        bin_size_cm, gauss_sigma_cm, probe_ids{pid}, save_figs, ctl);
+        bin_size_cm, gauss_sigma_cm, probe_ids{pid}, save_figs, ctl, re_run_analysis);
     
     % Save model comparison tables (BIC values for all models)
     if save_figs
@@ -173,7 +176,6 @@ for pid = 1:length(probe_ids)
         save_model_comparison_table(tuning_curves, accel_tuning_curves, ...
             analyzer.cluster_ids, ctl.figs.curr_dir, probe_ids{pid});
     end
-    
     % Plot distribution comparison contingency table
     if save_figs
         fprintf('  Creating distribution comparison contingency table...\n');

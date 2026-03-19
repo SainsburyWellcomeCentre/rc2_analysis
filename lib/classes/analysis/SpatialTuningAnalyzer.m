@@ -46,7 +46,7 @@ classdef SpatialTuningAnalyzer < handle
         
         % Parallel processing
         use_parallel = true
-        max_workers = 4
+        max_workers = 2
         
         % Input data
         clusters            % Array of cluster objects
@@ -1338,3 +1338,4 @@ classdef SpatialTuningAnalyzer < handle
         end
     end
 end
+
