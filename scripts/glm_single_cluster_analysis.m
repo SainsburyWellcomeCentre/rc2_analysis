@@ -55,11 +55,17 @@
 %   FullInteraction: Additive + all pairwise interactions
 %
 % NEURON CLASSIFICATION (based on forward selection):
-%   - is_speed_tuned: Speed in selected variables
+%   - is_spprofileeed_tuned: Speed in selected variables
 %   - is_tf_tuned:    TF in selected variables
 %   - is_sf_tuned:    SF in selected variables
 %   - is_or_tuned:    OR in selected variables
 %   - has_interaction: Any interaction in selected variables
+%
+% OUTPUTS:
+%   - prefilter_decision_tree.csv: Pre-filtering + GLM selection results
+%   - csv/glm_model_comparison.csv: Model comparison with selected variables
+%   - csv/glm_coefficients.csv: GLM coefficients for each cluster
+%   - csv/glm_selection_history.csv: Forward selection history per cluster
 %
 % See also: aritmetic_sum, speed_tuning_all_clusters_all_conditions,
 %           tf_tuning_all_clusters_all_conditions, create_tables_by_batch
@@ -94,7 +100,7 @@ n_speed_bins            = 20;     % speed bins per trial (for observed data plot
 n_tf_bins               = 20;     % TF bins per trial
 
 % Time-bin GLM settings
-time_bin_width          = 0.02;  % 2 ms bins
+time_bin_width          = 0.1;  % 2 ms bins
 
 % Basis functions: raised cosine
 n_speed_bases           = 5;      % number of raised cosine bases for speed
@@ -123,6 +129,9 @@ obs_fr_smooth_width     = 0.100;  % 100 ms boxcar (Park 2014 used 100ms)
 save_figs               = true;
 overwrite               = true;
 figure_dir              = {'glm_single_cluster'};
+
+% CSV output
+csv_output              = true;
 
 % --- Pre-computed tuning table paths ---
 tuning_curves_dir       = 'D:\mvelez\formatted_data\csvs\tuning_curves';
@@ -221,10 +230,33 @@ fprintf('  Pre-filtering: Decision tree using SVM and tuning tables\n\n');
 %  ====================================================================
 fprintf('--- Loading motion cloud metadata ---\n');
 
-[mc_sequence, cloud_names] = glm_helpers.load_motion_cloud_metadata(mc_sequence_path, mc_folders_path);
+P = load(mc_sequence_path);
+if isfield(P, 'presentation_sequence')
+    mc_sequence = P.presentation_sequence;
+else
+    fns = fieldnames(P);
+    for i = 1:numel(fns)
+        v = P.(fns{i});
+        if isnumeric(v) && isvector(v)
+            mc_sequence = v; break;
+        end
+    end
+end
 
-if isempty(mc_sequence) || isempty(cloud_names)
-    error('Could not load motion cloud metadata (presentation sequence or cloud names).');
+S = load(mc_folders_path);
+fns = fieldnames(S);
+for i = 1:numel(fns)
+    v = S.(fns{i});
+    if isstruct(v) && isfield(v, 'name')
+        cloud_names = {v.name};
+        break;
+    elseif iscell(v)
+        cloud_names = v(:)';
+        break;
+    elseif isstring(v)
+        cloud_names = cellstr(v(:))';
+        break;
+    end
 end
 
 fprintf('  Loaded %d sequence entries, %d cloud names\n', length(mc_sequence), length(cloud_names));
@@ -274,7 +306,7 @@ prefilter_results.cluster_id = [];
 prefilter_results.is_T_significant = [];       % stationary_T != motion_T (SVM)
 prefilter_results.is_V_significant = [];       % stationary_V != motion_V (SVM)
 prefilter_results.is_VT_significant = [];      % stationary_VT != motion_VT (SVM)
-prefilter_results.is_speed_tuned = [];         % T OR VT significant
+prefilter_results.is_spprofileeed_tuned = [];         % T OR VT significant
 prefilter_results.should_run_glm = [];         % final decision: run GLM or not
 prefilter_results.category = {};               % category label for this cluster
 prefilter_results.p_T_svm = [];                % p-value for T stationary vs motion
@@ -363,9 +395,9 @@ for probe_i = 1:length(probe_ids)
         end
         
         % ====== SPEED TUNED CLASSIFICATION: T OR VT significant ======
-        is_speed_tuned = is_T_significant || is_VT_significant;
-        prefilter_results.is_speed_tuned(n_prefilter_clusters) = is_speed_tuned;
-        if is_speed_tuned
+        is_spprofileeed_tuned = is_T_significant || is_VT_significant;
+        prefilter_results.is_spprofileeed_tuned(n_prefilter_clusters) = is_spprofileeed_tuned;
+        if is_spprofileeed_tuned
             n_speed_tuned = n_speed_tuned + 1;
         end
         
@@ -451,6 +483,31 @@ fprintf('    Only T or V significant (not VT): %d (%.1f%%)\n', n_one_significant
 fprintf('    -------------------------------------------\n');
 fprintf('    TOTAL excluded:                   %d (%.1f%%)\n', n_prefilter_clusters - n_should_run_glm, 100*(n_prefilter_clusters - n_should_run_glm)/n_prefilter_clusters);
 fprintf('====================================================================\n\n');
+% Save pre-filtering results to CSV
+prefilter_table = table(...
+    string(prefilter_results.probe_id'), ...
+    prefilter_results.cluster_id', ...
+    prefilter_results.is_T_significant', ...
+    prefilter_results.is_V_significant', ...
+    prefilter_results.is_VT_significant', ...
+    prefilter_results.n_significant', ...
+    prefilter_results.is_spprofileeed_tuned', ...
+    prefilter_results.should_run_glm', ...
+    string(prefilter_results.category'), ...
+    prefilter_results.p_T_svm', ...
+    prefilter_results.p_V_svm', ...
+    prefilter_results.p_VT_svm', ...
+    prefilter_results.direction_T', ...
+    prefilter_results.direction_V', ...
+    prefilter_results.direction_VT', ...
+    'VariableNames', {'probe_id', 'cluster_id', 'is_T_significant', 'is_V_significant', ...
+        'is_VT_significant', 'n_significant', 'is_spprofileeed_tuned', 'should_run_glm', 'category', ...
+        'p_T_svm', 'p_V_svm', 'p_VT_svm', ...
+        'direction_T', 'direction_V', 'direction_VT'});
+
+prefilter_csv_path = fullfile(ctl.figs.curr_dir, 'prefilter_decision_tree.csv');
+writetable(prefilter_table, prefilter_csv_path);
+fprintf('Pre-filtering results saved to: %s\n\n', prefilter_csv_path);
 
 % Create a set of cluster IDs that should be analyzed
 clusters_for_glm = containers.Map('KeyType', 'char', 'ValueType', 'any');
@@ -473,9 +530,42 @@ fprintf('Clusters passing pre-filter for GLM: %d\n\n', clusters_for_glm.Count);
 % tuning curve figures). GLM fitting is done only with time-bin data.
 fprintf('\n--- Loading pre-computed tuning tables (for observed data plotting) ---\n');
 
+% Helper: check whether a string contains any substring in a cell array
+contains_any = @(str, subs) any(cellfun(@(s) contains(str, s), subs));
+
 % Build stimulus lookup: trial_id -> {sf, batch_gain, or, is_excluded}
-trial_stim = glm_helpers.build_trial_stim_lookup(mc_sequence, cloud_names, exclude_patterns, ...
-    sf_keys, sf_values_map, or_keys, or_values_map, batch_patterns, batch_gains);
+trial_stim = struct();
+for tid = 1:length(mc_sequence)
+    mc_id = mc_sequence(tid);
+    if mc_id < 1 || mc_id > length(cloud_names)
+        trial_stim(tid).sf = NaN;
+        trial_stim(tid).batch_gain = NaN;
+        trial_stim(tid).or = NaN;
+        trial_stim(tid).excluded = true;
+        continue;
+    end
+    cname = cloud_names{mc_id};
+    
+    if contains_any(cname, exclude_patterns)
+        trial_stim(tid).sf = NaN;
+        trial_stim(tid).batch_gain = NaN;
+        trial_stim(tid).or = NaN;
+        trial_stim(tid).excluded = true;
+    else
+        [sf_v, ~, or_v] = parse_cloud_name(cname, sf_keys, sf_values_map, or_keys, or_values_map);
+        trial_stim(tid).sf = sf_v;
+        trial_stim(tid).or = or_v;
+        trial_stim(tid).excluded = false;
+        
+        trial_stim(tid).batch_gain = NaN;
+        for bi = 1:length(batch_patterns)
+            if contains_any(cname, batch_patterns{bi})
+                trial_stim(tid).batch_gain = batch_gains(bi);
+                break;
+            end
+        end
+    end
+end
 fprintf('  Built stimulus lookup for %d trials\n', length(trial_stim));
 
 % --- Load pre-computed bin edges ---
@@ -1068,9 +1158,9 @@ x_speed_fine = linspace(speed_range(1), speed_range(2), 500)';
 x_tf_fine    = linspace(tf_range(1),    tf_range(2),    500)';
 x_onset_fine = linspace(-0.5, onset_range(2), 500)';  % Include some negative time
 
-B_speed_fine = glm_helpers.make_raised_cosine_basis(x_speed_fine, n_speed_bases, speed_range(1), speed_range(2));
-B_tf_fine    = glm_helpers.make_raised_cosine_basis(x_tf_fine,    n_tf_bases,    tf_range(1),    tf_range(2));
-B_onset_fine = glm_helpers.make_onset_kernel_basis(x_onset_fine, n_onset_bases, onset_range(2));
+B_speed_fine = make_raised_cosine_basis(x_speed_fine, n_speed_bases, speed_range(1), speed_range(2));
+B_tf_fine    = make_raised_cosine_basis(x_tf_fine,    n_tf_bases,    tf_range(1),    tf_range(2));
+B_onset_fine = make_onset_kernel_basis(x_onset_fine, n_onset_bases, onset_range(2));
 
 fig_basis = figure('Position', [50 50 2200 800], 'Name', 'Basis Functions Overview');
 
@@ -1155,8 +1245,8 @@ subplot(2, 4, 7);
 n_grid = 80;
 spd_grid = linspace(speed_range(1), speed_range(2), n_grid)';
 tf_grid  = linspace(tf_range(1),    tf_range(2),    n_grid)';
-B_spd_g = glm_helpers.make_raised_cosine_basis(spd_grid, n_speed_bases, speed_range(1), speed_range(2));
-B_tf_g  = glm_helpers.make_raised_cosine_basis(tf_grid,  n_tf_bases,    tf_range(1),    tf_range(2));
+B_spd_g = make_raised_cosine_basis(spd_grid, n_speed_bases, speed_range(1), speed_range(2));
+B_tf_g  = make_raised_cosine_basis(tf_grid,  n_tf_bases,    tf_range(1),    tf_range(2));
 
 [SPD_mesh, TF_mesh] = meshgrid(spd_grid, tf_grid);
 n_examples = min(4, n_speed_bases * n_tf_bases);
@@ -1182,7 +1272,7 @@ subplot(2, 4, 8);
 % Show several example kernels formed by different weight combinations
 n_examples_onset = 5;
 t_kernel = linspace(0, onset_range(2), 200)';
-B_kernel = glm_helpers.make_onset_kernel_basis(t_kernel, n_onset_bases, onset_range(2));
+B_kernel = make_onset_kernel_basis(t_kernel, n_onset_bases, onset_range(2));
 
 % Generate diverse weight patterns
 rng(42);  % reproducible
@@ -1230,61 +1320,85 @@ fprintf('    Phase 2: Interactions (only if both parents selected)\n\n');
 glm_types = {'time'};
 glm_type_labels = {'Time-bin'};
 
-% Models to fit for visualization (comparison) + Selected
-all_model_names = {'Null', 'Selected', 'Additive', 'FullInteraction'};
+% Models to fit for visualization (comparison)
+visualization_models = {'Null', 'Additive', 'FullInteraction'};  % Selected added dynamically
+n_vis_models = length(visualization_models);
 
-% Initialize storage for GLM results
-n = n_unique_clusters;
+% Storage for GLM results
 for gt = 1:length(glm_types)
     gt_tag = glm_types{gt};
-    r = struct();
     
-    % Basic cluster info
-    r.probe_id = cell(n, 1);
-    r.cluster_id = zeros(n, 1);
-    r.n_trials = zeros(n, 1);
-    r.n_bins_total = zeros(n, 1);
-    r.n_spikes_total = zeros(n, 1);
+    results.(gt_tag) = struct();
+    results.(gt_tag).probe_id = cell(n_unique_clusters, 1);
+    results.(gt_tag).cluster_id = zeros(n_unique_clusters, 1);
+    results.(gt_tag).n_trials = zeros(n_unique_clusters, 1);
+    results.(gt_tag).n_bins_total = zeros(n_unique_clusters, 1);
+    results.(gt_tag).n_spikes_total = zeros(n_unique_clusters, 1);
     
-    % Forward selection results
-    r.selected_vars = cell(n, 1);
-    r.selected_vars_str = cell(n, 1);
-    r.n_selected_vars = zeros(n, 1);
-    r.selection_rounds = zeros(n, 1);
-    r.selection_history = cell(n, 1);
+    % --- Forward selection results ---
+    results.(gt_tag).selected_vars = cell(n_unique_clusters, 1);         % Cell array of selected variable names
+    results.(gt_tag).selected_vars_str = cell(n_unique_clusters, 1);     % Comma-separated string
+    results.(gt_tag).n_selected_vars = zeros(n_unique_clusters, 1);      % Number of selected variables
+    results.(gt_tag).selection_rounds = zeros(n_unique_clusters, 1);     % Rounds until convergence
+    results.(gt_tag).selection_history = cell(n_unique_clusters, 1);     % Full selection history
     
-    % Per-model metrics (cv_bps, aic, bic, train_bps, deviance, n_params, dispersion)
-    model_metric_fields = {'cv_bps', 'aic', 'bic', 'train_bps', 'deviance', 'n_params', 'dispersion'};
-    for mi = 1:length(all_model_names)
-        ml = all_model_names{mi};
-        for fi = 1:length(model_metric_fields)
-            r.([ml '_' model_metric_fields{fi}]) = zeros(n, 1);
-        end
+    % --- CV performance for key models ---
+    results.(gt_tag).Null_cv_bps = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_cv_bps = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Additive_cv_bps = zeros(n_unique_clusters, 1);
+    results.(gt_tag).FullInteraction_cv_bps = zeros(n_unique_clusters, 1);
+    
+    % --- Model fit metrics for all comparison models ---
+    for mi = 1:n_vis_models
+        ml = visualization_models{mi};
+        results.(gt_tag).([ml '_aic']) = zeros(n_unique_clusters, 1);
+        results.(gt_tag).([ml '_bic']) = zeros(n_unique_clusters, 1);
+        results.(gt_tag).([ml '_train_bps']) = zeros(n_unique_clusters, 1);
+        results.(gt_tag).([ml '_deviance']) = zeros(n_unique_clusters, 1);
+        results.(gt_tag).([ml '_n_params']) = zeros(n_unique_clusters, 1);
+        results.(gt_tag).([ml '_dispersion']) = zeros(n_unique_clusters, 1);
     end
+    % Also for Selected model
+    results.(gt_tag).Selected_aic = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_bic = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_train_bps = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_deviance = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_n_params = zeros(n_unique_clusters, 1);
+    results.(gt_tag).Selected_dispersion = zeros(n_unique_clusters, 1);
     
-    % Delta comparisons
-    r.delta_bps_selected_vs_null = zeros(n, 1);
-    r.delta_bps_additive_vs_null = zeros(n, 1);
-    r.delta_bps_interaction = zeros(n, 1);
-    r.delta_bps_selected_vs_additive = zeros(n, 1);
+    % --- Delta comparisons ---
+    results.(gt_tag).delta_bps_selected_vs_null = zeros(n_unique_clusters, 1);   % Selected - Null
+    results.(gt_tag).delta_bps_additive_vs_null = zeros(n_unique_clusters, 1);   % Additive - Null
+    results.(gt_tag).delta_bps_interaction = zeros(n_unique_clusters, 1);        % FullInteraction - Additive
+    results.(gt_tag).delta_bps_selected_vs_additive = zeros(n_unique_clusters, 1); % Selected - Additive (should be ~0 or negative if selection worked)
     
-    % Classification flags (all boolean)
-    bool_fields = {'is_speed_tuned', 'is_tf_tuned', 'is_sf_tuned', 'is_or_tuned', ...
-                   'has_interaction', 'has_speed_x_tf', 'has_speed_x_sf', 'has_speed_x_or', ...
-                   'has_tf_x_sf', 'has_tf_x_or', 'has_sf_x_or', 'has_significant_interaction'};
-    for fi = 1:length(bool_fields)
-        r.(bool_fields{fi}) = false(n, 1);
-    end
+    % --- Classification flags (based on forward selection) ---
+    results.(gt_tag).is_spprofileeed_tuned = false(n_unique_clusters, 1);        % Speed in selected_vars
+    results.(gt_tag).is_tf_tuned = false(n_unique_clusters, 1);           % TF in selected_vars
+    results.(gt_tag).is_sf_tuned = false(n_unique_clusters, 1);           % SF in selected_vars
+    results.(gt_tag).is_or_tuned = false(n_unique_clusters, 1);           % OR in selected_vars
+    results.(gt_tag).has_interaction = false(n_unique_clusters, 1);       % Any interaction in selected_vars
+    results.(gt_tag).has_spprofileeed_x_tf = false(n_unique_clusters, 1);
+    results.(gt_tag).has_spprofileeed_x_sf = false(n_unique_clusters, 1);
+    results.(gt_tag).has_spprofileeed_x_or = false(n_unique_clusters, 1);
+    results.(gt_tag).has_tf_x_sf = false(n_unique_clusters, 1);
+    results.(gt_tag).has_tf_x_or = false(n_unique_clusters, 1);
+    results.(gt_tag).has_sf_x_or = false(n_unique_clusters, 1);
     
     % Backward compatibility
-    r.winning_model = cell(n, 1);
-    
-    results.(gt_tag) = r;
+    results.(gt_tag).winning_model = cell(n_unique_clusters, 1);
+    results.(gt_tag).has_significant_interaction = false(n_unique_clusters, 1);
 end
 
-% Storage for predictions
+% Storage for coefficients and predictions
 cluster_predictions = struct();
 cluster_predictions.time = cell(n_unique_clusters, 1);
+
+% Storage for selection history (for CSV export)
+all_selection_history = cell(n_unique_clusters, 1);  % Cell array per cluster
+
+% Storage for coefficients (cell array per cluster)
+all_coefficients_per_cluster = cell(n_unique_clusters, 1);
 
 % Prepare data for parfor: extract pid and cid arrays
 unique_pids = unique_clusters.probe_id;
@@ -1325,15 +1439,15 @@ parfor ci = 1:n_unique_clusters
     
     cl_result.n_trials = length(unique(T_cluster.trial_id));
     cl_result.n_bins_total = height(T_cluster);
-    cl_result.n_spikes_total = sum(T_cluster.spike_count);
-    
+    cl_result.n_spikes_total = sum(double(T_cluster.spike_count));
+
     % Prepare features
     speed_v = T_cluster.speed;
     tf_v = T_cluster.tf;
     sf_v = T_cluster.sf; sf_v(isnan(sf_v)) = 0;
     or_v = T_cluster.orientation; or_v(isnan(or_v)) = 0;
     time_since_onset_v = T_cluster.time_since_onset;
-    y = T_cluster.spike_count;
+    y = double(T_cluster.spike_count);
     
     % Offset: constant offset (all bins same width)
     offset = log(time_bin_width) * ones(height(T_cluster), 1);
@@ -1356,9 +1470,9 @@ parfor ci = 1:n_unique_clusters
     fold_ids = trial_fold(row_to_trial);
     
     % --- Pre-compute basis matrices once per cluster (shared across models) ---
-    B_speed_cl = glm_helpers.make_raised_cosine_basis(speed_v, n_speed_bases, speed_range(1), speed_range(2));
-    B_tf_cl    = glm_helpers.make_raised_cosine_basis(tf_v, n_tf_bases, tf_range(1), tf_range(2));
-    B_onset_cl = glm_helpers.make_onset_kernel_basis(time_since_onset_v, n_onset_bases, onset_range(2));
+    B_speed_cl = make_raised_cosine_basis(speed_v, n_speed_bases, speed_range(1), speed_range(2));
+    B_tf_cl    = make_raised_cosine_basis(tf_v, n_tf_bases, tf_range(1), tf_range(2));
+    B_onset_cl = make_onset_kernel_basis(time_since_onset_v, n_onset_bases, onset_range(2));
     
     % Get reference levels for SF and OR (for consistent dummy coding)
     sf_ref_levels = sort(unique(sf_v(sf_v ~= 0)));
@@ -1367,7 +1481,7 @@ parfor ci = 1:n_unique_clusters
     % =====================================================================
     % FORWARD SELECTION: Find optimal variable set for this neuron
     % =====================================================================
-    [selected_vars, selection_history, selected_cv_bps, null_cv_bps] = glm_helpers.forward_select_model(...
+    [selected_vars, selection_history, selected_cv_bps, null_cv_bps] = forward_select_model(...
         B_speed_cl, B_tf_cl, B_onset_cl, sf_v, or_v, y, offset, fold_ids, ...
         selection_threshold, all_candidates, sf_ref_levels, or_ref_levels);
     
@@ -1380,14 +1494,23 @@ parfor ci = 1:n_unique_clusters
     cl_result.Null_cv_bps = null_cv_bps;
     cl_result.Selected_cv_bps = selected_cv_bps;
     
+    % Store selection history for CSV export
+    cl_selection_history = cell(length(selection_history), 1);
+    for ri = 1:length(selection_history)
+        sh = selection_history(ri);
+        cl_selection_history{ri} = {char(pid), cid, ri, sh.best_candidate, ...
+            sh.delta_bps, sh.added, sh.cv_bps_after};
+    end
+    cl_result.selection_history_csv = cl_selection_history;
+    
     % --- Classification based on forward selection ---
-    cl_result.is_speed_tuned = ismember('Speed', selected_vars);
+    cl_result.is_spprofileeed_tuned = ismember('Speed', selected_vars);
     cl_result.is_tf_tuned = ismember('TF', selected_vars);
     cl_result.is_sf_tuned = ismember('SF', selected_vars);
     cl_result.is_or_tuned = ismember('OR', selected_vars);
-    cl_result.has_speed_x_tf = ismember('Speed_x_TF', selected_vars);
-    cl_result.has_speed_x_sf = ismember('Speed_x_SF', selected_vars);
-    cl_result.has_speed_x_or = ismember('Speed_x_OR', selected_vars);
+    cl_result.has_spprofileeed_x_tf = ismember('Speed_x_TF', selected_vars);
+    cl_result.has_spprofileeed_x_sf = ismember('Speed_x_SF', selected_vars);
+    cl_result.has_spprofileeed_x_or = ismember('Speed_x_OR', selected_vars);
     cl_result.has_tf_x_sf = ismember('TF_x_SF', selected_vars);
     cl_result.has_tf_x_or = ismember('TF_x_OR', selected_vars);
     cl_result.has_sf_x_or = ismember('SF_x_OR', selected_vars);
@@ -1398,6 +1521,7 @@ parfor ci = 1:n_unique_clusters
     % =====================================================================
     models_to_fit = {'Null', 'Selected', 'Additive', 'FullInteraction'};
     cl_result.models = struct();
+    cl_coefficients = {};
     
     for mi = 1:length(models_to_fit)
         ml = models_to_fit{mi};
@@ -1411,10 +1535,10 @@ parfor ci = 1:n_unique_clusters
         
         % Build design matrix
         if strcmp(ml, 'Selected')
-            [X, col_names] = glm_helpers.assemble_design_matrix_selected(B_speed_cl, B_tf_cl, B_onset_cl, ...
+            [X, col_names] = assemble_design_matrix_selected(B_speed_cl, B_tf_cl, B_onset_cl, ...
                 sf_v, or_v, selected_vars, sf_ref_levels, or_ref_levels);
         else
-            [X, col_names] = glm_helpers.assemble_design_matrix(B_speed_cl, B_tf_cl, B_onset_cl, ...
+            [X, col_names] = assemble_design_matrix(B_speed_cl, B_tf_cl, B_onset_cl, ...
                 sf_v, or_v, ml);
         end
         
@@ -1434,7 +1558,7 @@ parfor ci = 1:n_unique_clusters
         cl_result.models.(ml).skipped = false;
         
         % Fit on full data
-        res = glm_helpers.fit_poisson_glm(X, y, offset, lambda);
+        res = fit_poisson_glm(X, y, offset, lambda);
         
         cl_result.models.(ml).aic = res.aic;
         cl_result.models.(ml).bic = res.bic;
@@ -1451,12 +1575,19 @@ parfor ci = 1:n_unique_clusters
         
         % Cross-validate (except for Selected which we already have from forward selection)
         if ~strcmp(ml, 'Selected')
-            [~, cv_bps, ~, cv_predicted] = glm_helpers.cross_validate_glm(X, y, offset, fold_ids, lambda);
+            [~, cv_bps, ~, cv_predicted] = cross_validate_glm(X, y, offset, fold_ids, lambda);
             cl_result.models.(ml).cv_bps = cv_bps;
         else
             % For Selected, refit to get CV predictions for plotting
-            [~, ~, ~, cv_predicted] = glm_helpers.cross_validate_glm(X, y, offset, fold_ids, lambda);
+            [~, ~, ~, cv_predicted] = cross_validate_glm(X, y, offset, fold_ids, lambda);
             cl_result.models.(ml).cv_bps = selected_cv_bps;
+        end
+        
+        % Store coefficients
+        n_beta = length(res.beta);
+        for ki = 1:n_beta
+            cl_coefficients{end+1} = {char(pid), cid, gt_tag, ml, col_names{ki}, ...
+                res.beta(ki), res.se(ki)}; %#ok<AGROW>
         end
         
         % Store predictions
@@ -1469,6 +1600,8 @@ parfor ci = 1:n_unique_clusters
         cl_result.models.(ml).se = res.se;
         cl_result.models.(ml).col_names = col_names;
     end
+    
+    cl_result.coefficients = cl_coefficients;
     
     % --- Compute delta comparisons ---
     cl_result.delta_bps_selected_vs_null = cl_result.Selected_cv_bps - cl_result.Null_cv_bps;
@@ -1503,6 +1636,9 @@ end
 fprintf('Parallel GLM fitting complete. Collecting results...\n');
 
 % === Collect results from parfor into results struct ===
+all_selection_history_flat = {};
+all_coefficients = {};
+
 for ci = 1:n_unique_clusters
     cl_result = parfor_results{ci};
     gt_tag = 'time';
@@ -1530,13 +1666,13 @@ for ci = 1:n_unique_clusters
     results.(gt_tag).Additive_cv_bps(ci) = cl_result.Additive_cv_bps;
     results.(gt_tag).FullInteraction_cv_bps(ci) = cl_result.FullInteraction_cv_bps;
     
-    results.(gt_tag).is_speed_tuned(ci) = cl_result.is_speed_tuned;
+    results.(gt_tag).is_spprofileeed_tuned(ci) = cl_result.is_spprofileeed_tuned;
     results.(gt_tag).is_tf_tuned(ci) = cl_result.is_tf_tuned;
     results.(gt_tag).is_sf_tuned(ci) = cl_result.is_sf_tuned;
     results.(gt_tag).is_or_tuned(ci) = cl_result.is_or_tuned;
-    results.(gt_tag).has_speed_x_tf(ci) = cl_result.has_speed_x_tf;
-    results.(gt_tag).has_speed_x_sf(ci) = cl_result.has_speed_x_sf;
-    results.(gt_tag).has_speed_x_or(ci) = cl_result.has_speed_x_or;
+    results.(gt_tag).has_spprofileeed_x_tf(ci) = cl_result.has_spprofileeed_x_tf;
+    results.(gt_tag).has_spprofileeed_x_sf(ci) = cl_result.has_spprofileeed_x_sf;
+    results.(gt_tag).has_spprofileeed_x_or(ci) = cl_result.has_spprofileeed_x_or;
     results.(gt_tag).has_tf_x_sf(ci) = cl_result.has_tf_x_sf;
     results.(gt_tag).has_tf_x_or(ci) = cl_result.has_tf_x_or;
     results.(gt_tag).has_sf_x_or(ci) = cl_result.has_sf_x_or;
@@ -1576,7 +1712,16 @@ for ci = 1:n_unique_clusters
             end
         end
     end
+    
+    % Collect selection history
+    all_selection_history_flat = [all_selection_history_flat; cl_result.selection_history_csv]; %#ok<AGROW>
+    
+    % Collect coefficients
+    all_coefficients = [all_coefficients; cl_result.coefficients(:)]; %#ok<AGROW>
 end
+
+% Rename for backward compatibility
+all_selection_history = all_selection_history_flat;
 
 fprintf('\n--- Forward selection complete ---\n');
 
@@ -1602,8 +1747,8 @@ for gt = 1:length(glm_types)
     
     % Variable inclusion rates (main effects)
     fprintf('Variable inclusion rates (forward selection):\n');
-    fprintf('  Speed:    %d (%.1f%%)\n', sum(results.(gt_tag).is_speed_tuned), ...
-        100*sum(results.(gt_tag).is_speed_tuned)/n_unique_clusters);
+    fprintf('  Speed:    %d (%.1f%%)\n', sum(results.(gt_tag).is_spprofileeed_tuned), ...
+        100*sum(results.(gt_tag).is_spprofileeed_tuned)/n_unique_clusters);
     fprintf('  TF:       %d (%.1f%%)\n', sum(results.(gt_tag).is_tf_tuned), ...
         100*sum(results.(gt_tag).is_tf_tuned)/n_unique_clusters);
     fprintf('  SF:       %d (%.1f%%)\n', sum(results.(gt_tag).is_sf_tuned), ...
@@ -1613,12 +1758,12 @@ for gt = 1:length(glm_types)
     
     % Interaction inclusion rates
     fprintf('Interaction inclusion rates:\n');
-    fprintf('  Speed x TF: %d (%.1f%%)\n', sum(results.(gt_tag).has_speed_x_tf), ...
-        100*sum(results.(gt_tag).has_speed_x_tf)/n_unique_clusters);
-    fprintf('  Speed x SF: %d (%.1f%%)\n', sum(results.(gt_tag).has_speed_x_sf), ...
-        100*sum(results.(gt_tag).has_speed_x_sf)/n_unique_clusters);
-    fprintf('  Speed x OR: %d (%.1f%%)\n', sum(results.(gt_tag).has_speed_x_or), ...
-        100*sum(results.(gt_tag).has_speed_x_or)/n_unique_clusters);
+    fprintf('  Speed x TF: %d (%.1f%%)\n', sum(results.(gt_tag).has_spprofileeed_x_tf), ...
+        100*sum(results.(gt_tag).has_spprofileeed_x_tf)/n_unique_clusters);
+    fprintf('  Speed x SF: %d (%.1f%%)\n', sum(results.(gt_tag).has_spprofileeed_x_sf), ...
+        100*sum(results.(gt_tag).has_spprofileeed_x_sf)/n_unique_clusters);
+    fprintf('  Speed x OR: %d (%.1f%%)\n', sum(results.(gt_tag).has_spprofileeed_x_or), ...
+        100*sum(results.(gt_tag).has_spprofileeed_x_or)/n_unique_clusters);
     fprintf('  TF x SF:    %d (%.1f%%)\n', sum(results.(gt_tag).has_tf_x_sf), ...
         100*sum(results.(gt_tag).has_tf_x_sf)/n_unique_clusters);
     fprintf('  TF x OR:    %d (%.1f%%)\n', sum(results.(gt_tag).has_tf_x_or), ...
@@ -1644,7 +1789,7 @@ end
 
 % Summary statistics for paper
 fprintf('\n=== Summary Statistics for Paper ===\n');
-n_speed_tuned = sum(results.time.is_speed_tuned);
+n_speed_tuned = sum(results.time.is_spprofileeed_tuned);
 n_tf_tuned = sum(results.time.is_tf_tuned);
 n_sf_tuned = sum(results.time.is_sf_tuned);
 n_or_tuned = sum(results.time.is_or_tuned);
@@ -1662,12 +1807,391 @@ fprintf('  Has interaction: %d/%d (%.1f%%)\n', n_has_interaction, n_unique_clust
 %  ====================================================================
 fprintf('\n--- Generating population figures ---\n');
 
-% --- Figure 2: Forward Selection Summary ---
-% Uses glm_plotting module for cleaner code organization
-fig2 = glm_plotting.plot_forward_selection_summary(results, n_unique_clusters, classification_threshold);
+% --- Figure 2: Forward Selection Summary (Updated to match printed output) ---
+% Panel 1: Model complexity distribution (bar chart showing 0, 1, 2, 3, 4+ vars)
+% Panel 2: Variable inclusion rates (main effects from forward selection)
+% Panel 3: Interaction inclusion rates (breakdown by interaction type)
+% Panel 4: Dominant modulator per neuron (pie chart from component importance)
+fig2 = figure('Position', [50 50 1800 500], 'Name', 'Forward Selection Summary');
+
+for gt = 1:1  % Only time-bin GLM now
+    gt_tag = glm_types{gt};
+    gt_label = glm_type_labels{gt};
+    
+    n_total = n_unique_clusters;
+    
+    % Get forward selection results
+    n_vars = results.(gt_tag).n_selected_vars;
+    is_spprofiled = results.(gt_tag).is_spprofileeed_tuned;
+    is_tf = results.(gt_tag).is_tf_tuned;
+    is_sf = results.(gt_tag).is_sf_tuned;
+    is_or = results.(gt_tag).is_or_tuned;
+    has_int = results.(gt_tag).has_interaction;
+    
+    % Get interaction breakdown
+    has_spprofiled_tf = results.(gt_tag).has_spprofileeed_x_tf;
+    has_spprofiled_sf = results.(gt_tag).has_spprofileeed_x_sf;
+    has_spprofiled_or = results.(gt_tag).has_spprofileeed_x_or;
+    has_tf_sf = results.(gt_tag).has_tf_x_sf;
+    has_tf_or = results.(gt_tag).has_tf_x_or;
+    has_sf_or = results.(gt_tag).has_sf_x_or;
+    
+    % --- Panel 1: Model Complexity Distribution (Stacked Bar by Model Type) ---
+    subplot(1, 3, 1);
+    
+    % Define colors for main effects (used consistently throughout this figure)
+    % Color scheme: Speed=green, SF=yellow, TF=orange, OR=red, Interactions=blue
+    color_speed = [0.17 0.63 0.17];   % Green
+    color_tf = [1.0 0.50 0.05];       % Orange
+    color_sf = [0.95 0.85 0.10];      % Yellow
+    color_or = [0.84 0.15 0.16];      % Red
+    color_null = [0.75 0.75 0.75];    % Light gray for Null
+    color_4plus = [0.35 0.35 0.35];   % Dark gray for 4+
+    color_int = [0.20 0.40 0.80];     % Blue for interactions
+    
+    % Get selected variables for each neuron
+    selected_vars_list = results.(gt_tag).selected_vars;
+    
+    % Helper function to darken color for interaction terms
+    darken = @(c) max(c * 0.65, 0);
+    
+    % Interaction term names and their colors (blue variations)
+    interaction_info = containers.Map();
+    interaction_info('Speed_x_TF') = struct('label', 'SxT', 'color', [0.12 0.47 0.71]);    % Medium blue
+    interaction_info('Speed_x_SF') = struct('label', 'SxSF', 'color', [0.26 0.58 0.85]);   % Light blue
+    interaction_info('Speed_x_OR') = struct('label', 'SxO', 'color', [0.05 0.30 0.55]);    % Dark blue
+    interaction_info('TF_x_SF') = struct('label', 'TxSF', 'color', [0.40 0.60 0.80]);      % Sky blue
+    interaction_info('TF_x_OR') = struct('label', 'TxO', 'color', [0.15 0.40 0.65]);       % Steel blue
+    interaction_info('SF_x_OR') = struct('label', 'SFxO', 'color', [0.30 0.50 0.75]);      % Slate blue
+    
+    % Main effect info (consistent colors)
+    main_effect_info = containers.Map();
+    main_effect_info('Speed') = struct('label', 'Spd', 'color', color_speed);
+    main_effect_info('TF') = struct('label', 'TF', 'color', color_tf);
+    main_effect_info('SF') = struct('label', 'SF', 'color', color_sf);
+    main_effect_info('OR') = struct('label', 'OR', 'color', color_or);
+    
+    all_var_names = {'Speed', 'TF', 'SF', 'OR', 'Speed_x_TF', 'Speed_x_SF', 'Speed_x_OR', 'TF_x_SF', 'TF_x_OR', 'SF_x_OR'};
+    
+    % Build a catalog of unique model types found in the data
+    % Key = sorted string of selected vars, Value = count
+    model_type_counts = containers.Map('KeyType', 'char', 'ValueType', 'double');
+    model_type_complexity = containers.Map('KeyType', 'char', 'ValueType', 'double');
+    
+    for ni = 1:length(selected_vars_list)
+        sv = selected_vars_list{ni};
+        if isempty(sv)
+            sv = {};
+        end
+        
+        % Total complexity = total number of selected variables
+        n_total_vars = length(sv);
+        
+        % Create canonical key (sorted variable names)
+        if isempty(sv)
+            model_key = 'Null';
+        else
+            model_key = strjoin(sort(sv), '+');
+        end
+        
+        % Count this model type
+        if isKey(model_type_counts, model_key)
+            model_type_counts(model_key) = model_type_counts(model_key) + 1;
+        else
+            model_type_counts(model_key) = 1;
+            model_type_complexity(model_key) = n_total_vars;
+        end
+    end
+    
+    % Get unique model types and their counts
+    model_keys = keys(model_type_counts);
+    n_model_types = length(model_keys);
+    
+    % Assign colors based on model composition
+    model_colors = zeros(n_model_types, 3);
+    model_labels = cell(n_model_types, 1);
+    model_complexity_arr = zeros(n_model_types, 1);
+    model_counts = zeros(n_model_types, 1);
+    model_main_effects = cell(n_model_types, 1);  % Track constituent main effects for striping
+    
+    for mi = 1:n_model_types
+        mk = model_keys{mi};
+        model_counts(mi) = model_type_counts(mk);
+        model_complexity_arr(mi) = model_type_complexity(mk);
+        
+        if strcmp(mk, 'Null')
+            model_colors(mi, :) = color_null;
+            model_labels{mi} = 'Null';
+            model_main_effects{mi} = {};
+        else
+            % Parse variables in model
+            vars_in_model = strsplit(mk, '+');
+            main_effects = vars_in_model(ismember(vars_in_model, {'Speed', 'TF', 'SF', 'OR'}));
+            interactions = vars_in_model(~ismember(vars_in_model, {'Speed', 'TF', 'SF', 'OR'}));
+            model_main_effects{mi} = main_effects;  % Store for striping
+            
+            % Build short label
+            label_parts = {};
+            for vi = 1:length(main_effects)
+                me = main_effects{vi};
+                info = main_effect_info(me);
+                label_parts{end+1} = info.label; %#ok<AGROW>
+            end
+            for vi = 1:length(interactions)
+                int_name = interactions{vi};
+                if isKey(interaction_info, int_name)
+                    info = interaction_info(int_name);
+                    label_parts{end+1} = info.label; %#ok<AGROW>
+                end
+            end
+            model_labels{mi} = strjoin(label_parts, '+');
+            
+            % Assign color based on model composition (explicit lookup)
+            % Create a canonical key from sorted main effects
+            sorted_main = sort(main_effects);
+            main_key = strjoin(sorted_main, '+');
+            has_int = ~isempty(interactions);
+            
+            % Pre-defined distinct colors for each combination
+            % Single variables - pure colors
+            combo_colors = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            combo_colors('Speed') = color_speed;
+            combo_colors('TF') = color_tf;
+            combo_colors('SF') = color_sf;
+            combo_colors('OR') = color_or;
+            
+            % 2-variable combos - blue variations (will be striped with constituent colors)
+            combo_colors('Speed+TF') = [0.12 0.47 0.71];    % Medium blue
+            combo_colors('SF+Speed') = [0.26 0.58 0.85];    % Light blue
+            combo_colors('OR+Speed') = [0.05 0.30 0.55];    % Dark blue
+            combo_colors('SF+TF') = [0.40 0.60 0.80];       % Sky blue
+            combo_colors('OR+TF') = [0.15 0.40 0.65];       % Steel blue
+            combo_colors('OR+SF') = [0.30 0.50 0.75];       % Slate blue
+            
+            % 3-variable combos - lighter blue shades (will be striped with constituent colors)
+            combo_colors('SF+Speed+TF') = [0.50 0.70 0.90]; % Light blue
+            combo_colors('OR+Speed+TF') = [0.35 0.55 0.80]; % Medium-light blue
+            combo_colors('OR+SF+Speed') = [0.45 0.65 0.85]; % Soft blue
+            combo_colors('OR+SF+TF') = [0.55 0.75 0.92];    % Pale blue
+            
+            % 4-variable combo
+            combo_colors('OR+SF+Speed+TF') = color_4plus;
+            
+            % Look up color
+            if isKey(combo_colors, main_key)
+                base_color = combo_colors(main_key);
+            else
+                % Fallback: use gray
+                base_color = [0.5 0.5 0.5];
+            end
+            
+            % If has interactions, make slightly darker and add edge
+            if has_int
+                model_colors(mi, :) = darken(base_color);
+            else
+                model_colors(mi, :) = base_color;
+            end
+        end
+    end
+    
+    % Map complexity to bar position (0->1, 1->2, 2->3, 3->4, 4+->5)
+    bar_positions = min(model_complexity_arr + 1, 5);
+    
+    % Build stacked bar data: rows = complexity levels (1-5), cols = model types
+    max_subtypes = 15;  % Allow many subtypes per complexity
+    bar_data = zeros(5, max_subtypes);
+    bar_colors_mat = zeros(5, max_subtypes, 3);
+    
+    % Track which model types go where for legend and striping
+    legend_info = struct('label', {}, 'color', {}, 'count', {}, 'main_effects', {});
+    
+    % Track bar segment positions for striping
+    bar_segment_info = struct('clevel', {}, 'col_idx', {}, 'main_effects', {}, 'model_idx', {});
+    
+    % Assign counts to bar_data matrix by complexity level
+    subtype_idx = ones(5, 1);  % Track column index for each complexity level
+    for mi = 1:n_model_types
+        clevel = bar_positions(mi);
+        col_idx = subtype_idx(clevel);
+        if col_idx <= max_subtypes && model_counts(mi) > 0
+            bar_data(clevel, col_idx) = model_counts(mi);
+            bar_colors_mat(clevel, col_idx, :) = model_colors(mi, :);
+            subtype_idx(clevel) = subtype_idx(clevel) + 1;
+            
+            % Track segment info for striping
+            bar_segment_info(end+1) = struct('clevel', clevel, 'col_idx', col_idx, ...
+                'main_effects', {model_main_effects{mi}}, 'model_idx', mi);
+            
+            % Add to legend
+            legend_info(end+1) = struct('label', model_labels{mi}, ...
+                'color', model_colors(mi, :), 'count', model_counts(mi), ...
+                'main_effects', {model_main_effects{mi}});
+        end
+    end
+    
+    % Create stacked bar plot
+    complexity_labels = {'Null', '1 var', '2 vars', '3 vars', '4+ vars'};
+    
+    b_stack = bar(bar_data, 'stacked', 'EdgeColor', [0.3 0.3 0.3], 'LineWidth', 0.5);
+    
+    % Apply colors to each stack segment
+    for si = 1:size(bar_data, 2)
+        if si <= length(b_stack)
+            b_stack(si).FaceColor = 'flat';
+            for ci_bar = 1:5
+                b_stack(si).CData(ci_bar, :) = squeeze(bar_colors_mat(ci_bar, si, :))';
+            end
+        end
+    end
+    
+    set(gca, 'XTick', 1:5, 'XTickLabel', complexity_labels, 'XTickLabelRotation', 30, 'FontSize', 8);
+    ylabel('# Neurons');
+    title('Model Complexity (Forward Selection)', 'FontSize', 10);
+    set(gca, 'box', 'off');
+    hold on;
+    
+    % Add diagonal stripes for multi-variable models (>=2 main effects)
+    bar_width = 0.8;  % Default MATLAB bar width
+    for seg_i = 1:length(bar_segment_info)
+        seg = bar_segment_info(seg_i);
+        me = seg.main_effects;
+        
+        if length(me) >= 2  % Only stripe multi-variable models
+            % Get bar position and segment boundaries
+            x_center = seg.clevel;
+            x_left = x_center - bar_width/2;
+            x_right = x_center + bar_width/2;
+            
+            % Calculate cumulative heights for this complexity level
+            cum_heights = cumsum(bar_data(seg.clevel, :));
+            if seg.col_idx == 1
+                y_bottom = 0;
+            else
+                y_bottom = cum_heights(seg.col_idx - 1);
+            end
+            y_top = cum_heights(seg.col_idx);
+            
+            if y_top > y_bottom  % Only draw if segment has height
+                % Get colors for each main effect
+                me_colors = zeros(length(me), 3);
+                for mei = 1:length(me)
+                    me_colors(mei, :) = main_effect_info(me{mei}).color;
+                end
+                
+                % Draw alternating horizontal bands within the bar segment
+                n_effects = length(me);
+                seg_height = y_top - y_bottom;
+                band_height = seg_height / (n_effects * 3);  % Multiple thin bands
+                
+                y_pos = y_bottom;
+                band_idx = 1;
+                while y_pos < y_top
+                    clr_idx = mod(band_idx - 1, n_effects) + 1;
+                    band_top = min(y_pos + band_height, y_top);
+                    
+                    % Draw a colored band
+                    patch([x_left, x_right, x_right, x_left], ...
+                          [y_pos, y_pos, band_top, band_top], ...
+                          me_colors(clr_idx, :), 'EdgeColor', 'none', 'FaceAlpha', 0.85);
+                    
+                    y_pos = band_top;
+                    band_idx = band_idx + 1;
+                end
+            end
+        end
+    end
+    
+    % Compute totals for labels
+    complexity_totals = sum(bar_data, 2);
+    
+    % Add count and percentage labels on top
+    for ki = 1:length(complexity_totals)
+        if complexity_totals(ki) > 0
+            text(ki, complexity_totals(ki) + max(complexity_totals)*0.03, ...
+                sprintf('%d\n(%.0f%%)', complexity_totals(ki), 100*complexity_totals(ki)/n_total), ...
+                'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 7);
+        end
+    end
+    ylim([0 max(complexity_totals)*1.25]);
+    
+    % Build legend with striped icons for multi-variable models
+    legend_handles = [];
+    legend_labels_final = {};
+    for li = 1:length(legend_info)
+        lbl = legend_info(li).label;
+        cnt = legend_info(li).count;
+        me = legend_info(li).main_effects;
+        
+        if length(me) <= 1
+            % Single color square for null or single-variable models
+            clr = legend_info(li).color;
+            h = scatter(nan, nan, 50, clr, 's', 'filled', 'MarkerEdgeColor', [0.3 0.3 0.3]);
+        else
+            % For multi-var models, use first main effect color with thick edge of second color
+            clr1 = main_effect_info(me{1}).color;
+            clr2 = main_effect_info(me{2}).color;
+            h = scatter(nan, nan, 50, clr1, 's', 'filled', 'MarkerEdgeColor', clr2, 'LineWidth', 2);
+        end
+        legend_handles = [legend_handles; h]; %#ok<AGROW>
+        legend_labels_final{end+1} = sprintf('%s (%d)', lbl, cnt); %#ok<AGROW>
+    end
+    if ~isempty(legend_handles)
+        legend(legend_handles, legend_labels_final, 'Location', 'northeast', 'FontSize', 5);
+    end
+    hold off;
+    
+    % --- Panel 2: Variable Inclusion Rates (Main Effects) ---
+    subplot(1, 3, 2);
+    main_effect_counts = [sum(is_spprofiled); sum(is_tf); sum(is_sf); sum(is_or); sum(has_int)];
+    main_effect_labels = {'Speed', 'TF', 'SF', 'OR', 'Any Interact.'};
+    % Use consistent colors with Panel 1
+    main_effect_colors = [color_speed; color_tf; color_sf; color_or; color_int];
+    
+    bh = barh(main_effect_counts, 'FaceColor', 'flat', 'EdgeColor', 'none');
+    bh.CData = main_effect_colors;
+    set(gca, 'YTick', 1:5, 'YTickLabel', main_effect_labels, 'FontSize', 9);
+    xlabel('# Neurons');
+    
+    % Add count and percentage labels
+    max_main = max(main_effect_counts);
+    for ki = 1:length(main_effect_counts)
+        text(main_effect_counts(ki) + max_main*0.02, ki, ...
+            sprintf('%d (%.0f%%)', main_effect_counts(ki), 100*main_effect_counts(ki)/n_total), ...
+            'VerticalAlignment', 'middle', 'FontSize', 8);
+    end
+    xlim([0 max_main*1.35]);
+    title(sprintf('Variable Inclusion (n=%d)', n_total), 'FontSize', 10);
+    set(gca, 'box', 'off');
+    
+    % --- Panel 3: Interaction Breakdown ---
+    subplot(1, 3, 3);
+    int_counts = [sum(has_spprofiled_tf); sum(has_spprofiled_sf); sum(has_spprofiled_or); ...
+                  sum(has_tf_sf); sum(has_tf_or); sum(has_sf_or)];
+    int_labels = {'Spd x TF', 'Spd x SF', 'Spd x OR', 'TF x SF', 'TF x OR', 'SF x OR'};
+    int_colors = [0.9 0.2 0.2; 0.8 0.5 0.2; 0.6 0.2 0.6; 0.5 0.8 0.2; 0.2 0.5 0.8; 0.9 0.6 0.6];
+    
+    bh_int = barh(int_counts, 'FaceColor', 'flat', 'EdgeColor', 'none');
+    bh_int.CData = int_colors;
+    set(gca, 'YTick', 1:6, 'YTickLabel', int_labels, 'FontSize', 9);
+    xlabel('# Neurons');
+    
+    % Add count and percentage labels
+    max_int = max(max(int_counts), 1);  % Avoid division by zero
+    for ki = 1:length(int_counts)
+        text(int_counts(ki) + max_int*0.02, ki, ...
+            sprintf('%d (%.0f%%)', int_counts(ki), 100*int_counts(ki)/n_total), ...
+            'VerticalAlignment', 'middle', 'FontSize', 8);
+    end
+    xlim([0 max_int*1.4]);
+    title('Interaction Breakdown', 'FontSize', 10);
+    set(gca, 'box', 'off');
+end
+
+sgtitle(sprintf('Forward Selection Results (threshold: \\Delta bps > %.3f)', classification_threshold), ...
+    'FontSize', 12, 'FontWeight', 'bold');
 
 if save_figs
-    glm_plotting.save_figure(fig2, fullfile(ctl.figs.curr_dir, 'model_selection_classification_summary.png'));
+    print(fig2, fullfile(ctl.figs.curr_dir, 'model_selection_classification_summary.png'), '-dpng', '-r300');
     fprintf('  Saved model_selection_classification_summary.png\n');
 end
 
@@ -1682,7 +2206,7 @@ for gt = 1:1  % Only time-bin GLM now
     gt_label = glm_type_labels{gt};
     
     n_total = n_unique_clusters;
-    n_spd = sum(results.(gt_tag).is_speed_tuned);
+    n_spd = sum(results.(gt_tag).is_spprofileeed_tuned);
     n_tf = sum(results.(gt_tag).is_tf_tuned);
     n_sf = sum(results.(gt_tag).is_sf_tuned);
     n_or = sum(results.(gt_tag).is_or_tuned);
@@ -1697,6 +2221,396 @@ for gt = 1:1  % Only time-bin GLM now
 end
 
 fprintf('====================================================================\n');
+
+%% ====================================================================
+%  Section 7b: Speed-Profile Cross-Validation
+%  ====================================================================
+%  Split data by the two speed profiles (first vs second half of the
+%  motion cloud sequence) and perform 2-fold cross-validation.
+%  Train the best selected GLM on one speed profile, test on the other.
+%  Compare to standard 5-fold CV to assess generalization across profiles.
+fprintf('\n--- Speed-Profile Cross-Validation (2-fold: profile 1 vs profile 2) ---\n');
+
+% --- Determine speed profile for each trial ---
+% The mc_sequence contains two repetitions of the stimulus set.
+% First half of trial IDs = speed profile 1, second half = speed profile 2.
+n_total_seq = length(mc_sequence);
+sp_midpoint = floor(n_total_seq / 2);
+fprintf('  Total trials in sequence: %d | Midpoint: %d\n', n_total_seq, sp_midpoint);
+fprintf('  Profile 1: trial_id 1–%d | Profile 2: trial_id %d–%d\n', ...
+    sp_midpoint, sp_midpoint + 1, n_total_seq);
+
+% Pre-extract variables for parfor compatibility
+sp_all_selected_vars = results.time.selected_vars;
+
+% Output storage
+sp_cv_out = cell(n_unique_clusters, 1);
+
+fprintf('  Fitting speed-profile CV in parallel (%d clusters)...\n', n_unique_clusters);
+parfor ci = 1:n_unique_clusters
+    pid = unique_pids(ci);
+    cid = unique_cids(ci);
+
+    idx = T_master_time.probe_id == pid & T_master_time.cluster_id == cid;
+    T_cl = T_master_time(idx, :);
+
+    r = struct();
+    r.valid = false;
+    r.sel_spprofile = NaN;   r.null_spprofile = NaN;   r.delta_spprofile = NaN;
+    r.sel_standard = NaN;  r.null_standard = NaN;   r.delta_standard = NaN;
+    r.has_spprofileeed = false;
+    r.speed_spprofileprofile = NaN;  r.speed_standard = NaN;
+    r.n_profile1 = 0;         r.n_profile2 = 0;
+
+    if height(T_cl) < 10
+        sp_cv_out{ci} = r;
+        continue;
+    end
+
+    sel_vars = sp_all_selected_vars{ci};
+
+    % --- Speed-profile fold assignment (2 folds) ---
+    sp_fold = ones(height(T_cl), 1);
+    sp_fold(T_cl.trial_id > sp_midpoint) = 2;
+    r.n_profile1 = sum(sp_fold == 1);
+    r.n_profile2 = sum(sp_fold == 2);
+
+    if r.n_profile1 < 5 || r.n_profile2 < 5
+        sp_cv_out{ci} = r;
+        continue;
+    end
+
+    % --- Standard CV folds (5-fold, condition-stratified) for comparison ---
+    unique_trials = unique(T_cl(:, {'trial_id', 'condition'}), 'rows');
+    n_tr = height(unique_trials);
+    trial_fold = zeros(n_tr, 1);
+    conds_list = unique(unique_trials.condition);
+    for cond_i = 1:length(conds_list)
+        c_idx = find(unique_trials.condition == conds_list(cond_i));
+        n_c = length(c_idx);
+        perm_idx = randperm(n_c);
+        trial_fold(c_idx(perm_idx)) = mod((1:n_c)' - 1, n_cv_folds) + 1;
+    end
+    [~, ~, row_to_trial] = unique(T_cl(:, {'trial_id', 'condition'}), 'rows');
+    std_fold = trial_fold(row_to_trial);
+
+    % --- Prepare features ---
+    speed_v = T_cl.speed;
+    tf_v = T_cl.tf;
+    sf_v = T_cl.sf; sf_v(isnan(sf_v)) = 0;
+    or_v = T_cl.orientation; or_v(isnan(or_v)) = 0;
+    tso_v = T_cl.time_since_onset;
+    y = double(T_cl.spike_count);
+    offset_v = log(time_bin_width) * ones(height(T_cl), 1);
+
+    B_spd = make_raised_cosine_basis(speed_v, n_speed_bases, speed_range(1), speed_range(2));
+    B_tf  = make_raised_cosine_basis(tf_v, n_tf_bases, tf_range(1), tf_range(2));
+    B_ons = make_onset_kernel_basis(tso_v, n_onset_bases, onset_range(2));
+
+    sf_ref = sort(unique(sf_v(sf_v ~= 0)));
+    or_ref = sort(unique(or_v(or_v ~= 0)));
+
+    % --- Null model (intercept + onset kernel) ---
+    [X_null, ~] = assemble_design_matrix_selected(B_spd, B_tf, B_ons, ...
+        sf_v, or_v, {}, sf_ref, or_ref);
+    [~, r.null_spprofile]  = cross_validate_glm(X_null, y, offset_v, sp_fold,  0);
+    [~, r.null_standard] = cross_validate_glm(X_null, y, offset_v, std_fold, 0);
+
+    % --- Selected model ---
+    [X_sel, ~] = assemble_design_matrix_selected(B_spd, B_tf, B_ons, ...
+        sf_v, or_v, sel_vars, sf_ref, or_ref);
+    if size(X_sel, 2) >= height(T_cl)
+        sp_cv_out{ci} = r;
+        continue;
+    end
+    [~, r.sel_spprofile]  = cross_validate_glm(X_sel, y, offset_v, sp_fold,  0);
+    [~, r.sel_standard] = cross_validate_glm(X_sel, y, offset_v, std_fold, 0);
+
+    r.delta_spprofile  = r.sel_spprofile  - r.null_spprofile;
+    r.delta_standard = r.sel_standard - r.null_standard;
+
+    % --- Speed contribution (selected model WITH vs WITHOUT speed) ---
+    r.has_spprofileeed = ismember('Speed', sel_vars);
+    if r.has_spprofileeed
+        no_speed_vars = sel_vars(~contains(sel_vars, 'Speed'));
+        [X_no_spd, ~] = assemble_design_matrix_selected(B_spd, B_tf, B_ons, ...
+            sf_v, or_v, no_speed_vars, sf_ref, or_ref);
+        if size(X_no_spd, 2) < height(T_cl)
+            [~, sp_no_spd_bps]  = cross_validate_glm(X_no_spd, y, offset_v, sp_fold,  0);
+            [~, std_no_spd_bps] = cross_validate_glm(X_no_spd, y, offset_v, std_fold, 0);
+            r.speed_spprofileprofile  = r.sel_spprofile  - sp_no_spd_bps;
+            r.speed_standard = r.sel_standard - std_no_spd_bps;
+        end
+    end
+
+    r.valid = true;
+    sp_cv_out{ci} = r;
+end
+
+% --- Collect results ---
+sp_valid       = false(n_unique_clusters, 1);
+delta_spprofile    = NaN(n_unique_clusters, 1);   % speed-profile CV delta (selected - null)
+delta_standard   = NaN(n_unique_clusters, 1);   % standard CV delta (selected - null)
+spd_spprofileprofile      = NaN(n_unique_clusters, 1);   % speed contribution, speed-profile CV
+spd_standard     = NaN(n_unique_clusters, 1);   % speed contribution, standard CV
+sp_has_spprofileeed   = false(n_unique_clusters, 1);
+
+for ci = 1:n_unique_clusters
+    r = sp_cv_out{ci};
+    sp_valid(ci)     = r.valid;
+    delta_spprofile(ci)  = r.delta_spprofile;
+    delta_standard(ci) = r.delta_standard;
+    sp_has_spprofileeed(ci) = r.has_spprofileeed;
+    spd_spprofileprofile(ci)    = r.speed_spprofileprofile;
+    spd_standard(ci)   = r.speed_standard;
+end
+
+n_sp_valid = sum(sp_valid);
+n_sp_speed = sum(sp_valid & sp_has_spprofileeed);
+fprintf('  Speed-profile CV complete: %d / %d clusters valid\n', n_sp_valid, n_unique_clusters);
+fprintf('  Clusters with speed selected: %d / %d (%.0f%%)\n', ...
+    n_sp_speed, n_sp_valid, 100*n_sp_speed/n_sp_valid);
+
+% --- Summary statistics ---
+% Helper: finite-only median and mean (guards against Inf from zero-spike folds)
+fin = @(x) x(isfinite(x));
+
+v  = sp_valid;
+vs = sp_valid & sp_has_spprofileeed;
+
+% Build arrays of finite values for each metric
+d_standard  = fin(delta_standard(v));   % total delta, standard CV
+d_spprofileprofile = fin(delta_spprofile(v)); % total delta, speed-profile CV
+change = fin(delta_spprofile(v) - delta_standard(v));  % per-cluster absolute change
+
+s_standard  = fin(spd_standard(vs));   % speed contribution, standard CV
+s_spprofileprofile = fin(spd_spprofileprofile(vs)); % speed contribution, speed-profile CV
+
+pct_retained_total = 100 * median(d_spprofile) / median(d_standard);
+pct_lost_total     = 100 - pct_retained_total;
+
+fprintf('\n====================================================================\n');
+fprintf('  SPEED-PROFILE CROSS-VALIDATION SUMMARY\n');
+fprintf('====================================================================\n');
+fprintf('\n  How well does the selected GLM generalise across speed profiles?\n');
+fprintf('  Standard 5-fold CV shuffles trials randomly (train/test share the same\n');
+fprintf('  speed distribution). Speed-profile 2-fold CV trains on one full speed\n');
+fprintf('  trajectory and tests on the other — a much stricter generalization test.\n');
+
+% Per-cluster retained fraction: only clusters with positive standard CV delta
+% (ratio is only meaningful when the model beats the null in standard CV).
+pos_t = d_standard > 0;
+pos_s = s_standard > 0;
+ratio_t = d_spprofile(pos_t) ./ d_standard(pos_t);   % speed-profile CV / standard CV, per cluster
+ratio_s = s_spprofile(pos_s) ./ s_standard(pos_s);
+pct_retained_total = 100 * median(ratio_t);
+pct_lost_total     = 100 - pct_retained_total;
+pct_retained_spprofiled   = 100 * median(ratio_s);
+pct_lost_spd       = 100 - pct_retained_spprofiled;
+
+fprintf('\n  --- Total information gain: CV(Selected) − CV(Null)  [bits/spike] ---\n');
+fprintf('  Each dot = one cluster. Value = how much the selected model beats\n');
+fprintf('  the null (intercept + onset) in cross-validated bits/spike.\n');
+fprintf('\n    Standard 5-fold CV:   median = %.4f  (n=%d finite)\n', median(d_standard), numel(d_standard));
+fprintf('    Speed-profile 2-fold: median = %.4f  (n=%d finite)\n', median(d_spprofile),  numel(d_spprofile));
+fprintf('\n    Per-cluster ratio (speed-profile / standard), n=%d clusters with std CV > 0:\n', sum(pos_t));
+fprintf('    Median retained = %.1f%%  |  Median lost = %.1f%%\n', pct_retained_total, pct_lost_total);
+fprintf('    (Ratio computed per cluster, then median taken across clusters)\n');
+fprintf('\n    Per-cluster absolute change (speed-profile − standard):\n');
+fprintf('    median = %.4f  (negative = model loses predictive power across profiles)\n', median(change));
+if median(change) < 0
+    fprintf('    -> Most clusters lose predictive power when tested on a new speed profile.\n');
+else
+    fprintf('    -> Model generalises as well or better across speed profiles.\n');
+end
+
+if any(vs)
+    fprintf('\n  --- Speed unique contribution: CV(Selected) − CV(Selected without Speed)  [bits/spike] ---\n');
+    fprintf('  Speed-tuned clusters only (n=%d). Value = how many bits/spike are\n', numel(s_standard));
+    fprintf('  uniquely explained by the speed variable, under each CV scheme.\n');
+    fprintf('\n    Standard 5-fold CV:   median = %.4f\n', median(s_standard));
+    fprintf('    Speed-profile 2-fold: median = %.4f\n', median(s_spprofile));
+    fprintf('\n    Per-cluster ratio (speed-profile / standard), n=%d clusters with std CV > 0:\n', sum(pos_s));
+    fprintf('    Median retained = %.1f%%  |  Median lost = %.1f%%\n', pct_retained_spprofiled, pct_lost_spd);
+    if pct_retained_spprofiled < 50
+        fprintf('    -> Less than half of speed''s contribution survives across profiles.\n');
+        fprintf('       Speed encoding may be partly driven by within-session trajectory\n');
+        fprintf('       shape or speed history, not purely speed magnitude tuning.\n');
+    elseif pct_retained_spprofiled < 80
+        fprintf('    -> Moderate generalisation: speed magnitude is encoded but some\n');
+        fprintf('       within-session structure also contributes.\n');
+    else
+        fprintf('    -> Strong generalisation: speed tuning is largely profile-independent.\n');
+    end
+end
+fprintf('====================================================================\n');
+
+% --- Figure: Speed-Profile CV — paired plots only, y-axis fixed to [-0.5, 0.5] ---
+ylim_sp = [-0.5, 0.5];
+
+% Build paired arrays: both values must be finite; outliers outside ylim are
+% still drawn but clipped by the fixed axis (count reported in title).
+pair_mask_t = isfinite(delta_standard) & isfinite(delta_spprofile) & v(:);
+xp_t_standard = delta_standard(pair_mask_t);
+xp_t_spprofile  = delta_spprofile(pair_mask_t);
+n_pair_t = sum(pair_mask_t);
+n_out_t  = sum(xp_t_standard < ylim_sp(1) | xp_t_standard > ylim_sp(2) | ...
+               xp_t_spprofile  < ylim_sp(1) | xp_t_spprofile  > ylim_sp(2));
+
+pair_mask_s = isfinite(spd_standard) & isfinite(spd_spprofileprofile) & vs(:);
+xp_s_standard = spd_standard(pair_mask_s);
+xp_s_spprofileprofile  = spd_spprofileprofile(pair_mask_s);
+n_pair_s = sum(pair_mask_s);
+n_out_s  = sum(xp_s_standard < ylim_sp(1) | xp_s_standard > ylim_sp(2) | ...
+               xp_s_spprofileprofile  < ylim_sp(1) | xp_s_spprofileprofile  > ylim_sp(2));
+
+% --- Statistical tests: is the decrease from standard CV to speed-profile CV significant? ---
+%
+% Wilcoxon signed-rank test (one-tailed, H1: standard CV > speed-profile CV).
+% Chosen over paired t-test because bps differences are right-skewed with
+% outliers — Wilcoxon tests the median shift and is robust to those extremes.
+% One-tailed: the hypothesis is directional (speed-profile CV is strictly harder).
+
+% Total delta bps
+[p_wilcox_t, ~, stats_wilcox_t] = signrank(xp_t_standard, xp_t_spprofile, 'tail', 'right');
+
+% Speed contribution (speed-tuned clusters only)
+if any(pair_mask_s)
+    [p_wilcox_s, ~, stats_wilcox_s] = signrank(xp_s_standard, xp_s_spprofileprofile, 'tail', 'right');
+else
+    p_wilcox_s = NaN;
+end
+
+% Helper: format p-value as string for figure annotation
+fmt_p = @(p) ternary(p < 0.001, 'p < 0.001', sprintf('p = %.3f', p));
+
+fprintf('\n  --- Statistical tests (Wilcoxon signed-rank, one-tailed: std CV > speed-profile CV) ---\n');
+fprintf('  Total model delta bps (n=%d pairs):\n', n_pair_t);
+fprintf('    W = %.0f,  %s\n', stats_wilcox_t.signedrank, fmt_p(p_wilcox_t));
+if any(pair_mask_s)
+    fprintf('  Speed contribution (n=%d speed-tuned pairs):\n', n_pair_s);
+    fprintf('    W = %.0f,  %s\n', stats_wilcox_s.signedrank, fmt_p(p_wilcox_s));
+end
+
+% Colours
+col_std_t = [0.55 0.55 0.55];
+col_sp_t  = [0.25 0.45 0.75];
+col_std_s = [0.55 0.55 0.55];
+col_sp_s  = [0.15 0.58 0.15];
+
+% Compute medians used across all three panels
+med_t_standard = median(xp_t_standard);
+med_t_spprofile  = median(xp_t_spprofile);
+med_s_standard = median(xp_s_standard);
+med_s_spprofileprofile  = median(xp_s_spprofileprofile);
+% Per-cluster retained fraction for bar chart.
+% Only clusters where standard CV delta > 0 (ratio only meaningful there).
+% Clipped to [0, 100] so the stacked bar always sums to 100%.
+pos_t_fig = xp_t_standard > 0;
+pos_s_fig = xp_s_standard > 0;
+pct_ret_t = min(100 * median(xp_t_spprofile(pos_t_fig) ./ xp_t_standard(pos_t_fig)), 100);
+pct_ret_s = min(100 * median(xp_s_spprofileprofile(pos_s_fig) ./ xp_s_standard(pos_s_fig)), 100);
+
+fig_sp = figure('Position', [50 100 1400 550], 'Name', 'Speed-Profile Cross-Validation');
+
+% ---- Panel 1: Paired plot — total delta bps ----
+ax1 = subplot(1, 3, 1);
+hold(ax1, 'on');
+for ki = 1:n_pair_t
+    plot(ax1, [1,2], [xp_t_standard(ki), xp_t_spprofile(ki)], '-', ...
+        'Color', [0.75 0.75 0.75 0.35], 'LineWidth', 0.7);
+end
+scatter(ax1, ones(n_pair_t,1),   xp_t_standard, 30, col_std_t, 'filled', 'MarkerFaceAlpha', 0.65);
+scatter(ax1, 2*ones(n_pair_t,1), xp_t_spprofile,  30, col_sp_t,  'filled', 'MarkerFaceAlpha', 0.65);
+plot(ax1, [1,2], [med_t_standard, med_t_spprofile], 'k-', 'LineWidth', 2.5);
+plot(ax1, 1, med_t_standard, 'ko', 'MarkerFaceColor', col_std_t, 'MarkerSize', 9);
+plot(ax1, 2, med_t_spprofile,  'ko', 'MarkerFaceColor', col_sp_t,  'MarkerSize', 9);
+yline(ax1, 0, '--', 'Color', [0.4 0.4 0.4], 'LineWidth', 0.8);
+xlim(ax1, [0.5 2.5]);
+ylim(ax1, ylim_sp);
+set(ax1, 'XTick', [1 2], 'XTickLabel', {'Standard CV', 'Speed-Profile CV'}, ...
+    'box', 'off', 'TickDir', 'out', 'FontSize', 11);
+ylabel(ax1, {'\Delta bps = CV(Selected model) − CV(Null model)', 'bits / spike'}, 'FontSize', 10);
+title(ax1, sprintf('Total model information gain  (n=%d, %d clipped)', n_pair_t, n_out_t), 'FontSize', 11);
+text(ax1, 1.5, ylim_sp(2)*0.88, ...
+    sprintf('Wilcoxon: %s', fmt_p(p_wilcox_t)), ...
+    'HorizontalAlignment', 'center', 'FontSize', 10, 'Color', [0.2 0.2 0.2]);
+hold(ax1, 'off');
+
+% ---- Panel 2: Paired plot — speed unique contribution ----
+if any(pair_mask_s)
+    ax2 = subplot(1, 3, 2);
+    hold(ax2, 'on');
+    for ki = 1:n_pair_s
+        plot(ax2, [1,2], [xp_s_standard(ki), xp_s_spprofileprofile(ki)], '-', ...
+            'Color', [0.75 0.75 0.75 0.35], 'LineWidth', 0.7);
+    end
+    scatter(ax2, ones(n_pair_s,1),   xp_s_standard, 30, col_std_s, 'filled', 'MarkerFaceAlpha', 0.65);
+    scatter(ax2, 2*ones(n_pair_s,1), xp_s_spprofileprofile,  30, col_sp_s,  'filled', 'MarkerFaceAlpha', 0.65);
+    plot(ax2, [1,2], [med_s_standard, med_s_spprofileprofile], 'k-', 'LineWidth', 2.5);
+    plot(ax2, 1, med_s_standard, 'ko', 'MarkerFaceColor', col_std_s, 'MarkerSize', 9);
+    plot(ax2, 2, med_s_spprofileprofile,  'ko', 'MarkerFaceColor', col_sp_s,  'MarkerSize', 9);
+    yline(ax2, 0, '--', 'Color', [0.4 0.4 0.4], 'LineWidth', 0.8);
+    xlim(ax2, [0.5 2.5]);
+    ylim(ax2, ylim_sp);
+    set(ax2, 'XTick', [1 2], 'XTickLabel', {'Standard CV', 'Speed-Profile CV'}, ...
+        'box', 'off', 'TickDir', 'out', 'FontSize', 11);
+    ylabel(ax2, {'\Delta bps = CV(Selected) − CV(Selected without Speed)', 'bits / spike'}, 'FontSize', 10);
+    title(ax2, sprintf('Speed unique contribution  (n=%d speed-tuned, %d clipped)', n_pair_s, n_out_s), 'FontSize', 11);
+    text(ax2, 1.5, ylim_sp(2)*0.88, ...
+        sprintf('Wilcoxon: %s', fmt_p(p_wilcox_s)), ...
+        'HorizontalAlignment', 'center', 'FontSize', 10, 'Color', [0.2 0.2 0.2]);
+    hold(ax2, 'off');
+end
+
+% ---- Panel 3: Stacked bar — retained vs profile-specific (% of standard CV) ----
+% Each bar is normalised to 100% of the standard CV median.
+% Bottom (coloured): the fraction that generalises across speed profiles.
+% Top (light grey):  the fraction that is profile-specific (does not generalise).
+ax3 = subplot(1, 3, 3);
+hold(ax3, 'on');
+
+bar_x      = [1, 2];
+retained   = [pct_ret_t,       pct_ret_s];
+not_gen    = [100 - pct_ret_t, 100 - pct_ret_s];
+
+% Stacked bar: column 1 = retained %, column 2 = profile-specific %
+bar_data = [retained', not_gen'];  % [n_bars × 2]
+bh = bar(ax3, bar_x, bar_data, 0.55, 'stacked', 'EdgeColor', 'none');
+bh(1).FaceColor = 'flat';
+bh(1).CData(1,:) = col_sp_t;
+bh(1).CData(2,:) = col_sp_s;
+bh(2).FaceColor  = [0.88 0.88 0.88];
+
+% Percentage labels inside each segment
+for bi = 1:2
+    ret_val = retained(bi);
+    non_val = not_gen(bi);
+    % Label in retained segment (centred at ret_val/2)
+    text(ax3, bar_x(bi), ret_val / 2, sprintf('%.0f%%', ret_val), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+        'FontSize', 12, 'FontWeight', 'bold', 'Color', 'w');
+    % Label in non-generalising segment (centred in that segment)
+    text(ax3, bar_x(bi), ret_val + non_val / 2, sprintf('%.0f%%', non_val), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+        'FontSize', 12, 'FontWeight', 'bold', 'Color', [0.4 0.4 0.4]);
+end
+
+ylim(ax3, [0 100]);
+set(ax3, 'XTick', bar_x, 'XTickLabel', {'Total model', 'Speed'}, ...
+    'box', 'off', 'TickDir', 'out', 'FontSize', 11);
+ylabel(ax3, {'Median per-cluster ratio: speed-profile CV / standard CV', '(% retained)'}, 'FontSize', 10);
+title(ax3, 'How much generalises across speed profiles?', 'FontSize', 11);
+legend(bh, {'Generalises', 'Profile-specific'}, 'Location', 'southeast', 'Box', 'off', 'FontSize', 10);
+hold(ax3, 'off');
+
+sgtitle('Speed-Profile Cross-Validation: Generalisation Across Speed Profiles', ...
+    'FontSize', 11, 'FontWeight', 'bold');
+
+if save_figs
+    print(fig_sp, fullfile(ctl.figs.curr_dir, 'speed_profile_cross_validation.png'), '-dpng', '-r300');
+    fprintf('  Saved speed_profile_cross_validation.png\n');
+end
 
 %% ====================================================================
 %  Section 8: Per-cluster visualisations (Model Overview with Scatter)
@@ -1767,7 +2681,28 @@ for ci = 1:n_unique_clusters
     end
     
     % --- Build classification label string based on forward selection ---
-    class_time_str = glm_plotting.build_classification_string(results, ci);
+    class_time_str = '';
+    if results.time.is_spprofileeed_tuned(ci)
+        class_time_str = [class_time_str, 'Spd'];  %#ok<AGROW>
+    end
+    if results.time.is_tf_tuned(ci)
+        if ~isempty(class_time_str), class_time_str = [class_time_str, '+'];  end  %#ok<AGROW>
+        class_time_str = [class_time_str, 'TF'];  %#ok<AGROW>
+    end
+    if results.time.is_sf_tuned(ci)
+        if ~isempty(class_time_str), class_time_str = [class_time_str, '+'];  end  %#ok<AGROW>
+        class_time_str = [class_time_str, 'SF'];  %#ok<AGROW>
+    end
+    if results.time.is_or_tuned(ci)
+        if ~isempty(class_time_str), class_time_str = [class_time_str, '+'];  end  %#ok<AGROW>
+        class_time_str = [class_time_str, 'OR'];  %#ok<AGROW>
+    end
+    if isempty(class_time_str)
+        class_time_str = 'None';
+    end
+    if results.time.has_interaction(ci)
+        class_time_str = [class_time_str, ' +Int'];  %#ok<AGROW>
+    end
     
     % Figure for n_rows_scatter rows × 6 columns
     fig_scatter = figure('Position', [10 10 240*n_cols_scatter 120*n_rows_scatter], ...
@@ -1840,7 +2775,7 @@ for ci = 1:n_unique_clusters
             n_coef = length(b_all);
             
             [grp_mean, ~, grp_clr, grp_lbl, n_grps, grp_betas, grp_cn] = ...
-                glm_helpers.compute_grouped_params(b_all, se_all, cn_all);
+                compute_grouped_params(b_all, se_all, cn_all);
             
             hold on;
             for gii = 1:n_grps
@@ -1856,7 +2791,7 @@ for ci = 1:n_unique_clusters
                 xpos = gii + jitter;
                 % Plot basis numbers as text labels
                 for pi = 1:n_pts
-                    basis_lbl = glm_helpers.extract_basis_label(cn_g{pi});
+                    basis_lbl = extract_basis_label(cn_g{pi});
                     if isempty(basis_lbl), basis_lbl = '-'; end
                     text(xpos(pi), bv(pi), basis_lbl, ...
                         'HorizontalAlignment', 'center', ...
@@ -1951,7 +2886,7 @@ for ci = 1:n_unique_clusters
                 if max_v > 0, plot([0 max_v], [0 max_v], 'k--', 'LineWidth', 0.5, 'HandleVisibility', 'off'); end
                 ss_res = sum((mean_obs_cond(valid_cond) - mean_pred_cond(valid_cond)).^2);
                 ss_tot = sum((mean_obs_cond(valid_cond) - mean(mean_obs_cond(valid_cond))).^2);
-                r2 = glm_helpers.ternary(ss_tot > 0, 1 - ss_res/ss_tot, NaN);
+                r2 = ternary(ss_tot > 0, 1 - ss_res/ss_tot, NaN);
             else
                 r2 = NaN;
             end
@@ -2035,7 +2970,7 @@ for ci = 1:n_unique_clusters
                 hold off;
                 ss_r = sum((obs_s(vs) - pred_s(vs)).^2);
                 ss_t = sum((obs_s(vs) - mean(obs_s(vs))).^2);
-                r2_s = glm_helpers.ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
+                r2_s = ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
                 title(sprintf('Spd R^2=%.2f', r2_s), 'FontSize', 7);
             end
             xlabel('Pred'); ylabel('Obs');
@@ -2108,7 +3043,7 @@ for ci = 1:n_unique_clusters
                 hold off;
                 ss_r = sum((obs_tf(vt) - pred_tf(vt)).^2);
                 ss_t = sum((obs_tf(vt) - mean(obs_tf(vt))).^2);
-                r2_tf = glm_helpers.ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
+                r2_tf = ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
                 title(sprintf('TF R^2=%.2f', r2_tf), 'FontSize', 7);
             end
             xlabel('Pred'); ylabel('Obs');
@@ -2209,7 +3144,7 @@ for ci = 1:n_unique_clusters
                 if sum(vsf) > 1
                     ss_r = sum((obs_sf(vsf) - pred_sf(vsf)).^2);
                     ss_t = sum((obs_sf(vsf) - mean(obs_sf(vsf))).^2);
-                    r2_sf = glm_helpers.ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
+                    r2_sf = ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
                     title(sprintf('SF R^2=%.2f', r2_sf), 'FontSize', 7);
                 end
             end
@@ -2313,7 +3248,7 @@ for ci = 1:n_unique_clusters
                 if sum(vor) > 1
                     ss_r = sum((obs_or(vor) - pred_or(vor)).^2);
                     ss_t = sum((obs_or(vor) - mean(obs_or(vor))).^2);
-                    r2_or = glm_helpers.ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
+                    r2_or = ternary(ss_t > 0, 1 - ss_r/ss_t, NaN);
                     title(sprintf('OR R^2=%.2f', r2_or), 'FontSize', 7);
                 end
             end
@@ -2378,8 +3313,8 @@ n_spd_plot_bins = length(spd_bin_centers);
 n_tf_plot_bins  = length(tf_bin_centers);
 
 % Pre-compute basis expansions at the bin centers for predictions
-B_speed_bincenters_rc = glm_helpers.make_raised_cosine_basis(spd_bin_centers(:), n_speed_bases, speed_range(1), speed_range(2));
-B_tf_bincenters_rc    = glm_helpers.make_raised_cosine_basis(tf_bin_centers(:),  n_tf_bases,    tf_range(1),    tf_range(2));
+B_speed_bincenters_rc = make_raised_cosine_basis(spd_bin_centers(:), n_speed_bases, speed_range(1), speed_range(2));
+B_tf_bincenters_rc    = make_raised_cosine_basis(tf_bin_centers(:),  n_tf_bases,    tf_range(1),    tf_range(2));
 
 % Condition colours (reuse from Section 8)
 cond_colors_rc = containers.Map({'T_Vstatic', 'V', 'VT'}, ...
@@ -2438,13 +3373,13 @@ for ci = 1:n_unique_clusters
     mode_or    = mode(or_data(~isnan(or_data)));  % exclude NaN (T_Vstatic) when computing mode
     
     % Basis evaluations at the mean/mode values (single-row matrices)
-    B_spd_mean = glm_helpers.make_raised_cosine_basis(mean_speed, n_speed_bases, speed_range(1), speed_range(2));
-    B_tf_mean  = glm_helpers.make_raised_cosine_basis(mean_tf,    n_tf_bases,    tf_range(1),    tf_range(2));
+    B_spd_mean = make_raised_cosine_basis(mean_speed, n_speed_bases, speed_range(1), speed_range(2));
+    B_tf_mean  = make_raised_cosine_basis(mean_tf,    n_tf_bases,    tf_range(1),    tf_range(2));
     
     % Onset kernel: for tuning curve predictions, we evaluate at "steady state"
     % (late in trial, after onset transient has decayed). Use t = 1.5s post-onset.
     steady_state_time = 1.5;  % seconds after motion onset (in plateau region)
-    B_onset_mean = glm_helpers.make_onset_kernel_basis(steady_state_time, n_onset_bases, onset_range(2));
+    B_onset_mean = make_onset_kernel_basis(steady_state_time, n_onset_bases, onset_range(2));
     
     % SF / OR unique levels (for categorical tuning curves)
     % Use GLOBAL reference levels for GLM predictions (must match training)
@@ -2491,8 +3426,8 @@ for ci = 1:n_unique_clusters
                 continue;
             end
             tc_array_spd = D_spd_rc.tuning_curves{cond_idx_spd};
-            tc_cluster_ids_spd = arrayfun(@(x) double(x.cluster_id), tc_array_spd);
-            tc_idx_spd = find(tc_cluster_ids_spd == cid, 1);
+            tc_cluster_ids_spprofiled = arrayfun(@(x) double(x.cluster_id), tc_array_spd);
+            tc_idx_spd = find(tc_cluster_ids_spprofiled == cid, 1);
             if isempty(tc_idx_spd), continue; end
             
             tc_spd = tc_array_spd(tc_idx_spd);
@@ -2502,10 +3437,10 @@ for ci = 1:n_unique_clusters
             
             % Compute mean and STD across trials
             fr_mean = nanmean(tuning_mat_spd, 2);
-            n_trials_spd = sum(~isnan(tuning_mat_spd), 2);
+            n_trials_spprofiled = sum(~isnan(tuning_mat_spd), 2);
             fr_std = nanstd(tuning_mat_spd, 0, 2);
             
-            vm = ~isnan(fr_mean) & n_trials_spd > 1;
+            vm = ~isnan(fr_mean) & n_trials_spprofiled > 1;
             clr = cond_colors_rc(cond_name);
             errorbar(bc_spd(vm), fr_mean(vm), fr_std(vm), 'o', ...
                 'Color', clr, 'MarkerFaceColor', clr, 'MarkerSize', 4, ...
@@ -2684,7 +3619,7 @@ for ci = 1:n_unique_clusters
     end
     hold off;
     set(gca, 'XTick', 1:n_or_rc, 'XTickLabel', ...
-        arrayfun(@(v) glm_helpers.format_radians(v), or_levels_rc, 'UniformOutput', false));
+        arrayfun(@(v) format_radians(v), or_levels_rc, 'UniformOutput', false));
     xlabel('Orientation (rad)'); ylabel('FR (Hz)');
     title('Original Data: OR', 'FontSize', 9);
     set(gca, 'box', 'off', 'FontSize', 8);
@@ -2696,7 +3631,7 @@ for ci = 1:n_unique_clusters
     
     % Get selected variables for this cluster (for labeling)
     sel_vars_rc = results.time.selected_vars{ci};
-    sel_label = glm_helpers.ternary(isempty(sel_vars_rc), 'none', strjoin(sel_vars_rc, '+'));
+    sel_label = ternary(isempty(sel_vars_rc), 'none', strjoin(sel_vars_rc, '+'));
     
     % Define row mapping: {glm_type, model_label, row_number, display_name}
     % Row 2: Null, Row 3: Selected, Row 4: Additive, Row 5: FullInteraction
@@ -2745,19 +3680,19 @@ for ci = 1:n_unique_clusters
         ax_handles(row_num, 1) = subplot(5, 4, (row_num-1)*4 + 1);
         hold on;
         
-        n_bins_spd = n_spd_plot_bins;
-        B_onset_rep_spd = repmat(B_onset_use, n_bins_spd, 1);  % Onset kernel at steady state
+        n_bins_spprofiled = n_spd_plot_bins;
+        B_onset_rep_spd = repmat(B_onset_use, n_bins_spprofiled, 1);  % Onset kernel at steady state
         
         % T_Vstatic: Speed sweep with TF=0, SF=reference (first level), OR=reference
-        B_tf_zero = glm_helpers.make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
-        B_tf_rep_T = repmat(B_tf_zero, n_bins_spd, 1);
-        sf_sweep_T = repmat(sf_levels_rc(1), n_bins_spd, 1);  % reference SF
-        or_sweep_T = repmat(or_levels_rc(1), n_bins_spd, 1);  % reference OR
+        B_tf_zero = make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
+        B_tf_rep_T = repmat(B_tf_zero, n_bins_spprofiled, 1);
+        sf_sweep_T = repmat(sf_levels_rc(1), n_bins_spprofiled, 1);  % reference SF
+        or_sweep_T = repmat(or_levels_rc(1), n_bins_spprofiled, 1);  % reference OR
         if is_selected_model
-            X_sweep_T = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_speed_bincenters_rc, B_tf_rep_T, ...
+            X_sweep_T = build_design_matrix_from_colnames(col_names_rc, B_speed_bincenters_rc, B_tf_rep_T, ...
                 B_onset_rep_spd, sf_sweep_T, or_sweep_T, sf_levels_rc, or_levels_rc);
         else
-            [X_sweep_T, ~] = glm_helpers.assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_T, ...
+            [X_sweep_T, ~] = assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_T, ...
                 B_onset_rep_spd, sf_sweep_T, or_sweep_T, ml_name, sf_levels_rc, or_levels_rc);
         end
         if size(X_sweep_T, 2) == length(beta_rc)
@@ -2770,14 +3705,14 @@ for ci = 1:n_unique_clusters
         % V: Skip - no locomotion speed in visual-only condition
         
         % VT: Speed sweep with mean TF, mode SF, mode OR (both stimuli on)
-        B_tf_rep_VT = repmat(B_tf_mean, n_bins_spd, 1);
-        sf_sweep_VT = repmat(mode_sf, n_bins_spd, 1);
-        or_sweep_VT = repmat(mode_or, n_bins_spd, 1);
+        B_tf_rep_VT = repmat(B_tf_mean, n_bins_spprofiled, 1);
+        sf_sweep_VT = repmat(mode_sf, n_bins_spprofiled, 1);
+        or_sweep_VT = repmat(mode_or, n_bins_spprofiled, 1);
         if is_selected_model
-            X_sweep_VT = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_speed_bincenters_rc, B_tf_rep_VT, ...
+            X_sweep_VT = build_design_matrix_from_colnames(col_names_rc, B_speed_bincenters_rc, B_tf_rep_VT, ...
                 B_onset_rep_spd, sf_sweep_VT, or_sweep_VT, sf_levels_rc, or_levels_rc);
         else
-            [X_sweep_VT, ~] = glm_helpers.assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_VT, ...
+            [X_sweep_VT, ~] = assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_VT, ...
                 B_onset_rep_spd, sf_sweep_VT, or_sweep_VT, ml_name, sf_levels_rc, or_levels_rc);
         end
         if size(X_sweep_VT, 2) == length(beta_rc)
@@ -2788,14 +3723,14 @@ for ci = 1:n_unique_clusters
         end
         
         % Stationary: Speed=0, onset kernel at baseline (before motion onset → zeros)
-        B_spd_zero_stat = glm_helpers.make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
-        B_tf_zero_stat = glm_helpers.make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
+        B_spd_zero_stat = make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
+        B_tf_zero_stat = make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
         B_onset_stat = zeros(1, n_onset_bases);  % Before motion onset → all zeros
         if is_selected_model
-            X_stat = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_zero_stat, B_tf_zero_stat, ...
+            X_stat = build_design_matrix_from_colnames(col_names_rc, B_spd_zero_stat, B_tf_zero_stat, ...
                 B_onset_stat, sf_levels_rc(1), or_levels_rc(1), sf_levels_rc, or_levels_rc);
         else
-            [X_stat, ~] = glm_helpers.assemble_design_matrix(B_spd_zero_stat, B_tf_zero_stat, ...
+            [X_stat, ~] = assemble_design_matrix(B_spd_zero_stat, B_tf_zero_stat, ...
                 B_onset_stat, sf_levels_rc(1), or_levels_rc(1), ml_name, sf_levels_rc, or_levels_rc);
         end
         if size(X_stat, 2) == length(beta_rc)
@@ -2819,15 +3754,15 @@ for ci = 1:n_unique_clusters
         % T_Vstatic: No TF tuning (TF=0 always) - skip
         
         % V: TF sweep with Speed=0 (visual only)
-        B_spd_zero_tf = glm_helpers.make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
+        B_spd_zero_tf = make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
         B_spd_rep_V_tf = repmat(B_spd_zero_tf, n_bins_tf, 1);
         sf_sweep_V_tf = repmat(mode_sf, n_bins_tf, 1);
         or_sweep_V_tf = repmat(mode_or, n_bins_tf, 1);
         if is_selected_model
-            X_sweep_V_tf = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_rep_V_tf, B_tf_bincenters_rc, ...
+            X_sweep_V_tf = build_design_matrix_from_colnames(col_names_rc, B_spd_rep_V_tf, B_tf_bincenters_rc, ...
                 B_onset_rep_tf, sf_sweep_V_tf, or_sweep_V_tf, sf_levels_rc, or_levels_rc);
         else
-            [X_sweep_V_tf, ~] = glm_helpers.assemble_design_matrix(B_spd_rep_V_tf, B_tf_bincenters_rc, ...
+            [X_sweep_V_tf, ~] = assemble_design_matrix(B_spd_rep_V_tf, B_tf_bincenters_rc, ...
                 B_onset_rep_tf, sf_sweep_V_tf, or_sweep_V_tf, ml_name, sf_levels_rc, or_levels_rc);
         end
         if size(X_sweep_V_tf, 2) == length(beta_rc)
@@ -2842,10 +3777,10 @@ for ci = 1:n_unique_clusters
         sf_sweep_VT_tf = repmat(mode_sf, n_bins_tf, 1);
         or_sweep_VT_tf = repmat(mode_or, n_bins_tf, 1);
         if is_selected_model
-            X_sweep_VT_tf = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_rep_VT_tf, B_tf_bincenters_rc, ...
+            X_sweep_VT_tf = build_design_matrix_from_colnames(col_names_rc, B_spd_rep_VT_tf, B_tf_bincenters_rc, ...
                 B_onset_rep_tf, sf_sweep_VT_tf, or_sweep_VT_tf, sf_levels_rc, or_levels_rc);
         else
-            [X_sweep_VT_tf, ~] = glm_helpers.assemble_design_matrix(B_spd_rep_VT_tf, B_tf_bincenters_rc, ...
+            [X_sweep_VT_tf, ~] = assemble_design_matrix(B_spd_rep_VT_tf, B_tf_bincenters_rc, ...
                 B_onset_rep_tf, sf_sweep_VT_tf, or_sweep_VT_tf, ml_name, sf_levels_rc, or_levels_rc);
         end
         if size(X_sweep_VT_tf, 2) == length(beta_rc)
@@ -2870,14 +3805,14 @@ for ci = 1:n_unique_clusters
         % T_Vstatic: No SF tuning (no visual stimulus) - skip
         
         % V: SF sweep with Speed=0 (visual only) - use only actual SF values (exclude 0)
-        B_spd_zero_sf = glm_helpers.make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
+        B_spd_zero_sf = make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
         fr_pred_V_sf = nan(n_sf_plot, 1);
         for sfi = 1:n_sf_plot
             if is_selected_model
-                X_one = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_zero_sf, B_tf_mean, ...
+                X_one = build_design_matrix_from_colnames(col_names_rc, B_spd_zero_sf, B_tf_mean, ...
                     B_onset_one_sf, sf_levels_plot(sfi), mode_or, sf_levels_rc, or_levels_rc);
             else
-                [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_zero_sf, B_tf_mean, ...
+                [X_one, ~] = assemble_design_matrix(B_spd_zero_sf, B_tf_mean, ...
                     B_onset_one_sf, sf_levels_plot(sfi), mode_or, ml_name, sf_levels_rc, or_levels_rc);
             end
             if size(X_one, 2) == length(beta_rc)
@@ -2895,10 +3830,10 @@ for ci = 1:n_unique_clusters
         fr_pred_VT_sf = nan(n_sf_plot, 1);
         for sfi = 1:n_sf_plot
             if is_selected_model
-                X_one = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_mean, B_tf_mean, ...
+                X_one = build_design_matrix_from_colnames(col_names_rc, B_spd_mean, B_tf_mean, ...
                     B_onset_one_sf, sf_levels_plot(sfi), mode_or, sf_levels_rc, or_levels_rc);
             else
-                [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_mean, B_tf_mean, ...
+                [X_one, ~] = assemble_design_matrix(B_spd_mean, B_tf_mean, ...
                     B_onset_one_sf, sf_levels_plot(sfi), mode_or, ml_name, sf_levels_rc, or_levels_rc);
             end
             if size(X_one, 2) == length(beta_rc)
@@ -2929,14 +3864,14 @@ for ci = 1:n_unique_clusters
         % T_Vstatic: No orientation tuning (no visual stimulus) - skip
         
         % V: OR sweep with Speed=0 (visual only)
-        B_spd_zero_or = glm_helpers.make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
+        B_spd_zero_or = make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
         fr_pred_V_or = nan(n_or_rc, 1);
         for ori = 1:n_or_rc
             if is_selected_model
-                X_one = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_zero_or, B_tf_mean, ...
+                X_one = build_design_matrix_from_colnames(col_names_rc, B_spd_zero_or, B_tf_mean, ...
                     B_onset_one_or, mode_sf, or_levels_rc(ori), sf_levels_rc, or_levels_rc);
             else
-                [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_zero_or, B_tf_mean, ...
+                [X_one, ~] = assemble_design_matrix(B_spd_zero_or, B_tf_mean, ...
                     B_onset_one_or, mode_sf, or_levels_rc(ori), ml_name, sf_levels_rc, or_levels_rc);
             end
             if size(X_one, 2) == length(beta_rc)
@@ -2954,10 +3889,10 @@ for ci = 1:n_unique_clusters
         fr_pred_VT_or = nan(n_or_rc, 1);
         for ori = 1:n_or_rc
             if is_selected_model
-                X_one = glm_helpers.build_design_matrix_from_colnames(col_names_rc, B_spd_mean, B_tf_mean, ...
+                X_one = build_design_matrix_from_colnames(col_names_rc, B_spd_mean, B_tf_mean, ...
                     B_onset_one_or, mode_sf, or_levels_rc(ori), sf_levels_rc, or_levels_rc);
             else
-                [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_mean, B_tf_mean, ...
+                [X_one, ~] = assemble_design_matrix(B_spd_mean, B_tf_mean, ...
                     B_onset_one_or, mode_sf, or_levels_rc(ori), ml_name, sf_levels_rc, or_levels_rc);
             end
             if size(X_one, 2) == length(beta_rc)
@@ -2973,7 +3908,7 @@ for ci = 1:n_unique_clusters
         
         hold off;
         set(gca, 'XTick', 1:n_or_rc, 'XTickLabel', ...
-            arrayfun(@(v) glm_helpers.format_radians(v), or_levels_rc, 'UniformOutput', false));
+            arrayfun(@(v) format_radians(v), or_levels_rc, 'UniformOutput', false));
         xlabel('Orientation (rad)'); ylabel('FR (Hz)');
         title(sprintf('%s: OR', row_title_suffix), 'FontSize', 9);
         set(gca, 'box', 'off', 'FontSize', 8);
@@ -3096,7 +4031,7 @@ for ci = 1:n_unique_clusters
     
     % Categorize for plotting: extract main effects pattern
     sv = results.time.selected_vars_str{ci};
-    has_spd = results.time.is_speed_tuned(ci);
+    has_spprofiled = results.time.is_spprofileeed_tuned(ci);
     has_tf = results.time.is_tf_tuned(ci);
     has_sf = results.time.is_sf_tuned(ci);
     has_or = results.time.is_or_tuned(ci);
@@ -3105,19 +4040,19 @@ for ci = 1:n_unique_clusters
     % Create simplified category based on main effects
     if isempty(sv) || strcmp(sv, '')
         tc_corr_results.model_category{ci} = 'None';
-    elseif has_spd && ~has_tf && ~has_sf && ~has_or
+    elseif has_spprofiled && ~has_tf && ~has_sf && ~has_or
         tc_corr_results.model_category{ci} = 'Speed';
-    elseif ~has_spd && has_tf && ~has_sf && ~has_or
+    elseif ~has_spprofiled && has_tf && ~has_sf && ~has_or
         tc_corr_results.model_category{ci} = 'TF';
-    elseif has_spd && has_tf && ~has_sf && ~has_or
+    elseif has_spprofiled && has_tf && ~has_sf && ~has_or
         if has_int
             tc_corr_results.model_category{ci} = 'Speed+TF+Int';
         else
             tc_corr_results.model_category{ci} = 'Speed+TF';
         end
-    elseif ~has_spd && (has_sf || has_or) && ~has_tf
+    elseif ~has_spprofiled && (has_sf || has_or) && ~has_tf
         tc_corr_results.model_category{ci} = 'Visual(SF/OR)';
-    elseif has_spd && (has_sf || has_or)
+    elseif has_spprofiled && (has_sf || has_or)
         tc_corr_results.model_category{ci} = 'Speed+Visual';
     elseif has_tf && (has_sf || has_or)
         tc_corr_results.model_category{ci} = 'TF+Visual';
@@ -3154,9 +4089,9 @@ for ci = 1:n_unique_clusters
     mode_or_c = mode(or_data_c(~isnan(or_data_c)));
     
     % Basis evaluations at mean/mode
-    B_spd_mean_c = glm_helpers.make_raised_cosine_basis(mean_speed_c, n_speed_bases, speed_range(1), speed_range(2));
-    B_tf_mean_c = glm_helpers.make_raised_cosine_basis(mean_tf_c, n_tf_bases, tf_range(1), tf_range(2));
-    B_onset_mean_c = glm_helpers.make_onset_kernel_basis(1.5, n_onset_bases, onset_range(2));
+    B_spd_mean_c = make_raised_cosine_basis(mean_speed_c, n_speed_bases, speed_range(1), speed_range(2));
+    B_tf_mean_c = make_raised_cosine_basis(mean_tf_c, n_tf_bases, tf_range(1), tf_range(2));
+    B_onset_mean_c = make_onset_kernel_basis(1.5, n_onset_bases, onset_range(2));
     
     % Reference levels
     sf_levels_c = sort([0; 0.003; 0.006; 0.012]);
@@ -3178,22 +4113,22 @@ for ci = 1:n_unique_clusters
         
         % ============ SPEED TUNING ============
         % T_Vstatic: Speed sweep with TF=0
-        B_tf_zero_c = glm_helpers.make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
+        B_tf_zero_c = make_raised_cosine_basis(0, n_tf_bases, tf_range(1), tf_range(2));
         B_tf_rep_T_c = repmat(B_tf_zero_c, n_spd_plot_bins, 1);
         B_onset_rep_spd_c = repmat(B_onset_mean_c, n_spd_plot_bins, 1);
         sf_sweep_T_c = repmat(sf_levels_c(1), n_spd_plot_bins, 1);
         or_sweep_T_c = repmat(or_levels_c(1), n_spd_plot_bins, 1);
         
         if is_selected
-            X_spd_T = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_speed_bincenters_rc, B_tf_rep_T_c, ...
+            X_spd_T = build_design_matrix_from_colnames(col_names_c, B_speed_bincenters_rc, B_tf_rep_T_c, ...
                 B_onset_rep_spd_c, sf_sweep_T_c, or_sweep_T_c, sf_levels_c, or_levels_c);
         else
-            [X_spd_T, ~] = glm_helpers.assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_T_c, ...
+            [X_spd_T, ~] = assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_T_c, ...
                 B_onset_rep_spd_c, sf_sweep_T_c, or_sweep_T_c, mn, sf_levels_c, or_levels_c);
         end
         
         if size(X_spd_T, 2) == length(beta_c)
-            fr_pred_spd_T = min(exp(X_spd_T * beta_c), max_predicted_fr);
+            fr_pred_spprofiled_T = min(exp(X_spd_T * beta_c), max_predicted_fr);
             
             % Get observed speed tuning for T_Vstatic from tuning table
             if ~isempty(probe_idx_corr) && isfield(probe_info(probe_idx_corr), 'D_spd') && ~isempty(probe_info(probe_idx_corr).D_spd)
@@ -3205,11 +4140,11 @@ for ci = 1:n_unique_clusters
                     tc_idx_T = find(tc_cids_T == cid, 1);
                     if ~isempty(tc_idx_T)
                         tc_T = tc_array_T(tc_idx_T);
-                        fr_obs_spd_T = nanmean(tc_T.tuning, 2);
+                        fr_obs_spprofiled_T = nanmean(tc_T.tuning, 2);
                         % Compute correlation
-                        vm = ~isnan(fr_obs_spd_T) & ~isnan(fr_pred_spd_T);
+                        vm = ~isnan(fr_obs_spprofiled_T) & ~isnan(fr_pred_spprofiled_T);
                         if sum(vm) >= 3
-                            r = corr(fr_obs_spd_T(vm), fr_pred_spd_T(vm), 'type', 'Pearson');
+                            r = corr(fr_obs_spprofiled_T(vm), fr_pred_spprofiled_T(vm), 'type', 'Pearson');
                             tc_corr_results.(sprintf('%s_Speed_T_Vstatic', mn))(ci) = r;
                         end
                     end
@@ -3223,15 +4158,15 @@ for ci = 1:n_unique_clusters
         or_sweep_VT_c = repmat(mode_or_c, n_spd_plot_bins, 1);
         
         if is_selected
-            X_spd_VT = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_speed_bincenters_rc, B_tf_rep_VT_c, ...
+            X_spd_VT = build_design_matrix_from_colnames(col_names_c, B_speed_bincenters_rc, B_tf_rep_VT_c, ...
                 B_onset_rep_spd_c, sf_sweep_VT_c, or_sweep_VT_c, sf_levels_c, or_levels_c);
         else
-            [X_spd_VT, ~] = glm_helpers.assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_VT_c, ...
+            [X_spd_VT, ~] = assemble_design_matrix(B_speed_bincenters_rc, B_tf_rep_VT_c, ...
                 B_onset_rep_spd_c, sf_sweep_VT_c, or_sweep_VT_c, mn, sf_levels_c, or_levels_c);
         end
         
         if size(X_spd_VT, 2) == length(beta_c)
-            fr_pred_spd_VT = min(exp(X_spd_VT * beta_c), max_predicted_fr);
+            fr_pred_spprofiled_VT = min(exp(X_spd_VT * beta_c), max_predicted_fr);
             
             % Get observed speed tuning for VT from tuning table
             if ~isempty(probe_idx_corr) && isfield(probe_info(probe_idx_corr), 'D_spd') && ~isempty(probe_info(probe_idx_corr).D_spd)
@@ -3243,10 +4178,10 @@ for ci = 1:n_unique_clusters
                     tc_idx_VT = find(tc_cids_VT == cid, 1);
                     if ~isempty(tc_idx_VT)
                         tc_VT = tc_array_VT(tc_idx_VT);
-                        fr_obs_spd_VT = nanmean(tc_VT.tuning, 2);
-                        vm = ~isnan(fr_obs_spd_VT) & ~isnan(fr_pred_spd_VT);
+                        fr_obs_spprofiled_VT = nanmean(tc_VT.tuning, 2);
+                        vm = ~isnan(fr_obs_spprofiled_VT) & ~isnan(fr_pred_spprofiled_VT);
                         if sum(vm) >= 3
-                            r = corr(fr_obs_spd_VT(vm), fr_pred_spd_VT(vm), 'type', 'Pearson');
+                            r = corr(fr_obs_spprofiled_VT(vm), fr_pred_spprofiled_VT(vm), 'type', 'Pearson');
                             tc_corr_results.(sprintf('%s_Speed_VT', mn))(ci) = r;
                         end
                     end
@@ -3255,7 +4190,7 @@ for ci = 1:n_unique_clusters
         end
         
         % ============ TF TUNING ============
-        B_spd_zero_c = glm_helpers.make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
+        B_spd_zero_c = make_raised_cosine_basis(0, n_speed_bases, speed_range(1), speed_range(2));
         B_spd_rep_V_tf_c = repmat(B_spd_zero_c, n_tf_plot_bins, 1);
         B_onset_rep_tf_c = repmat(B_onset_mean_c, n_tf_plot_bins, 1);
         sf_sweep_V_tf_c = repmat(mode_sf_c, n_tf_plot_bins, 1);
@@ -3263,10 +4198,10 @@ for ci = 1:n_unique_clusters
         
         % V condition: TF sweep with Speed=0
         if is_selected
-            X_tf_V = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_spd_rep_V_tf_c, B_tf_bincenters_rc, ...
+            X_tf_V = build_design_matrix_from_colnames(col_names_c, B_spd_rep_V_tf_c, B_tf_bincenters_rc, ...
                 B_onset_rep_tf_c, sf_sweep_V_tf_c, or_sweep_V_tf_c, sf_levels_c, or_levels_c);
         else
-            [X_tf_V, ~] = glm_helpers.assemble_design_matrix(B_spd_rep_V_tf_c, B_tf_bincenters_rc, ...
+            [X_tf_V, ~] = assemble_design_matrix(B_spd_rep_V_tf_c, B_tf_bincenters_rc, ...
                 B_onset_rep_tf_c, sf_sweep_V_tf_c, or_sweep_V_tf_c, mn, sf_levels_c, or_levels_c);
         end
         
@@ -3300,10 +4235,10 @@ for ci = 1:n_unique_clusters
         or_sweep_VT_tf_c = repmat(mode_or_c, n_tf_plot_bins, 1);
         
         if is_selected
-            X_tf_VT = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_spd_rep_VT_tf_c, B_tf_bincenters_rc, ...
+            X_tf_VT = build_design_matrix_from_colnames(col_names_c, B_spd_rep_VT_tf_c, B_tf_bincenters_rc, ...
                 B_onset_rep_tf_c, sf_sweep_VT_tf_c, or_sweep_VT_tf_c, sf_levels_c, or_levels_c);
         else
-            [X_tf_VT, ~] = glm_helpers.assemble_design_matrix(B_spd_rep_VT_tf_c, B_tf_bincenters_rc, ...
+            [X_tf_VT, ~] = assemble_design_matrix(B_spd_rep_VT_tf_c, B_tf_bincenters_rc, ...
                 B_onset_rep_tf_c, sf_sweep_VT_tf_c, or_sweep_VT_tf_c, mn, sf_levels_c, or_levels_c);
         end
         
@@ -3344,10 +4279,10 @@ for ci = 1:n_unique_clusters
             fr_pred_sf = nan(length(sf_levels_plot_c), 1);
             for sfi = 1:length(sf_levels_plot_c)
                 if is_selected
-                    X_one = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_spd_sf, B_tf_mean_c, ...
+                    X_one = build_design_matrix_from_colnames(col_names_c, B_spd_sf, B_tf_mean_c, ...
                         B_onset_mean_c, sf_levels_plot_c(sfi), mode_or_c, sf_levels_c, or_levels_c);
                 else
-                    [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_sf, B_tf_mean_c, ...
+                    [X_one, ~] = assemble_design_matrix(B_spd_sf, B_tf_mean_c, ...
                         B_onset_mean_c, sf_levels_plot_c(sfi), mode_or_c, mn, sf_levels_c, or_levels_c);
                 end
                 if size(X_one, 2) == length(beta_c)
@@ -3391,10 +4326,10 @@ for ci = 1:n_unique_clusters
             fr_pred_or = nan(length(or_levels_c), 1);
             for ori = 1:length(or_levels_c)
                 if is_selected
-                    X_one = glm_helpers.build_design_matrix_from_colnames(col_names_c, B_spd_or, B_tf_mean_c, ...
+                    X_one = build_design_matrix_from_colnames(col_names_c, B_spd_or, B_tf_mean_c, ...
                         B_onset_mean_c, mode_sf_c, or_levels_c(ori), sf_levels_c, or_levels_c);
                 else
-                    [X_one, ~] = glm_helpers.assemble_design_matrix(B_spd_or, B_tf_mean_c, ...
+                    [X_one, ~] = assemble_design_matrix(B_spd_or, B_tf_mean_c, ...
                         B_onset_mean_c, mode_sf_c, or_levels_c(ori), mn, sf_levels_c, or_levels_c);
                 end
                 if size(X_one, 2) == length(beta_c)
@@ -3661,6 +4596,35 @@ if save_figs
     fprintf('  Saved: %s\n', fname_corr);
 end
 close(fig_corr);
+
+% Store correlations in a CSV for later analysis
+if csv_output
+    fprintf('\n--- Exporting tuning curve correlations CSV ---\n');
+    
+    % Build table
+    T_corr = table();
+    T_corr.probe_id = tc_corr_results.probe_id(:);
+    T_corr.cluster_id = tc_corr_results.cluster_id(:);
+    T_corr.category = tc_corr_results.category(:);
+    T_corr.selected_vars_str = tc_corr_results.selected_vars_str(:);
+    T_corr.model_category = tc_corr_results.model_category(:);
+    
+    % Add all correlation fields
+    corr_fields = fieldnames(tc_corr_results);
+    for fi = 1:length(corr_fields)
+        fn = corr_fields{fi};
+        if startsWith(fn, 'Selected_') || startsWith(fn, 'Additive_') || startsWith(fn, 'FullInteraction_')
+            T_corr.(fn) = tc_corr_results.(fn)(:);
+        end
+    end
+    
+    csv_dir = fullfile(ctl.figs.curr_dir, 'csv');
+    if ~exist(csv_dir, 'dir'), mkdir(csv_dir); end
+    csv_corr_path = fullfile(csv_dir, 'tuning_curve_correlations.csv');
+    writetable(T_corr, csv_corr_path);
+    fprintf('  Saved: tuning_curve_correlations.csv (%d rows, %d columns)\n', ...
+        height(T_corr), width(T_corr));
+end
 
 %% ====================================================================
 %  Section 8g: Selected vs Additive Model Comparison (Paired)
@@ -4222,7 +5186,194 @@ end
 fprintf('--- Trial-level visualization complete ---\n');
 
 %% ====================================================================
-%  Section 9: Summary printout
+%  Section 9: CSV exports
+%  ====================================================================
+if csv_output
+    fprintf('\n--- Exporting CSV files ---\n');
+    
+    csv_dir = fullfile(ctl.figs.curr_dir, 'csv');
+    if ~exist(csv_dir, 'dir'), mkdir(csv_dir); end
+    
+    % --- CSV 1: Model comparison (Forward Selection GLM) ---
+    T_comp = table();
+    T_comp.probe_id = results.time.probe_id;
+    T_comp.cluster_id = results.time.cluster_id;
+    T_comp.n_trials = results.time.n_trials;
+    
+    % Add pre-filter category from decision tree
+    T_comp.prefilter_category = cell(n_unique_clusters, 1);
+    for ci_pf = 1:n_unique_clusters
+        key = sprintf('%s_%d', results.time.probe_id{ci_pf}, results.time.cluster_id(ci_pf));
+        if clusters_for_glm.isKey(key)
+            pf_info = clusters_for_glm(key);
+            T_comp.prefilter_category{ci_pf} = pf_info.category;
+        else
+            T_comp.prefilter_category{ci_pf} = 'unknown';
+        end
+    end
+    
+    for gt = 1:length(glm_types)
+        gt_tag = glm_types{gt};
+        prefix = [gt_tag '_'];
+        
+        T_comp.([prefix 'n_bins']) = results.(gt_tag).n_bins_total;
+        T_comp.([prefix 'n_spikes']) = results.(gt_tag).n_spikes_total;
+        
+        % Forward selection results
+        T_comp.([prefix 'selected_vars']) = results.(gt_tag).selected_vars_str;
+        T_comp.([prefix 'n_selected_vars']) = results.(gt_tag).n_selected_vars;
+        T_comp.([prefix 'selection_rounds']) = results.(gt_tag).selection_rounds;
+        
+        % CV performance for key models
+        T_comp.([prefix 'Null_cv_bps']) = results.(gt_tag).Null_cv_bps;
+        T_comp.([prefix 'Selected_cv_bps']) = results.(gt_tag).Selected_cv_bps;
+        T_comp.([prefix 'Additive_cv_bps']) = results.(gt_tag).Additive_cv_bps;
+        T_comp.([prefix 'FullInteraction_cv_bps']) = results.(gt_tag).FullInteraction_cv_bps;
+        
+        % Delta comparisons
+        T_comp.([prefix 'delta_selected_vs_null']) = results.(gt_tag).delta_bps_selected_vs_null;
+        T_comp.([prefix 'delta_additive_vs_null']) = results.(gt_tag).delta_bps_additive_vs_null;
+        T_comp.([prefix 'delta_interaction']) = results.(gt_tag).delta_bps_interaction;
+        T_comp.([prefix 'delta_selected_vs_additive']) = results.(gt_tag).delta_bps_selected_vs_additive;
+        
+        % Classification flags (based on forward selection)
+        T_comp.([prefix 'is_spprofileeed_tuned']) = results.(gt_tag).is_spprofileeed_tuned;
+        T_comp.([prefix 'is_tf_tuned']) = results.(gt_tag).is_tf_tuned;
+        T_comp.([prefix 'is_sf_tuned']) = results.(gt_tag).is_sf_tuned;
+        T_comp.([prefix 'is_or_tuned']) = results.(gt_tag).is_or_tuned;
+        T_comp.([prefix 'has_interaction']) = results.(gt_tag).has_interaction;
+        
+        % Specific interactions selected
+        T_comp.([prefix 'has_spprofileeed_x_tf']) = results.(gt_tag).has_spprofileeed_x_tf;
+        T_comp.([prefix 'has_spprofileeed_x_sf']) = results.(gt_tag).has_spprofileeed_x_sf;
+        T_comp.([prefix 'has_spprofileeed_x_or']) = results.(gt_tag).has_spprofileeed_x_or;
+        T_comp.([prefix 'has_tf_x_sf']) = results.(gt_tag).has_tf_x_sf;
+        T_comp.([prefix 'has_tf_x_or']) = results.(gt_tag).has_tf_x_or;
+        T_comp.([prefix 'has_sf_x_or']) = results.(gt_tag).has_sf_x_or;
+    end
+    
+    writetable(T_comp, fullfile(csv_dir, 'glm_model_comparison.csv'));
+    fprintf('  Saved glm_model_comparison.csv (%d rows)\n', height(T_comp));
+    
+    % --- CSV 2: Selection history ---
+    if ~isempty(all_selection_history)
+        T_sel_hist = cell2table(vertcat(all_selection_history{:}), ...
+            'VariableNames', {'probe_id', 'cluster_id', 'round', 'best_candidate', ...
+            'delta_bps', 'added', 'cv_bps_after'});
+        writetable(T_sel_hist, fullfile(csv_dir, 'glm_selection_history.csv'));
+        fprintf('  Saved glm_selection_history.csv (%d rows)\n', height(T_sel_hist));
+    end
+    
+    % --- CSV 3: Coefficients ---
+    if n_coef_stored > 0
+        all_coefficients = all_coefficients(1:n_coef_stored);
+        T_coef = cell2table(vertcat(all_coefficients{:}), ...
+            'VariableNames', {'probe_id', 'cluster_id', 'glm_type', 'model', ...
+            'coefficient', 'estimate', 'se'});
+        writetable(T_coef, fullfile(csv_dir, 'glm_coefficients.csv'));
+        fprintf('  Saved glm_coefficients.csv (%d rows)\n', height(T_coef));
+    end
+    
+    % --- CSV 4: Trial-level data (time-bin) ---
+    writetable(T_master_time, fullfile(csv_dir, 'glm_time_bin_data.csv'));
+    fprintf('  Saved glm_time_bin_data.csv (%d rows)\n', height(T_master_time));
+    
+    % --- Update prefilter_decision_tree.csv with GLM results ---
+    % Add forward selection results for each cluster
+    fprintf('\n--- Updating prefilter_decision_tree.csv with GLM results ---\n');
+    
+    % Initialize new columns with NaN/empty for all prefilter clusters
+    glm_selected_vars = cell(n_prefilter_clusters, 1);
+    glm_n_selected = nan(n_prefilter_clusters, 1);
+    glm_selected_cv_bps = nan(n_prefilter_clusters, 1);
+    glm_is_spprofileeed_tuned = false(n_prefilter_clusters, 1);
+    glm_is_tf_tuned = false(n_prefilter_clusters, 1);
+    glm_is_sf_tuned = false(n_prefilter_clusters, 1);
+    glm_is_or_tuned = false(n_prefilter_clusters, 1);
+    glm_has_interaction = false(n_prefilter_clusters, 1);
+    glm_delta_bps_interaction = nan(n_prefilter_clusters, 1);
+    glm_additive_cv_bps = nan(n_prefilter_clusters, 1);
+    glm_null_cv_bps = nan(n_prefilter_clusters, 1);
+    
+    % Fill in default values
+    for pfi = 1:n_prefilter_clusters
+        glm_selected_vars{pfi} = '';
+    end
+    
+    % Match GLM results back to prefilter clusters (using Time-bin GLM)
+    for ci = 1:n_unique_clusters
+        glm_probe = results.time.probe_id{ci};
+        glm_cid = results.time.cluster_id(ci);
+        
+        % Find matching prefilter row
+        for pfi = 1:n_prefilter_clusters
+            if strcmp(prefilter_results.probe_id{pfi}, glm_probe) && ...
+               prefilter_results.cluster_id(pfi) == glm_cid
+                % Copy forward selection results
+                glm_selected_vars{pfi} = results.time.selected_vars_str{ci};
+                glm_n_selected(pfi) = results.time.n_selected_vars(ci);
+                glm_selected_cv_bps(pfi) = results.time.Selected_cv_bps(ci);
+                glm_null_cv_bps(pfi) = results.time.Null_cv_bps(ci);
+                
+                % Copy classification flags (based on forward selection)
+                glm_is_spprofileeed_tuned(pfi) = results.time.is_spprofileeed_tuned(ci);
+                glm_is_tf_tuned(pfi) = results.time.is_tf_tuned(ci);
+                glm_is_sf_tuned(pfi) = results.time.is_sf_tuned(ci);
+                glm_is_or_tuned(pfi) = results.time.is_or_tuned(ci);
+                glm_has_interaction(pfi) = results.time.has_interaction(ci);
+                
+                % Copy additional metrics
+                glm_delta_bps_interaction(pfi) = results.time.delta_bps_interaction(ci);
+                glm_additive_cv_bps(pfi) = results.time.Additive_cv_bps(ci);
+                break;
+            end
+        end
+    end
+    
+    % Update prefilter_table with new columns
+    prefilter_table_updated = table(...
+        string(prefilter_results.probe_id'), ...
+        prefilter_results.cluster_id', ...
+        prefilter_results.is_T_significant', ...
+        prefilter_results.is_V_significant', ...
+        prefilter_results.is_VT_significant', ...
+        prefilter_results.n_significant', ...
+        prefilter_results.is_spprofileeed_tuned', ...
+        prefilter_results.should_run_glm', ...
+        string(prefilter_results.category'), ...
+        prefilter_results.p_T_svm', ...
+        prefilter_results.p_V_svm', ...
+        prefilter_results.p_VT_svm', ...
+        prefilter_results.direction_T', ...
+        prefilter_results.direction_V', ...
+        prefilter_results.direction_VT', ...
+        string(glm_selected_vars), ...
+        glm_n_selected, ...
+        glm_null_cv_bps, ...
+        glm_selected_cv_bps, ...
+        glm_additive_cv_bps, ...
+        glm_is_spprofileeed_tuned, ...
+        glm_is_tf_tuned, ...
+        glm_is_sf_tuned, ...
+        glm_is_or_tuned, ...
+        glm_has_interaction, ...
+        glm_delta_bps_interaction, ...
+        'VariableNames', {'probe_id', 'cluster_id', 'is_T_significant', 'is_V_significant', ...
+            'is_VT_significant', 'n_significant', 'is_spprofileeed_tuned_prefilter', 'should_run_glm', 'category', ...
+            'p_T_svm', 'p_V_svm', 'p_VT_svm', ...
+            'direction_T', 'direction_V', 'direction_VT', ...
+            'glm_selected_vars', 'glm_n_selected', 'glm_null_cv_bps', 'glm_selected_cv_bps', 'glm_additive_cv_bps', ...
+            'glm_is_spprofileeed_tuned', 'glm_is_tf_tuned', 'glm_is_sf_tuned', 'glm_is_or_tuned', ...
+            'glm_has_interaction', 'glm_delta_bps_interaction'});
+    
+    % Save updated prefilter table
+    writetable(prefilter_table_updated, prefilter_csv_path);
+    fprintf('  Updated prefilter_decision_tree.csv with GLM results (%d rows)\n', height(prefilter_table_updated));
+    fprintf('  Added columns: selected vars, CV bps, tuning classification\n');
+end
+
+%% ====================================================================
+%  Section 10: Summary printout
 %  ====================================================================
 fprintf('\n====================================================================\n');
 fprintf('  GLM SINGLE CLUSTER ANALYSIS (v10: Forward Selection) — COMPLETE\n');
@@ -4233,13 +5384,21 @@ fprintf('  Clusters analysed with GLM: %d\n', n_unique_clusters);
 fprintf('  Time-bin data points: %d\n', height(T_master_time));
 fprintf('  Forward selection: %d candidates, threshold=%.3f bps\n', length(all_candidates), forward_selection_threshold);
 
+fprintf('\n  --- Pre-filter Category Breakdown (GLM clusters) ---\n');
+pf_categories = unique(T_comp.prefilter_category);
+for pf_i = 1:length(pf_categories)
+    pf_cat = pf_categories{pf_i};
+    n_pf_cat = sum(strcmp(T_comp.prefilter_category, pf_cat));
+    fprintf('    %s: %d (%.1f%%)\n', pf_cat, n_pf_cat, 100*n_pf_cat/n_unique_clusters);
+end
+
 for gt = 1:length(glm_types)
     gt_tag = glm_types{gt};
     gt_label = glm_type_labels{gt};
     fprintf('\n  --- %s ---\n', gt_label);
     
     % Selection statistics
-    n_selected = results.(gt_tag).n_selected_vars;
+    n_selected = results.(gt_tag).n_selected;
     fprintf('  Variables selected per cluster:\n');
     fprintf('    Mean: %.2f, Median: %d, Range: [%d, %d]\n', ...
         mean(n_selected), median(n_selected), min(n_selected), max(n_selected));
@@ -4269,11 +5428,12 @@ for gt = 1:length(glm_types)
     
     % CV performance
     fprintf('  CV performance (bits/spike):\n');
-    fprintf('    Null: median=%.4f\n', median(results.(gt_tag).Null_cv_bps));
-    fprintf('    Selected: median=%.4f\n', median(results.(gt_tag).Selected_cv_bps));
-    fprintf('    Additive: median=%.4f\n', median(results.(gt_tag).Additive_cv_bps));
+    fprintf('    Null: median=%.4f\n', median(results.(gt_tag).null_cv_bps));
+    fprintf('    Selected: median=%.4f\n', median(results.(gt_tag).selected_cv_bps));
+    fprintf('    Additive: median=%.4f\n', median(results.(gt_tag).additive_cv_bps));
     fprintf('  Interaction delta: median = %.4f bps\n', ...
         median(results.(gt_tag).delta_bps_interaction));
+    fprintf('  Regularisation: YES (lambda=1.0)\n');
 end
 fprintf('====================================================================\n');
 
@@ -4283,6 +5443,1122 @@ fprintf('Full log saved to: %s\n', log_file);
 diary off;
 
 %% ====================================================================
-%  Helper functions have been moved to scripts/functions/glm_helpers.m
-%  Use glm_helpers.function_name() to call them.
+%  Local functions
 %  ====================================================================
+
+function out = ternary(cond_val, val_true, val_false)
+%TERNARY Inline conditional helper
+    if cond_val
+        out = val_true;
+    else
+        out = val_false;
+    end
+end
+
+
+function [sf_val, vx_val, or_val] = parse_cloud_name(cname, sf_keys_arg, sf_values_map_arg, or_keys_arg, or_values_map_arg)
+%PARSE_CLOUD_NAME Extract SF, VX, orientation from a cloud name string
+    sf_val = NaN;
+    for ki = 1:length(sf_keys_arg)
+        if contains(cname, sf_keys_arg{ki})
+            sf_val = sf_values_map_arg(sf_keys_arg{ki});
+            break;
+        end
+    end
+    
+    vx_val = NaN;
+    vx_tok = regexp(cname, 'VX(\d+p\d+)', 'tokens');
+    if ~isempty(vx_tok)
+        vx_str = strrep(vx_tok{1}{1}, 'p', '.');
+        vx_val = str2double(vx_str);
+    end
+    
+    % Use startsWith for orientation to avoid matching 'Btheta' bandwidth parameter
+    % The main orientation is always at the START of the cloud name
+    or_val = NaN;
+    for ki = 1:length(or_keys_arg)
+        if startsWith(cname, or_keys_arg{ki})
+            or_val = or_values_map_arg(or_keys_arg{ki});
+            break;
+        end
+    end
+end
+
+
+function B = make_raised_cosine_basis(x, n_bases, x_min, x_max)
+%MAKE_RAISED_COSINE_BASIS Raised cosine bases on log-shifted axis (Weber-law scaling)
+    epsilon = 0.5;
+    log_x = log(x + epsilon);
+    log_min = log(x_min + epsilon);
+    log_max = log(x_max + epsilon);
+    
+    centers = linspace(log_min, log_max, n_bases);
+    
+    if n_bases > 1
+        delta = (log_max - log_min) / (n_bases - 1);
+    else
+        delta = (log_max - log_min);
+    end
+    width = delta * 1.5;
+    
+    B = zeros(length(x), n_bases);
+    for bi = 1:n_bases
+        z = (log_x - centers(bi)) / width * pi;
+        z = max(min(z, pi), -pi);
+        B(:, bi) = 0.5 * (1 + cos(z));
+    end
+end
+
+
+function B = make_onset_kernel_basis(t_since_onset, n_bases, t_max)
+%MAKE_ONSET_KERNEL_BASIS Causal raised cosine bases for onset dynamics (Park et al. 2014 style)
+%   Creates raised cosine bases that are NON-ZERO only for t >= 0 (causal).
+%   For t < 0 (stationary periods before motion onset), all bases are zero.
+%   This captures the transient response at motion onset and adaptation.
+%
+%   t_since_onset: time since motion onset (negative for stationary, positive for motion)
+%   n_bases: number of raised cosine bases
+%   t_max: maximum time covered by the kernel (e.g., 2.0 s)
+%
+%   Following Park et al. 2014: bases are raised cosine bumps on linear axis,
+%   spanning from 0 to t_max, with overlapping coverage.
+
+    n = length(t_since_onset);
+    B = zeros(n, n_bases);
+    
+    % Centers span from 0 to t_max
+    centers = linspace(0, t_max, n_bases);
+    
+    if n_bases > 1
+        delta = t_max / (n_bases - 1);
+    else
+        delta = t_max;
+    end
+    width = delta * 1.5;  % overlap factor
+    
+    % Mask: only compute for t >= 0 (motion period)
+    motion_mask = t_since_onset >= 0;
+    t_motion = t_since_onset(motion_mask);
+    
+    if ~isempty(t_motion)
+        for bi = 1:n_bases
+            z = (t_motion - centers(bi)) / width * pi;
+            z = max(min(z, pi), -pi);
+            B(motion_mask, bi) = 0.5 * (1 + cos(z));
+        end
+    end
+    % B remains zero for t < 0 (stationary periods)
+end
+
+
+function [X, col_names] = assemble_design_matrix(B_speed, B_tf, B_onset, sf_vals, or_vals, model_label, sf_ref_levels, or_ref_levels)
+%ASSEMBLE_DESIGN_MATRIX Build design matrix from pre-computed basis matrices
+%   This avoids recomputing raised cosine bases for each model of the same cluster.
+%   B_onset: onset dynamics kernel bases (causal, zero for stationary periods)
+%   sf_ref_levels, or_ref_levels: optional reference levels for dummy coding
+%   (used for prediction to match training design matrix structure)
+%   When ref levels are provided, zero-variance removal is skipped (for prediction).
+
+    n = size(B_speed, 1);
+    n_speed_b = size(B_speed, 2);
+    n_tf_b = size(B_tf, 2);
+    n_onset_b = size(B_onset, 2);
+    
+    % Determine if this is for prediction (ref levels provided)
+    is_prediction = (nargin >= 7 && ~isempty(sf_ref_levels)) || (nargin >= 8 && ~isempty(or_ref_levels));
+    
+    % Column name lists
+    spd_names = arrayfun(@(si) sprintf('Speed_%d', si), 1:n_speed_b, 'UniformOutput', false);
+    tf_names_list = arrayfun(@(ti) sprintf('TF_%d', ti), 1:n_tf_b, 'UniformOutput', false);
+    onset_names = arrayfun(@(oi) sprintf('Onset_%d', oi), 1:n_onset_b, 'UniformOutput', false);
+    
+    % SF dummy coding - use reference levels if provided
+    if nargin >= 7 && ~isempty(sf_ref_levels)
+        unique_sf = sf_ref_levels(:)';
+    else
+        unique_sf = sort(unique(sf_vals(~isnan(sf_vals))));
+    end
+    n_sf_levels = length(unique_sf);
+    D_sf = zeros(n, max(n_sf_levels - 1, 0));
+    sf_names = {};
+    for si = 2:n_sf_levels
+        D_sf(:, si-1) = double(sf_vals == unique_sf(si));
+        sf_names{end+1} = sprintf('SF_%d', si);  %#ok<AGROW>
+    end
+    
+    % Orientation dummy coding - use reference levels if provided
+    if nargin >= 8 && ~isempty(or_ref_levels)
+        unique_or = or_ref_levels(:)';
+    else
+        unique_or = sort(unique(or_vals(~isnan(or_vals))));
+    end
+    n_or_levels = length(unique_or);
+    D_or = zeros(n, max(n_or_levels - 1, 0));
+    or_names = {};
+    for oi = 2:n_or_levels
+        D_or(:, oi-1) = double(or_vals == unique_or(oi));
+        or_names{end+1} = sprintf('OR_%d', oi);  %#ok<AGROW>
+    end
+    
+    switch model_label
+        case 'Null'
+            % Null model: intercept + onset kernel only (baseline for forward selection)
+            X = [ones(n, 1), B_onset];
+            col_names = [{'Intercept'}, onset_names];
+        case 'M0'
+            % Null model: intercept only (no onset kernel)
+            X = ones(n, 1);
+            col_names = {'Intercept'};
+        case 'M0_Speed'
+            % Null + Speed + Onset kernel
+            X = [ones(n,1), B_speed, B_onset];
+            col_names = [{'Intercept'}, spd_names, onset_names];
+        case 'M0_Speed_TF'
+            % Null + Speed + TF + Onset kernel
+            X = [ones(n,1), B_speed, B_tf, B_onset];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, onset_names];
+        case 'M0_Speed_TF_SF'
+            % Null + Speed + TF + SF + Onset kernel
+            X = [ones(n,1), B_speed, B_tf, D_sf, B_onset];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, sf_names, onset_names];
+        case 'Additive'
+            % Full main effects: Speed + TF + SF + OR + Onset kernel
+            X = [ones(n,1), B_speed, B_tf, D_sf, D_or, B_onset];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, sf_names, or_names, onset_names];
+        case 'FullInteraction'
+            % Speed x TF interaction (vectorised via kron-like expansion)
+            n_inter_st = n_speed_b * n_tf_b;
+            B_inter_st = zeros(n, n_inter_st);
+            inter_st_names = cell(1, n_inter_st);
+            col = 0;
+            for si = 1:n_speed_b
+                for ti = 1:n_tf_b
+                    col = col + 1;
+                    B_inter_st(:, col) = B_speed(:, si) .* B_tf(:, ti);
+                    inter_st_names{col} = sprintf('Spd%d_x_TF%d', si, ti);
+                end
+            end
+            
+            % Speed x SF interaction
+            n_sf_cols = size(D_sf, 2);
+            B_inter_ssf = zeros(n, n_speed_b * n_sf_cols);
+            inter_ssf_names = cell(1, n_speed_b * n_sf_cols);
+            col = 0;
+            for si = 1:n_speed_b
+                for fi = 1:n_sf_cols
+                    col = col + 1;
+                    B_inter_ssf(:, col) = B_speed(:, si) .* D_sf(:, fi);
+                    inter_ssf_names{col} = sprintf('Spd%d_x_%s', si, sf_names{fi});
+                end
+            end
+            
+            % Speed x Orientation interaction
+            n_or_cols = size(D_or, 2);
+            B_inter_sor = zeros(n, n_speed_b * n_or_cols);
+            inter_sor_names = cell(1, n_speed_b * n_or_cols);
+            col = 0;
+            for si = 1:n_speed_b
+                for oi = 1:n_or_cols
+                    col = col + 1;
+                    B_inter_sor(:, col) = B_speed(:, si) .* D_or(:, oi);
+                    inter_sor_names{col} = sprintf('Spd%d_x_%s', si, or_names{oi});
+                end
+            end
+            
+            % TF x SF interaction
+            B_inter_tf_sf = zeros(n, n_tf_b * n_sf_cols);
+            inter_tf_sf_names = cell(1, n_tf_b * n_sf_cols);
+            col = 0;
+            for ti = 1:n_tf_b
+                for fi = 1:n_sf_cols
+                    col = col + 1;
+                    B_inter_tf_sf(:, col) = B_tf(:, ti) .* D_sf(:, fi);
+                    inter_tf_sf_names{col} = sprintf('TF%d_x_%s', ti, sf_names{fi});
+                end
+            end
+            
+            % TF x Orientation interaction
+            B_inter_tf_or = zeros(n, n_tf_b * n_or_cols);
+            inter_tf_or_names = cell(1, n_tf_b * n_or_cols);
+            col = 0;
+            for ti = 1:n_tf_b
+                for oi = 1:n_or_cols
+                    col = col + 1;
+                    B_inter_tf_or(:, col) = B_tf(:, ti) .* D_or(:, oi);
+                    inter_tf_or_names{col} = sprintf('TF%d_x_%s', ti, or_names{oi});
+                end
+            end
+            
+            % SF x Orientation interaction
+            B_inter_sf_or = zeros(n, n_sf_cols * n_or_cols);
+            inter_sf_or_names = cell(1, n_sf_cols * n_or_cols);
+            col = 0;
+            for fi = 1:n_sf_cols
+                for oi = 1:n_or_cols
+                    col = col + 1;
+                    B_inter_sf_or(:, col) = D_sf(:, fi) .* D_or(:, oi);
+                    inter_sf_or_names{col} = sprintf('%s_x_%s', sf_names{fi}, or_names{oi});
+                end
+            end
+            
+            % Full interaction model with onset kernel
+            X = [ones(n,1), B_speed, B_tf, D_sf, D_or, B_onset, ...
+                 B_inter_st, B_inter_ssf, B_inter_sor, ...
+                 B_inter_tf_sf, B_inter_tf_or, B_inter_sf_or];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, sf_names, or_names, onset_names, ...
+                         inter_st_names, inter_ssf_names, inter_sor_names, ...
+                         inter_tf_sf_names, inter_tf_or_names, inter_sf_or_names];
+        case 'Additive_no_Speed'
+            % Additive model without Speed: TF + SF + OR + Onset
+            X = [ones(n,1), B_tf, D_sf, D_or, B_onset];
+            col_names = [{'Intercept'}, tf_names_list, sf_names, or_names, onset_names];
+        case 'Additive_no_TF'
+            % Additive model without TF: Speed + SF + OR + Onset
+            X = [ones(n,1), B_speed, D_sf, D_or, B_onset];
+            col_names = [{'Intercept'}, spd_names, sf_names, or_names, onset_names];
+        case 'Additive_no_SF'
+            % Additive model without SF: Speed + TF + OR + Onset
+            X = [ones(n,1), B_speed, B_tf, D_or, B_onset];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, or_names, onset_names];
+        case 'Additive_no_OR'
+            % Additive model without OR: Speed + TF + SF + Onset
+            X = [ones(n,1), B_speed, B_tf, D_sf, B_onset];
+            col_names = [{'Intercept'}, spd_names, tf_names_list, sf_names, onset_names];
+        otherwise
+            error('Unknown model label: %s', model_label);
+    end
+    
+    % Remove zero-variance columns (except intercept) - only during training, not prediction
+    if ~is_prediction
+        keep_cols = true(1, size(X, 2));
+        col_vars = var(X(:, 2:end));
+        keep_cols(2:end) = col_vars >= 1e-12;
+        if ~all(keep_cols)
+            X = X(:, keep_cols);
+            col_names = col_names(keep_cols);
+        end
+    end
+end
+
+
+function result = fit_poisson_glm(X, y, offset, lambda_ridge)
+%FIT_POISSON_GLM Fit Poisson GLM with log link via IRLS
+    if nargin < 4, lambda_ridge = 0; end
+    
+    [n, p] = size(X);
+    
+    lambda_min = 1e-6;
+    lambda_eff = max(lambda_ridge, lambda_min);
+    
+    beta = zeros(p, 1);
+    beta(1) = log(max(mean(y), 0.1));
+    
+    max_iter = 100;
+    tol = 1e-8;
+    
+    ws = warning('off', 'MATLAB:nearlySingularMatrix');
+    warning('off', 'MATLAB:singularMatrix');
+    warning('off', 'MATLAB:rankDeficientMatrix');
+    
+    ridge_mat = lambda_eff * eye(p);
+    ridge_mat(1,1) = 0;  % don't penalise intercept
+    
+    for iter = 1:max_iter
+        eta = X * beta + offset;
+        eta = max(min(eta, 20), -20);
+        mu = exp(eta);
+        mu = max(mu, 1e-10);
+        
+        W = mu;
+        z = eta + (y - mu) ./ mu - offset;
+        
+        XtWX = X' * bsxfun(@times, X, W) + ridge_mat;
+        XtWz = X' * (W .* z);
+        
+        beta_new = XtWX \ XtWz;
+        
+        if any(~isfinite(beta_new))
+            break;
+        end
+        
+        if max(abs(beta_new - beta)) < tol
+            beta = beta_new;
+            break;
+        end
+        beta = beta_new;
+    end
+    
+    warning(ws);
+    
+    % Final predictions
+    eta = X * beta + offset;
+    eta = max(min(eta, 20), -20);
+    mu = exp(eta);
+    mu = max(mu, 1e-10);
+    
+    % Log-likelihood
+    ll = sum(y .* log(mu) - mu - gammaln(y + 1));
+    
+    % Deviance
+    y_pos = max(y, 1e-10);
+    dev = 2 * sum(y .* log(y_pos ./ mu) - (y - mu));
+    
+    % Standard errors (Cholesky is ~3x faster than pinv for SPD matrices)
+    W = mu;
+    XtWX = X' * bsxfun(@times, X, W) + ridge_mat;
+    se = zeros(p, 1);
+    try
+        R_chol = chol(XtWX);
+        inv_R = R_chol \ eye(p);
+        se = sqrt(sum(inv_R.^2, 2));
+    catch
+        try
+            cov_beta = pinv(XtWX);
+            se = sqrt(abs(diag(cov_beta)));
+        catch
+            % Leave SE as zeros
+        end
+    end
+    
+    result.beta = beta;
+    result.se = se;
+    result.log_likelihood = ll;
+    result.aic = -2*ll + 2*p;
+    result.bic = -2*ll + p*log(n);
+    result.deviance = dev;
+    result.n_params = p;
+    result.n_obs = n;
+    % predicted_count = mu = E[Y] = expected spike count per bin
+    % To get firing rate lambda(t), divide by exposure time: lambda = mu / t
+    % Since offset = log(t), we have: mu = exp(X*beta + offset) = t * exp(X*beta)
+    % Therefore: lambda(t) = exp(X*beta) = mu / t
+    result.predicted_count = mu;
+    result.pearson_residuals = (y - mu) ./ sqrt(max(mu, 1e-10));
+    result.dispersion = dev / max(n - p, 1);
+    result.converged = (iter < max_iter) && all(isfinite(beta));
+    result.lambda_ridge = lambda_ridge;
+end
+
+
+function [cv_ll, cv_bits_per_spike, fold_ll, cv_predicted_count] = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge)
+%CROSS_VALIDATE_GLM K-fold cross-validated log-likelihood for Poisson GLM
+%  cv_predicted_count returns mu = E[Y] (expected spike count), not firing rate.
+%  To get firing rate lambda(t), divide by exposure time: lambda = mu / t
+    if nargin < 5, lambda_ridge = 0; end
+    
+    folds = unique(fold_ids);
+    K = length(folds);
+    
+    total_ll = 0;
+    total_spikes = 0;
+    fold_ll = zeros(K, 1);
+    cv_predicted_count = nan(size(y));
+    
+    for fi = 1:K
+        test_idx = fold_ids == folds(fi);
+        train_idx = ~test_idx;
+        
+        res = fit_poisson_glm(X(train_idx,:), y(train_idx), offset(train_idx), lambda_ridge);
+        
+        eta_test = X(test_idx,:) * res.beta + offset(test_idx);
+        eta_test = max(min(eta_test, 20), -20);
+        mu_test = exp(eta_test);
+        mu_test = max(mu_test, 1e-10);
+        
+        cv_predicted_count(test_idx) = mu_test;
+        
+        ll_test = sum(y(test_idx) .* log(mu_test) - mu_test - gammaln(y(test_idx) + 1));
+        fold_ll(fi) = ll_test;
+        total_ll = total_ll + ll_test;
+        total_spikes = total_spikes + sum(y(test_idx));
+    end
+    
+    cv_ll = total_ll;
+    if total_spikes > 0
+        cv_bits_per_spike = (total_ll / total_spikes) / log(2);
+    else
+        cv_bits_per_spike = NaN;
+    end
+end
+
+
+function [selected_vars, selection_history, final_cv_bps, null_cv_bps] = forward_select_model(...
+    B_speed, B_tf, B_onset, sf_v, or_v, y, offset, fold_ids, threshold, ~, ...
+    sf_ref_levels, or_ref_levels)
+%FORWARD_SELECT_MODEL Hierarchical forward selection for GLM
+%
+%   Two-phase selection process:
+%   Phase 1: Select main effects (Speed, TF, SF, OR) one at a time
+%   Phase 2: Select interactions, but ONLY if both parent main effects
+%            were selected in Phase 1
+%
+%   This ensures proper model hierarchy and interpretability.
+%
+%   Inputs:
+%       B_speed, B_tf, B_onset - Pre-computed basis matrices
+%       sf_v, or_v             - Categorical variable vectors
+%       y                      - Spike counts
+%       offset                 - Log of bin width
+%       fold_ids               - CV fold assignments
+%       threshold              - Minimum Δ bps for inclusion
+%       ~                      - (unused, kept for API compatibility)
+%       sf_ref_levels, or_ref_levels - Reference levels for dummy coding
+%
+%   Outputs:
+%       selected_vars    - Cell array of selected variable names
+%       selection_history - Struct array with round details
+%       final_cv_bps     - CV bits/spike of final selected model
+%       null_cv_bps      - CV bits/spike of null model (baseline)
+
+    % Define main effects and interactions separately
+    main_effects = {'Speed', 'TF', 'SF', 'OR'};
+    interactions = {'Speed_x_TF', 'Speed_x_SF', 'Speed_x_OR', 'TF_x_SF', 'TF_x_OR', 'SF_x_OR'};
+    
+    % Map interactions to their parent main effects
+    interaction_parents = containers.Map();
+    interaction_parents('Speed_x_TF') = {'Speed', 'TF'};
+    interaction_parents('Speed_x_SF') = {'Speed', 'SF'};
+    interaction_parents('Speed_x_OR') = {'Speed', 'OR'};
+    interaction_parents('TF_x_SF')    = {'TF', 'SF'};
+    interaction_parents('TF_x_OR')    = {'TF', 'OR'};
+    interaction_parents('SF_x_OR')    = {'SF', 'OR'};
+
+    % --- Fit Null model (intercept + onset kernel) ---
+    [X_null, ~] = assemble_design_matrix_selected(B_speed, B_tf, B_onset, ...
+        sf_v, or_v, {}, sf_ref_levels, or_ref_levels);
+    [~, null_cv_bps] = cross_validate_glm(X_null, y, offset, fold_ids, 0);
+    
+    selected_vars = {};
+    current_cv_bps = null_cv_bps;
+    selection_history = struct('round', {}, 'phase', {}, 'tested', {}, 'delta_bps', {}, ...
+        'best_candidate', {}, 'added', {}, 'cv_bps_after', {});
+    
+    round_num = 0;
+    
+    % =====================================================================
+    % PHASE 1: Main effects only
+    % =====================================================================
+    fprintf('    --- Phase 1: Main Effects ---\n');
+    remaining_main = main_effects;
+    
+    while ~isempty(remaining_main)
+        round_num = round_num + 1;
+        
+        best_delta = -Inf;
+        best_candidate = '';
+        tested_results = struct('candidate', {}, 'delta_bps', {}, 'cv_bps', {});
+        
+        for ci = 1:length(remaining_main)
+            candidate = remaining_main{ci};
+            
+            % Build model with current selected + this candidate
+            test_vars = [selected_vars, {candidate}];
+            [X_test, ~] = assemble_design_matrix_selected(B_speed, B_tf, B_onset, ...
+                sf_v, or_v, test_vars, sf_ref_levels, or_ref_levels);
+            
+            % Check if design matrix is valid
+            if size(X_test, 2) >= length(y)
+                tested_results(ci).candidate = candidate;
+                tested_results(ci).delta_bps = -Inf;
+                tested_results(ci).cv_bps = -Inf;
+                continue;
+            end
+            
+            % Cross-validate
+            [~, test_cv_bps] = cross_validate_glm(X_test, y, offset, fold_ids, 0);
+            delta = test_cv_bps - current_cv_bps;
+            
+            tested_results(ci).candidate = candidate;
+            tested_results(ci).delta_bps = delta;
+            tested_results(ci).cv_bps = test_cv_bps;
+            
+            if delta > best_delta
+                best_delta = delta;
+                best_candidate = candidate;
+            end
+        end
+        
+        % Record this round
+        selection_history(round_num).round = round_num;
+        selection_history(round_num).phase = 1;
+        selection_history(round_num).tested = tested_results;
+        selection_history(round_num).best_candidate = best_candidate;
+        selection_history(round_num).delta_bps = best_delta;
+        
+        % Diagnostic logging
+        fprintf('    Round %d (main): ', round_num);
+        for ti = 1:length(tested_results)
+            fprintf('%s=%.4f ', tested_results(ti).candidate, tested_results(ti).delta_bps);
+        end
+        fprintf('\n');
+        fprintf('    Best: %s (Δbps=%.4f), threshold=%.4f\n', best_candidate, best_delta, threshold);
+        
+        % Add best candidate if it exceeds threshold
+        if best_delta > threshold && ~isempty(best_candidate)
+            fprintf('    -> ADDED %s\n', best_candidate);
+            selected_vars{end+1} = best_candidate; %#ok<AGROW>
+            remaining_main = setdiff(remaining_main, {best_candidate});
+            % Update current_cv_bps
+            for ti = 1:length(tested_results)
+                if strcmp(tested_results(ti).candidate, best_candidate)
+                    current_cv_bps = tested_results(ti).cv_bps;
+                    break;
+                end
+            end
+            selection_history(round_num).added = true;
+            selection_history(round_num).cv_bps_after = current_cv_bps;
+        else
+            selection_history(round_num).added = false;
+            selection_history(round_num).cv_bps_after = current_cv_bps;
+            break;  % Stop Phase 1: no main effect improved enough
+        end
+    end
+    
+    % =====================================================================
+    % PHASE 2: Interactions (only if both parents were selected)
+    % =====================================================================
+    fprintf('    --- Phase 2: Interactions (eligible based on selected main effects) ---\n');
+    
+    % Determine eligible interactions
+    eligible_interactions = {};
+    for ii = 1:length(interactions)
+        int_name = interactions{ii};
+        parents = interaction_parents(int_name);
+        % Check if BOTH parents are in selected_vars
+        if all(ismember(parents, selected_vars))
+            eligible_interactions{end+1} = int_name; %#ok<AGROW>
+        end
+    end
+    
+    if isempty(eligible_interactions)
+        fprintf('    No eligible interactions (need both parent main effects selected)\n');
+    else
+        fprintf('    Eligible interactions: %s\n', strjoin(eligible_interactions, ', '));
+    end
+    
+    remaining_interactions = eligible_interactions;
+    
+    while ~isempty(remaining_interactions)
+        round_num = round_num + 1;
+        
+        best_delta = -Inf;
+        best_candidate = '';
+        tested_results = struct('candidate', {}, 'delta_bps', {}, 'cv_bps', {});
+        
+        for ci = 1:length(remaining_interactions)
+            candidate = remaining_interactions{ci};
+            
+            % Build model with current selected + this interaction
+            test_vars = [selected_vars, {candidate}];
+            [X_test, ~] = assemble_design_matrix_selected(B_speed, B_tf, B_onset, ...
+                sf_v, or_v, test_vars, sf_ref_levels, or_ref_levels);
+            
+            % Check if design matrix is valid
+            if size(X_test, 2) >= length(y)
+                tested_results(ci).candidate = candidate;
+                tested_results(ci).delta_bps = -Inf;
+                tested_results(ci).cv_bps = -Inf;
+                continue;
+            end
+            
+            % Cross-validate
+            [~, test_cv_bps] = cross_validate_glm(X_test, y, offset, fold_ids, 0);
+            delta = test_cv_bps - current_cv_bps;
+            
+            tested_results(ci).candidate = candidate;
+            tested_results(ci).delta_bps = delta;
+            tested_results(ci).cv_bps = test_cv_bps;
+            
+            if delta > best_delta
+                best_delta = delta;
+                best_candidate = candidate;
+            end
+        end
+        
+        % Record this round
+        selection_history(round_num).round = round_num;
+        selection_history(round_num).phase = 2;
+        selection_history(round_num).tested = tested_results;
+        selection_history(round_num).best_candidate = best_candidate;
+        selection_history(round_num).delta_bps = best_delta;
+        
+        % Diagnostic logging
+        fprintf('    Round %d (interaction): ', round_num);
+        for ti = 1:length(tested_results)
+            fprintf('%s=%.4f ', tested_results(ti).candidate, tested_results(ti).delta_bps);
+        end
+        fprintf('\n');
+        fprintf('    Best: %s (Δbps=%.4f), threshold=%.4f\n', best_candidate, best_delta, threshold);
+        
+        % Warn about extreme negative deltas (numerical instability)
+        if best_delta < -1
+            fprintf('    WARNING: Large negative delta (%.2f) suggests numerical instability\n', best_delta);
+        end
+        
+        % Add best candidate if it exceeds threshold
+        if best_delta > threshold && ~isempty(best_candidate)
+            fprintf('    -> ADDED %s\n', best_candidate);
+            selected_vars{end+1} = best_candidate; %#ok<AGROW>
+            remaining_interactions = setdiff(remaining_interactions, {best_candidate});
+            % Update current_cv_bps
+            for ti = 1:length(tested_results)
+                if strcmp(tested_results(ti).candidate, best_candidate)
+                    current_cv_bps = tested_results(ti).cv_bps;
+                    break;
+                end
+            end
+            selection_history(round_num).added = true;
+            selection_history(round_num).cv_bps_after = current_cv_bps;
+        else
+            selection_history(round_num).added = false;
+            selection_history(round_num).cv_bps_after = current_cv_bps;
+            break;  % Stop Phase 2: no interaction improved enough
+        end
+    end
+    
+    final_cv_bps = current_cv_bps;
+    
+    % Summary
+    selected_main = intersect(selected_vars, main_effects, 'stable');
+    selected_int = intersect(selected_vars, interactions, 'stable');
+    fprintf('    FINAL: Main effects: [%s], Interactions: [%s]\n', ...
+        strjoin(selected_main, ', '), strjoin(selected_int, ', '));
+end
+
+
+function [X, col_names] = assemble_design_matrix_selected(B_speed, B_tf, B_onset, ...
+    sf_vals, or_vals, selected_vars, sf_ref_levels, or_ref_levels)
+%ASSEMBLE_DESIGN_MATRIX_SELECTED Build design matrix for forward-selected model
+%
+%   Creates design matrix containing:
+%   - Intercept (always)
+%   - Onset kernel (always)
+%   - Only the variables specified in selected_vars
+%
+%   For interactions, automatically includes parent main effect bases in the
+%   interaction columns (but NOT as separate main effects unless explicitly selected).
+%
+%   Inputs:
+%       B_speed, B_tf, B_onset - Pre-computed basis matrices
+%       sf_vals, or_vals       - Categorical variable vectors
+%       selected_vars          - Cell array of selected variable names
+%       sf_ref_levels, or_ref_levels - Reference levels for dummy coding
+%
+%   Outputs:
+%       X         - Design matrix [n_obs x n_params]
+%       col_names - Cell array of column names
+
+    n = size(B_speed, 1);
+    n_speed_bases = size(B_speed, 2);
+    n_tf_bases = size(B_tf, 2);
+    n_onset_bases = size(B_onset, 2);
+    
+    % Determine SF levels for dummy coding
+    % When sf_ref_levels is provided (prediction mode), use it as the complete set of levels
+    % and exclude the first level (reference). This matches assemble_design_matrix behavior.
+    if nargin >= 7 && ~isempty(sf_ref_levels)
+        unique_sf = sf_ref_levels(:)';
+        sf_levels = unique_sf(2:end);  % Exclude first (reference) level
+    else
+        sf_unique = unique(sf_vals(~isnan(sf_vals)));
+        sf_levels = sf_unique(2:end);  % First level is reference
+    end
+    
+    % Determine OR levels for dummy coding (same logic as SF)
+    if nargin >= 8 && ~isempty(or_ref_levels)
+        unique_or = or_ref_levels(:)';
+        or_levels = unique_or(2:end);  % Exclude first (reference) level
+    else
+        or_unique = unique(or_vals(~isnan(or_vals)));
+        or_levels = or_unique(2:end);  % First level is reference
+    end
+    
+    % Start with intercept and onset kernel
+    X = ones(n, 1);
+    col_names = {'Intercept'};
+    
+    % Add onset kernel bases
+    X = [X, B_onset];
+    for bi = 1:n_onset_bases
+        col_names{end+1} = sprintf('Onset_%d', bi); %#ok<AGROW>
+    end
+    
+    % Check which variables are selected
+    has_spprofileeed = ismember('Speed', selected_vars);
+    has_tf = ismember('TF', selected_vars);
+    has_sf = ismember('SF', selected_vars);
+    has_or = ismember('OR', selected_vars);
+    
+    has_spprofileeed_x_tf = ismember('Speed_x_TF', selected_vars);
+    has_spprofileeed_x_sf = ismember('Speed_x_SF', selected_vars);
+    has_spprofileeed_x_or = ismember('Speed_x_OR', selected_vars);
+    has_tf_x_sf = ismember('TF_x_SF', selected_vars);
+    has_tf_x_or = ismember('TF_x_OR', selected_vars);
+    has_sf_x_or = ismember('SF_x_OR', selected_vars);
+    
+    % --- Add main effects ---
+    if has_spprofileeed
+        X = [X, B_speed];
+        for bi = 1:n_speed_bases
+            col_names{end+1} = sprintf('Speed_%d', bi); %#ok<AGROW>
+        end
+    end
+    
+    if has_tf
+        X = [X, B_tf];
+        for bi = 1:n_tf_bases
+            col_names{end+1} = sprintf('TF_%d', bi); %#ok<AGROW>
+        end
+    end
+    
+    if has_sf
+        for li = 1:length(sf_levels)
+            sf_dummy = double(sf_vals == sf_levels(li));
+            sf_dummy(isnan(sf_vals)) = 0;
+            X = [X, sf_dummy]; %#ok<AGROW>
+            col_names{end+1} = sprintf('SF_%.4f', sf_levels(li)); %#ok<AGROW>
+        end
+    end
+    
+    if has_or
+        for li = 1:length(or_levels)
+            or_dummy = double(or_vals == or_levels(li));
+            or_dummy(isnan(or_vals)) = 0;
+            X = [X, or_dummy]; %#ok<AGROW>
+            col_names{end+1} = sprintf('OR_%.3f', or_levels(li)); %#ok<AGROW>
+        end
+    end
+    
+    % --- Add interactions ---
+    % For interactions, we create the interaction columns directly
+    % (products of bases/dummies), without requiring main effects to be selected
+    
+    if has_spprofileeed_x_tf
+        for si = 1:n_speed_bases
+            for ti = 1:n_tf_bases
+                X = [X, B_speed(:,si) .* B_tf(:,ti)]; %#ok<AGROW>
+                col_names{end+1} = sprintf('Spd%d_x_TF%d', si, ti); %#ok<AGROW>
+            end
+        end
+    end
+    
+    if has_spprofileeed_x_sf
+        for si = 1:n_speed_bases
+            for li = 1:length(sf_levels)
+                sf_dummy = double(sf_vals == sf_levels(li));
+                sf_dummy(isnan(sf_vals)) = 0;
+                X = [X, B_speed(:,si) .* sf_dummy]; %#ok<AGROW>
+                col_names{end+1} = sprintf('Spd%d_x_SF%.4f', si, sf_levels(li)); %#ok<AGROW>
+            end
+        end
+    end
+    
+    if has_spprofileeed_x_or
+        for si = 1:n_speed_bases
+            for li = 1:length(or_levels)
+                or_dummy = double(or_vals == or_levels(li));
+                or_dummy(isnan(or_vals)) = 0;
+                X = [X, B_speed(:,si) .* or_dummy]; %#ok<AGROW>
+                col_names{end+1} = sprintf('Spd%d_x_OR%.3f', si, or_levels(li)); %#ok<AGROW>
+            end
+        end
+    end
+    
+    if has_tf_x_sf
+        for ti = 1:n_tf_bases
+            for li = 1:length(sf_levels)
+                sf_dummy = double(sf_vals == sf_levels(li));
+                sf_dummy(isnan(sf_vals)) = 0;
+                X = [X, B_tf(:,ti) .* sf_dummy]; %#ok<AGROW>
+                col_names{end+1} = sprintf('TF%d_x_SF%.4f', ti, sf_levels(li)); %#ok<AGROW>
+            end
+        end
+    end
+    
+    if has_tf_x_or
+        for ti = 1:n_tf_bases
+            for li = 1:length(or_levels)
+                or_dummy = double(or_vals == or_levels(li));
+                or_dummy(isnan(or_vals)) = 0;
+                X = [X, B_tf(:,ti) .* or_dummy]; %#ok<AGROW>
+                col_names{end+1} = sprintf('TF%d_x_OR%.3f', ti, or_levels(li)); %#ok<AGROW>
+            end
+        end
+    end
+    
+    if has_sf_x_or
+        for li_sf = 1:length(sf_levels)
+            sf_dummy = double(sf_vals == sf_levels(li_sf));
+            sf_dummy(isnan(sf_vals)) = 0;
+            for li_or = 1:length(or_levels)
+                or_dummy = double(or_vals == or_levels(li_or));
+                or_dummy(isnan(or_vals)) = 0;
+                X = [X, sf_dummy .* or_dummy]; %#ok<AGROW>
+                col_names{end+1} = sprintf('SF%.4f_x_OR%.3f', sf_levels(li_sf), or_levels(li_or)); %#ok<AGROW>
+            end
+        end
+    end
+    
+    % Remove zero-variance columns
+    col_vars = var(X, 0, 1);
+    keep_cols = col_vars > 1e-10 | (1:size(X,2)) == 1;  % Always keep intercept
+    X = X(:, keep_cols);
+    col_names = col_names(keep_cols);
+end
+
+
+function [grp_mean, grp_sem, grp_clr, grp_lbl, n_grps, grp_betas, grp_cn] = compute_grouped_params(b_all, se_all, cn_all)
+%COMPUTE_GROUPED_PARAMS Group coefficients by feature type for swarm plot
+%  Returns per-group individual betas and column names for basis labeling
+    n_coef = length(b_all);
+    
+    grp_tags = cell(n_coef, 1);
+    for ki = 1:n_coef
+        cn = cn_all{ki};
+        if strcmp(cn, 'Intercept')
+            grp_tags{ki} = 'Intercept';
+        elseif contains(cn, '_x_TF')
+            grp_tags{ki} = 'Spd x TF';
+        elseif contains(cn, '_x_SF')
+            grp_tags{ki} = 'Spd x SF';
+        elseif contains(cn, '_x_OR')
+            grp_tags{ki} = 'Spd x OR';
+        elseif startsWith(cn, 'Speed_')
+            grp_tags{ki} = 'Speed';
+        elseif startsWith(cn, 'TF_')
+            grp_tags{ki} = 'TF';
+        elseif startsWith(cn, 'SF_')
+            grp_tags{ki} = 'SF';
+        elseif startsWith(cn, 'OR_')
+            grp_tags{ki} = 'OR';
+        elseif startsWith(cn, 'Time_')
+            grp_tags{ki} = 'Time';
+        else
+            grp_tags{ki} = 'Other';
+        end
+    end
+    
+    grp_order = {'Intercept','Speed','TF','SF','OR','Time', ...
+                 'Spd x TF','Spd x SF','Spd x OR','Other'};
+    % Colors matched to model barplot color scheme (line 2069-2072)
+    grp_colors = [0.5 0.5 0.5;   ... % Intercept (gray)
+                  0.17 0.63 0.17;... % Speed (green - matches color_speed)
+                  1.0 0.50 0.05; ... % TF (orange - matches color_tf)
+                  0.95 0.85 0.10;... % SF (yellow - matches color_sf)
+                  0.84 0.15 0.16;... % OR (red - matches color_or)
+                  0.3 0.8 0.8;   ... % Time (cyan)
+                  0.6 0.35 0.05; ... % Spd x TF (darker orange-brown)
+                  0.55 0.50 0.05;... % Spd x SF (olive)
+                  0.50 0.10 0.10;... % Spd x OR (dark red)
+                  0.7 0.7 0.7];      % Other (gray)
+    
+    grp_mean = []; grp_sem = []; grp_clr = []; grp_lbl = {};
+    grp_betas = {}; grp_cn = {};
+    n_grps = 0;
+    for gi = 1:length(grp_order)
+        mask = strcmp(grp_tags, grp_order{gi});
+        if ~any(mask), continue; end
+        n_grps = n_grps + 1;
+        betas_g = b_all(mask);
+        grp_mean(n_grps) = mean(betas_g);                      %#ok<AGROW>
+        grp_sem(n_grps)  = std(betas_g) / sqrt(sum(mask));     %#ok<AGROW>
+        grp_clr(n_grps,:) = grp_colors(gi,:);                  %#ok<AGROW>
+        grp_lbl{n_grps}  = grp_order{gi};                      %#ok<AGROW>
+        grp_betas{n_grps} = betas_g(:)';                       %#ok<AGROW>
+        grp_cn{n_grps}   = cn_all(mask);                       %#ok<AGROW>
+    end
+end
+
+
+function lbl = extract_basis_label(col_name)
+%EXTRACT_BASIS_LABEL Extract basis index label from column name
+%   'Speed_3' -> '3'
+%   'TF_2' -> '2'
+%   'Spd2_x_TF4' -> '2-4'
+%   'Spd1_x_SF_2' -> '1-2'
+%   'Intercept' -> ''
+    lbl = '';
+    
+    if strcmp(col_name, 'Intercept')
+        lbl = '';
+        return;
+    end
+    
+    % Check for interaction terms first (contain '_x_')
+    if contains(col_name, '_x_')
+        % Parse interaction: e.g., 'Spd2_x_TF4' or 'Spd1_x_SF_2'
+        parts = strsplit(col_name, '_x_');
+        if length(parts) == 2
+            % First part: extract number from Spd#
+            num1 = regexp(parts{1}, '\d+', 'match');
+            % Second part: extract number (TF#, SF_#, OR_#)
+            num2 = regexp(parts{2}, '\d+', 'match');
+            if ~isempty(num1) && ~isempty(num2)
+                lbl = sprintf('%s-%s', num1{end}, num2{end});
+            end
+        end
+    else
+        % Main effect: Speed_#, TF_#, SF_#, OR_#, Time_#
+        nums = regexp(col_name, '\d+', 'match');
+        if ~isempty(nums)
+            lbl = nums{end};
+        end
+    end
+end
+
+
+function str = format_radians(val)
+%FORMAT_RADIANS Format angle value as a fraction of pi for display
+%   Converts common angles to nice π notation (e.g., -π/4, 0, π/4, π/2)
+    
+    tol = 1e-6;
+    if abs(val) < tol
+        str = '0';
+    elseif abs(val - pi/2) < tol
+        str = 'π/2';
+    elseif abs(val + pi/2) < tol
+        str = '-π/2';
+    elseif abs(val - pi/4) < tol
+        str = 'π/4';
+    elseif abs(val + pi/4) < tol
+        str = '-π/4';
+    elseif abs(val - pi) < tol
+        str = 'π';
+    elseif abs(val + pi) < tol
+        str = '-π';
+    elseif abs(val - 3*pi/4) < tol
+        str = '3π/4';
+    elseif abs(val + 3*pi/4) < tol
+        str = '-3π/4';
+    else
+        % General case: show decimal radians
+        str = sprintf('%.2f', val);
+    end
+end
+
+
+function X = build_design_matrix_from_colnames(col_names, B_speed, B_tf, B_onset, sf_val, or_val, sf_all_levels, or_all_levels)
+%BUILD_DESIGN_MATRIX_FROM_COLNAMES Build design matrix matching stored column names
+%   This function guarantees the prediction design matrix exactly matches the
+%   training design matrix by building columns based on the stored column names.
+%
+%   Inputs:
+%       col_names      - Cell array of column names from training
+%       B_speed        - Speed basis matrix [n x n_speed_bases]
+%       B_tf           - TF basis matrix [n x n_tf_bases]
+%       B_onset        - Onset basis matrix [n x n_onset_bases]
+%       sf_val         - SF value(s) for this prediction [n x 1] or scalar
+%       or_val         - OR value(s) for this prediction [n x 1] or scalar
+%       sf_all_levels  - All SF levels used during training
+%       or_all_levels  - All OR levels used during training
+%
+%   Output:
+%       X - Design matrix with columns matching col_names
+
+    n = size(B_speed, 1);
+    n_cols = length(col_names);
+    X = zeros(n, n_cols);
+    
+    % Ensure sf_val and or_val are column vectors
+    if isscalar(sf_val), sf_val = repmat(sf_val, n, 1); end
+    if isscalar(or_val), or_val = repmat(or_val, n, 1); end
+    
+    % SF levels for dummy coding (exclude reference = first level)
+    sf_dummy_levels = sf_all_levels(2:end);
+    or_dummy_levels = or_all_levels(2:end);
+    
+    for ci = 1:n_cols
+        cn = col_names{ci};
+        
+        if strcmp(cn, 'Intercept')
+            X(:, ci) = 1;
+            
+        elseif startsWith(cn, 'Onset_')
+            % Parse onset basis index: 'Onset_3' -> 3
+            idx = sscanf(cn, 'Onset_%d');
+            if ~isempty(idx) && idx <= size(B_onset, 2)
+                X(:, ci) = B_onset(:, idx);
+            end
+            
+        elseif startsWith(cn, 'Speed_')
+            % Parse speed basis index: 'Speed_2' -> 2
+            idx = sscanf(cn, 'Speed_%d');
+            if ~isempty(idx) && idx <= size(B_speed, 2)
+                X(:, ci) = B_speed(:, idx);
+            end
+            
+        elseif startsWith(cn, 'TF_')
+            % Parse TF basis index: 'TF_4' -> 4
+            idx = sscanf(cn, 'TF_%d');
+            if ~isempty(idx) && idx <= size(B_tf, 2)
+                X(:, ci) = B_tf(:, idx);
+            end
+            
+        elseif startsWith(cn, 'SF_')
+            % SF dummy: 'SF_2' means second non-reference level, or 'SF_0.0060' format
+            % Try numeric format first
+            sf_level = sscanf(cn, 'SF_%f');
+            if ~isempty(sf_level)
+                X(:, ci) = double(abs(sf_val - sf_level) < 1e-6);
+            else
+                % Try index format: 'SF_2' -> second dummy level
+                idx = sscanf(cn, 'SF_%d');
+                if ~isempty(idx) && idx <= length(sf_dummy_levels)
+                    X(:, ci) = double(abs(sf_val - sf_dummy_levels(idx)) < 1e-6);
+                end
+            end
+            
+        elseif startsWith(cn, 'OR_')
+            % OR dummy: 'OR_2' or 'OR_0.785' format
+            or_level = sscanf(cn, 'OR_%f');
+            if ~isempty(or_level)
+                X(:, ci) = double(abs(or_val - or_level) < 0.01);
+            else
+                idx = sscanf(cn, 'OR_%d');
+                if ~isempty(idx) && idx <= length(or_dummy_levels)
+                    X(:, ci) = double(abs(or_val - or_dummy_levels(idx)) < 0.01);
+                end
+            end
+            
+        elseif contains(cn, '_x_')
+            % Interaction terms: 'Spd2_x_TF3', 'Spd1_x_SF0.0060', etc.
+            parts = strsplit(cn, '_x_');
+            if length(parts) == 2
+                % Get first component
+                comp1 = get_component_column(parts{1}, B_speed, B_tf, sf_val, or_val, sf_dummy_levels, or_dummy_levels);
+                % Get second component
+                comp2 = get_component_column(parts{2}, B_speed, B_tf, sf_val, or_val, sf_dummy_levels, or_dummy_levels);
+                X(:, ci) = comp1 .* comp2;
+            end
+        end
+    end
+end
+
+
+function col = get_component_column(name, B_speed, B_tf, sf_val, or_val, sf_levels, or_levels)
+%GET_COMPONENT_COLUMN Get a single column for interaction term component
+    n = size(B_speed, 1);
+    col = zeros(n, 1);
+    
+    if startsWith(name, 'Spd')
+        idx = sscanf(name, 'Spd%d');
+        if ~isempty(idx) && idx <= size(B_speed, 2)
+            col = B_speed(:, idx);
+        end
+    elseif startsWith(name, 'TF')
+        idx = sscanf(name, 'TF%d');
+        if ~isempty(idx) && idx <= size(B_tf, 2)
+            col = B_tf(:, idx);
+        end
+    elseif startsWith(name, 'SF')
+        sf_level = sscanf(name, 'SF%f');
+        if ~isempty(sf_level)
+            col = double(abs(sf_val - sf_level) < 1e-6);
+        end
+    elseif startsWith(name, 'OR')
+        or_level = sscanf(name, 'OR%f');
+        if ~isempty(or_level)
+            col = double(abs(or_val - or_level) < 0.01);
+        end
+    end
+end
