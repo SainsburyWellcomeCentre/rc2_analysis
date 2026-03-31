@@ -27,6 +27,7 @@ This code has been developed on MATLAB 2021a on Windows 10. Prerequisite code mu
 4. *spikes* (https://github.com/cortex-lab/spikes)
 
     commit: 8dc617c6dd5b279341506b7411004772ba05f4cc
+5. *merge PDF documents* (https://uk.mathworks.com/matlabcentral/fileexchange/89127-merge-pdf-documents)
 
 The details for setup of *ecephys_spike_sorting*/*kilosort2* are in the respective repositories.
 
@@ -76,6 +77,9 @@ npy_matlab_dir
  		
 spikes_dir
 : Directory with local clone of https://github.com/cortex-lab/spikes
+
+pdf_dir
+: Directory with local clone of https://uk.mathworks.com/matlabcentral/fileexchange/89127-merge-pdf-documents. Used for merging PDF figures.
 
 ecephys_scripts_dir
 : Directory where we will move a modified copy of the template script <ecephys_template>. Used for Neuropixels Phase 3A processing.
