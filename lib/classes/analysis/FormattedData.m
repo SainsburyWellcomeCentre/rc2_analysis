@@ -462,11 +462,11 @@ classdef FormattedData < handle
         
         
         
-        function visp_clusters = VISp_clusters(obj, is_selected, spiking_class)
+        function visp_clusters = VISp_clusters(obj, is_selected, spiking_class, restrict_to_visp)
         %%VISp_clusters Returns an object array of class Clusters with the
         %%clusters which are allocated to a VISp layer
         %
-        %   CLUSTERS = VISp_clusters(MANUALLY_SELECTED, SPIKE_CLASS)
+        %   CLUSTERS = VISp_clusters(MANUALLY_SELECTED, SPIKE_CLASS, RESTRICT_TO_VISP)
         %   returns an object array of class Clusters in CLUSTERS.
         %   MANUALLY_SELECTED is optional and if supplied should be a
         %   boolean indicating whether to further restrict the VISp
@@ -476,11 +476,16 @@ classdef FormattedData < handle
         %   'any' (default), 'narrow', or 'wide', which restricts the
         %   Cluster object array to only narrow or wide spike clusters
         %   ('any' returns all selected clusters).
+        %   RESTRICT_TO_VISP is optional (default true). When false, all
+        %   selected clusters are returned regardless of region. A warning
+        %   is printed if any clusters are outside VISp (including those
+        %   labelled 'unknownLocation' due to missing anatomy data).
         %
         %   See also: selected_clusters, VISp_cluster_ids
         
             VariableDefault('is_selected', true);
             VariableDefault('spiking_class', 'any');
+            VariableDefault('restrict_to_visp', true);
             
             if is_selected
                 selected_clusters = obj.selected_clusters(spiking_class);
@@ -492,8 +497,17 @@ classdef FormattedData < handle
             idx = regexp({selected_clusters(:).region_str}, 'VISp[\dX]');
             idx = ~cellfun(@isempty, idx);
             
-            % restrict clusters
-            visp_clusters = selected_clusters(idx);
+            if restrict_to_visp
+                % restrict to confirmed VISp clusters only
+                visp_clusters = selected_clusters(idx);
+            else
+                % include all clusters; warn if any are outside VISp
+                n_non_visp = sum(~idx);
+                if n_non_visp > 0
+                    warning('VISp_clusters: %d cluster(s) are NOT in VISp (region_str does not match VISp[0-9X]). They are included because restrict_to_visp=false. This may include clusters labelled ''unknownLocation'' due to missing anatomy data.', n_non_visp);
+                end
+                visp_clusters = selected_clusters;
+            end
             
             % further restrict based on spiking class
             if ismember(spiking_class, {'wide', 'narrow'})
