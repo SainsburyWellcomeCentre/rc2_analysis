@@ -569,7 +569,9 @@ classdef RC2Format < RC2Analysis
         %   start and end indices of the trial in the session.
             
             % make sure that the solenoid starts high in the session
-            assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
+            % COMMENTED OUT AS THIS CHECK IS NOT NECESSARY AND MESSES UP
+            % WITH EXPERIMENTS WITH ONLY SPARSE_NOISE PROTOCOL
+            % assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
             
             % get the sample points of solenoid up and down
             solenoid_down = find(diff(session.solenoid > 2.5) == -1) + 1;
