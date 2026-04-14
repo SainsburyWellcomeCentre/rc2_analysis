@@ -29,6 +29,11 @@
 degs_per_square = 5;   % degrees per square in the stimulus (constant)
 threshold       = 2.5;   % multiplicative factor applied to shuffled STA std
 
+% ON/OFF colormaps: white→red (responses to white/ON squares)
+%                  white→blue (responses to black/OFF squares)
+cmap_on  = [linspace(1,1,256)', linspace(1,0,256)', linspace(1,0,256)'];  % white→red
+cmap_off = [linspace(1,0,256)', linspace(1,0,256)', linspace(1,1,256)'];  % white→blue
+
 % -------------------------------------------------------------------------
 % Stimulus and warp file paths
 % -------------------------------------------------------------------------
@@ -258,6 +263,7 @@ for probe_i = 1 : length(probe_ids)
         % White, raw
         subplot(2, 2, 1);
         imagesc(subtracted_white_g);
+        colormap(gca, cmap_on);
         axis image;
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'CLim', [min_response max_response]);
         title('White, raw')
@@ -275,12 +281,14 @@ for probe_i = 1 : length(probe_ids)
         RF_g = imgaussfilt(double(imresize(RF_g, [h_pix_g + 1, w_pix_g + 1])), 10);
         subplot(2, 2, 2);
         imagesc(RF_g);
+        colormap(gca, cmap_on);
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'plotboxaspectratio', [n_x_g, n_y_g, 1]);
         title('White, proc')
 
         % Black, raw
         subplot(2, 2, 3);
         imagesc(subtracted_black_g);
+        colormap(gca, cmap_off);
         axis image;
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'CLim', [min_response max_response]);
         title('Black, raw')
@@ -298,6 +306,7 @@ for probe_i = 1 : length(probe_ids)
         RF_g = imgaussfilt(double(imresize(RF_g, [h_pix_g + 1, w_pix_g + 1])), 10);
         subplot(2, 2, 4);
         imagesc(RF_g);
+        colormap(gca, cmap_off);
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'plotboxaspectratio', [n_x_g, n_y_g, 1]);
         title('Black, proc')
 
@@ -338,6 +347,7 @@ for probe_i = 1 : length(probe_ids)
         % White, raw
         subplot(2, 3, 1);
         imagesc(subtracted_white_s);
+        colormap(gca, cmap_on);
         axis image;
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'CLim', [min_response max_response]);
         title('White, raw')
@@ -355,6 +365,7 @@ for probe_i = 1 : length(probe_ids)
         RF_s = imgaussfilt(double(imresize(RF_s, [h_pix_s + 1, w_pix_s + 1])), 10);
         subplot(2, 3, 2);
         imagesc(RF_s);
+        colormap(gca, cmap_on);
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'plotboxaspectratio', [n_x_s, n_y_s, 1]);
         title('White, proc')
 
@@ -363,12 +374,14 @@ for probe_i = 1 : length(probe_ids)
         warped_rf_s = RF_s_warped(I_s);
         subplot(2, 3, 3);
         imagesc(warped_rf_s);
+        colormap(gca, cmap_on);
         set(gca, 'plotboxaspectratio', [30, 18, 1], 'xtick', [], 'ytick', [], 'xdir', 'reverse');
         title('White, on screen')
 
         % Black, raw
         subplot(2, 3, 4);
         imagesc(subtracted_black_s);
+        colormap(gca, cmap_off);
         axis image;
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'CLim', [min_response max_response]);
         title('Black, raw')
@@ -386,6 +399,7 @@ for probe_i = 1 : length(probe_ids)
         RF_s = imgaussfilt(double(imresize(RF_s, [h_pix_s + 1, w_pix_s + 1])), 10);
         subplot(2, 3, 5);
         imagesc(RF_s);
+        colormap(gca, cmap_off);
         set(gca, 'xtick', [], 'ytick', [], 'xdir', 'reverse', 'plotboxaspectratio', [n_x_s, n_y_s, 1]);
         title('Black, proc')
 
@@ -394,6 +408,7 @@ for probe_i = 1 : length(probe_ids)
         warped_rf_s = RF_s_warped(I_s);
         subplot(2, 3, 6);
         imagesc(warped_rf_s);
+        colormap(gca, cmap_off);
         set(gca, 'plotboxaspectratio', [30, 18, 1], 'xtick', [], 'ytick', [], 'xdir', 'reverse');
         title('Black, on screen')
 
