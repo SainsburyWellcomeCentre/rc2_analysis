@@ -65,4 +65,30 @@ elseif session_type == "sf_tf"
     period = 0.1 * 10e4;
     n_events = 128 * reps;
     fc = 5;
+
+elseif session_type == "sparse_noise_goggles"
+    % Goggles photodiode: small amplitude (~8 after x20 scaling).
+    % First flicker verified at sample ~120840 -> start_window 1.2e5:1.22e5 correct.
+    start_window = 1.2e5 : 1.22e5;
+    if strcmp(animal_id, 'CAA-1123773')
+        th = 4;
+    else
+        th = 4;   % default - verify by plotting 20*filtfilt signal for new animals
+    end
+    period   = 0.23 * 10e3;
+    n_events = 5000;
+    fc       = 8;
+
+elseif session_type == "sparse_noise_screens"
+    % Screens photodiode: large amplitude (~200 after x20 scaling).
+    % First flicker verified at sample ~120326 -> start_window 1.2e5:1.22e5 correct.
+    start_window = 1.2e5 : 1.22e5;
+    if strcmp(animal_id, 'CAA-1123773')
+        th = 150;
+    else
+        th = 150;   % default - verify by plotting 20*filtfilt signal for new animals
+    end
+    period   = 0.23 * 10e3;
+    n_events = 5000;
+    fc       = 8;
 end
