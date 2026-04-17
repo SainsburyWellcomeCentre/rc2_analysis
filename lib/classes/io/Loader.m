@@ -309,6 +309,18 @@ classdef Loader < handle
             tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
         end
         
+        function tuning_curves = tf_tuning_curves(obj, probe_id)
+        %%tf_tuning_curves Load the .mat file containing TF tuning curves for 
+        %the clusters in a probe recording
+        %
+        %   STRUCT = tf_tuning_curves(PROBE_ID)
+        %   loads the .mat for probe recording with ID, PROBE_ID and
+        %   returns it as a MATLAB structure, STRUCT.
+        
+            fname = obj.file_manager.tf_tuning_curves(probe_id);
+            tuning_curves = load(fname, 'trial_groups', 'tuning_curves');
+        end
+        
         function tuning_curves = tuning_curves_acceleration(obj, probe_id, i_table)
         %%tuning_curves_acceleration Load the .mat file containing acceleration tuning 
         %curves for the clusters in a probe recording

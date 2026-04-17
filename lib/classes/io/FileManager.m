@@ -873,6 +873,18 @@ classdef FileManager < handle
             exists = isfile(fname);
         end
         
+        function [fname, exists] = tf_tuning_curves(obj, probe_id)
+        %%tf_tuning_curves Path to the "TF tuning curve" .mat files
+        %
+        %   [FILENAME, EXISTS] = tf_tuning_curves(PROBE_ID)
+        %   for probe recording with ID string, PROBE_ID
+        %
+        %   EXISTS is true if the file exists and false otherwise.
+        
+            fname = fullfile(obj.path_config.formatted_data_dir, 'csvs', 'tf_tuning_curves', sprintf('%s.mat', probe_id));
+            exists = isfile(fname);
+        end
+        
         function [fname, exists] = tuning_curves_acceleration(obj, probe_id, i_table)
         %%tuning_curves_acceleration Path to the "tuning curve acceleration" .mat files
         %

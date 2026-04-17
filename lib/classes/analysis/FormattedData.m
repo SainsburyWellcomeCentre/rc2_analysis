@@ -1383,6 +1383,125 @@ classdef FormattedData < handle
                 end
             end
         end
+        
+        
+        function tbl = create_tf_tuning_curves(obj, trial_types, varargin)
+        %%create_tf_tuning_curves  Creates cell array of structures with
+        %%information about temporal frequency tuning of clusters to a set of trials.
+        %
+        %   TUNING_INFO = create_tf_tuning_curves(TRIAL_TYPES)
+        %   takes a cell array of trial group labels. So TRIAL_TYPES is of
+        %   the form {TRIAL_GROUP_LABEL_1, TRIAL_GROUP_LABEL_2, ...}.
+        %
+        %   TUNING_INFO = create_tf_tuning_curves(TRIAL_TYPES, 'model_selection', true)
+        %   enables model selection among linear, Gaussian, asymmetric Gaussian, 
+        %   and sigmoid models. Default is false.
+        %
+        %   This method pools data across all three TF batches, transforms
+        %   velocity to temporal frequency using batch-specific gain factors,
+        %   and creates TF tuning curves using TFTuningTable.
+        %
+        %   Gain transformation: TF = velocity * gain, where:
+        %     Batch 1: gain = 1/30 Hz/(cm/s)
+        %     Batch 2: gain = 2/30 Hz/(cm/s) 
+        %     Batch 3: gain = 4/30 Hz/(cm/s)
+        %
+        %   See also: TFTuningTable, RC2Analysis.create_tf_tuning_curves
+        
+            p = inputParser;
+            addParameter(p, 'model_selection', false, @islogical);
+            parse(p, varargin{:});
+            
+            % Batch pattern definitions
+            batch1_patterns = {'sf00p003_Bsf0p002_VX1p002', 'sf00p006_Bsf0p002_VX0p501', 'sf00p012_Bsf0p002_VX0p250'};
+            batch2_patterns = {'sf00p003_Bsf0p002_VX2p003', 'sf00p006_Bsf0p002_VX1p002', 'sf00p012_Bsf0p002_VX0p501'};
+            batch3_patterns = {'sf00p003_Bsf0p002_VX4p006', 'sf00p006_Bsf0p002_VX2p003', 'sf00p012_Bsf0p002_VX1p002'};
+            
+            batch_gains_values = [1/30, 2/30, 4/30];
+            all_batch_patterns = {batch1_patterns, batch2_patterns, batch3_patterns};
+            
+            % Load motion cloud sequence and cloud names
+            mc_root = obj.ctl.path_config.motion_clouds_root;
+            
+            seq_path = fullfile(mc_root, 'motion_cloud_sequence_250414.mat');
+            P = load(seq_path);
+            if isfield(P, 'presentation_sequence')
+                mc_sequence = P.presentation_sequence;
+            else
+                fns = fieldnames(P);
+                mc_sequence = [];
+                for fi = 1:numel(fns)
+                    v = P.(fns{fi});
+                    if isnumeric(v) && isvector(v)
+                        mc_sequence = v; break;
+                    end
+                end
+            end
+            
+            folders_path = fullfile(mc_root, 'image_folders.mat');
+            S = load(folders_path);
+            cloud_names = {};
+            fns = fieldnames(S);
+            for fi = 1:numel(fns)
+                v = S.(fns{fi});
+                if iscell(v)
+                    cloud_names = v; break;
+                elseif isstring(v)
+                    cloud_names = cellstr(v(:)); break;
+                elseif isstruct(v) && isfield(v, 'name')
+                    cloud_names = {v.name}; break;
+                end
+            end
+            cloud_names = cloud_names(:)';
+            
+            % Helper: check if string contains any of the substrings
+            contains_any = @(str, subs) any(cellfun(@(s) ~isempty(strfind(str, s)), subs)); %#ok<STREMP>
+            
+            tbl = cell(1, length(trial_types));
+            
+            for ii = 1 : length(trial_types)
+                
+                % Get all trials for this trial group
+                trials = obj.get_trials_with_trial_group_label(trial_types{ii});
+                
+                % Build batch_gains map: trial_id -> gain factor
+                batch_gains = containers.Map('KeyType', 'double', 'ValueType', 'double');
+                
+                aligned_trials = {};
+                for jj = 1 : length(trials)
+                    trial = trials{jj};
+                    trial_id = trial.trial_id;
+                    
+                    % Determine gain for this trial from its motion cloud name
+                    if trial_id >= 1 && trial_id <= length(mc_sequence)
+                        mc_id = mc_sequence(trial_id);
+                        if mc_id >= 1 && mc_id <= length(cloud_names)
+                            cname = cloud_names{mc_id};
+                            
+                            % Match against batch patterns
+                            for bi = 1:length(all_batch_patterns)
+                                if contains_any(cname, all_batch_patterns{bi})
+                                    batch_gains(trial_id) = batch_gains_values(bi);
+                                    break;
+                                end
+                            end
+                        end
+                    end
+                    
+                    aligned_trials{jj} = trial.to_aligned; %#ok<AGROW>
+                end
+                
+                % Create TFTuningTable
+                tt = TFTuningTable(obj.probe_id, 'model_selection', p.Results.model_selection);
+                tt.add_trials(aligned_trials, trial_types{ii}, batch_gains);
+                
+                % Compute tuning curves for all selected clusters
+                clusters = obj.selected_clusters();
+                for jj = 1 : length(clusters)
+                    tbl{ii}(jj) = tt.tuning_curve(clusters(jj));
+                end
+            end
+        end
        
         
         function [traces, t] = get_traces_around_times(obj, trials, times, limits, fs)
