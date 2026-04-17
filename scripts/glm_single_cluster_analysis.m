@@ -84,6 +84,9 @@ else
     fprintf('Using existing parallel pool with %d workers\n', pool.NumWorkers);
 end
 
+% --- Initialize RC2Analysis controller for path configuration ---
+ctl = RC2Analysis();
+
 % --- Open diary to capture all printed output ---
 log_timestamp = datestr(now, 'yyyymmdd_HHMMSS');
 log_filename = sprintf('glm_analysis_log_%s.txt', log_timestamp);
@@ -133,13 +136,13 @@ figure_dir              = {'glm_single_cluster'};
 % CSV output
 csv_output              = true;
 
-% --- Pre-computed tuning table paths ---
-tuning_curves_dir       = 'D:\mvelez\formatted_data\csvs\tuning_curves';
-tf_tuning_curves_dir    = 'D:\mvelez\formatted_data\csvs\tf_tuning_curves';
+% --- Pre-computed tuning table paths (via path_config) ---
+tuning_curves_dir       = fullfile(ctl.path_config.formatted_data_dir, 'csvs', 'tuning_curves');
+tf_tuning_curves_dir    = fullfile(ctl.path_config.formatted_data_dir, 'csvs', 'tf_tuning_curves');
 
-% Motion cloud data paths
-mc_sequence_path        = 'D:\mvelez\mateoData_mc\motion_cloud_sequence_250414.mat';
-mc_folders_path         = 'D:\mvelez\mateoData_mc\image_folders.mat';
+% Motion cloud data paths (via path_config)
+mc_sequence_path        = fullfile(ctl.path_config.motion_clouds_root, 'motion_cloud_sequence_250414.mat');
+mc_folders_path         = fullfile(ctl.path_config.motion_clouds_root, 'image_folders.mat');
 
 % --- Batch definitions ---
 exclude_patterns = {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'};
@@ -288,7 +291,6 @@ fprintf('  Loaded %d sequence entries, %d cloud names\n', length(mc_sequence), l
 
 fprintf('\n--- Pre-filtering Decision Tree ---\n');
 
-ctl = RC2Analysis();
 probe_ids = ctl.get_probe_ids(experiment_groups{:});
 ctl.setup_figures(figure_dir, save_figs);
 
