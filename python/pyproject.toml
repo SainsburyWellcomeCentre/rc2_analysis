@@ -25,6 +25,7 @@ test = ["pytest>=7"]
 
 [project.scripts]
 rc2-glm = "rc2_glm.pipeline:main"
+rc2-glm-compare = "rc2_glm.compare:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

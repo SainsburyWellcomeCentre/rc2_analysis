@@ -8,9 +8,22 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from scipy.signal import butter, filtfilt
 
 from rc2_formatted_data_reader import masks
 from rc2_formatted_data_reader.trial_conditions import CONDITION_MAP
+
+
+# Protocol → session channel used to derive per-trial velocity. Mirrors
+# Trial.velocity switch in lib/classes/trials/Trial.m (lines ~433–451).
+PROTOCOL_VELOCITY_CHANNEL: dict[str, str] = {
+    "Coupled": "filtered_teensy",
+    "EncoderOnly": "filtered_teensy",
+    "CoupledMismatch": "filtered_teensy_2",
+    "EncoderOnlyMismatch": "filtered_teensy_2",
+    "StageOnly": "stage",
+    "ReplayOnly": "multiplexer_output",
+}
 
 
 def _deref_scalar(f: h5py.File, ref) -> float:
@@ -29,6 +42,23 @@ def _deref_array(f: h5py.File, ref) -> np.ndarray:
 def _hdf5_string(ds: h5py.Dataset) -> str:
     raw = np.asarray(ds[()]).flatten()
     return "".join(chr(int(c)) for c in raw)
+
+
+def _filter_trace(
+    trace: np.ndarray, fs: float, *, cutoff_hz: float = 50.0, order: int = 3
+) -> np.ndarray:
+    """Zero-phase Butterworth low-pass matching ``lib/fcn/general/filter_trace.m``.
+
+    MATLAB applies the filter forward then on the reversed signal — scipy's
+    ``filtfilt`` is the standard zero-phase equivalent. Short traces where
+    ``filtfilt``'s padding would fail are returned unfiltered.
+    """
+    trace = np.asarray(trace, dtype=np.float64)
+    if trace.size < 3 * order + 1:
+        return trace.copy()
+    wn = cutoff_hz / (fs / 2.0)
+    b, a = butter(order, wn, btype="low")
+    return filtfilt(b, a, trace).astype(np.float64)
 
 
 class FormattedDataReader:
@@ -242,7 +272,7 @@ class FormattedDataReader:
             if len(sol_high) > 0:
                 start_off = int(sol_high[0] + remove_after_solenoid_start * fs)
 
-            vel = self.velocity(start, end)
+            vel = self.trial_velocity(trial_idx)
             position_tr = np.cumsum(vel) / fs
 
             c_start_pos = self._trial_config_scalar(trial_idx, "start_pos")
@@ -279,7 +309,65 @@ class FormattedDataReader:
         return self._file["sessions"]["probe_t"][0, start:end]
 
     def velocity(self, start: int, end: int) -> np.ndarray:
+        """DEPRECATED: returns ``filtered_teensy`` unconditionally.
+
+        This is the correct channel only for ``Coupled`` / ``EncoderOnly``
+        protocols. For ``StageOnly`` / ``ReplayOnly`` / ``*Mismatch`` trials it
+        returns an essentially-zero trace and silently breaks any downstream
+        motion mask. Use ``trial_velocity(trial_idx)`` for protocol-correct
+        velocity.
+        """
         return self._file["sessions"]["filtered_teensy"][0, start:end]
+
+    def trial_velocity_channel(self, trial_idx: int) -> str:
+        """Return the session channel used for this trial's velocity.
+
+        Mirrors the MATLAB ``Trial.velocity`` switch (see Trial.m ~433–451).
+        """
+        protocol = self.trial_protocol(trial_idx)
+        try:
+            return PROTOCOL_VELOCITY_CHANNEL[protocol]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown protocol {protocol!r} — no velocity channel mapping. "
+                f"Known: {sorted(PROTOCOL_VELOCITY_CHANNEL)}."
+            ) from exc
+
+    def trial_velocity(
+        self,
+        trial_idx: int,
+        *,
+        apply_filter: bool = True,
+        cutoff_hz: float = 50.0,
+        filter_order: int = 3,
+    ) -> np.ndarray:
+        """Return the per-trial velocity trace from the protocol-appropriate channel.
+
+        Replicates ``Trial.velocity`` from ``lib/classes/trials/Trial.m``:
+        picks the channel by protocol and applies ``filter_trace`` — an
+        order-``filter_order`` Butterworth low-pass at ``cutoff_hz``, run
+        zero-phase (``scipy.signal.filtfilt``).
+        """
+        channel = self.trial_velocity_channel(trial_idx)
+        start, end = self.trial_bounds(trial_idx)
+        raw = np.asarray(
+            self._file["sessions"][channel][0, start:end], dtype=np.float64
+        )
+        if not apply_filter:
+            return raw
+        return _filter_trace(raw, self.fs, cutoff_hz=cutoff_hz, order=filter_order)
+
+    def session_channel(self, name: str, start: int, end: int) -> np.ndarray | None:
+        """Return a slice of a named session channel, or ``None`` if missing.
+
+        Convenience for diagnostic tools that need to audit several candidate
+        channels (e.g. the trial-channel report) without hard-coding a method
+        per channel.
+        """
+        sess = self._file["sessions"]
+        if name not in sess:
+            return None
+        return np.asarray(sess[name][0, start:end])
 
     def solenoid(self, start: int, end: int) -> np.ndarray:
         return self._file["sessions"]["solenoid"][0, start:end]
@@ -315,16 +403,9 @@ class FormattedDataReader:
             return None
         return np.asarray(sess["camera_t"][()]).squeeze()
 
-    # --- Motion / stationary masks (simple thresholding) ---
-
-    def motion_mask(
-        self, trial_idx: int, start: int, end: int, threshold: float = 1.0
-    ) -> np.ndarray:
-        base_mask = masks.motion_mask(self.velocity(start, end), threshold)
-        return base_mask & self.trial_analysis_mask(trial_idx)
-
-    def stationary_mask(
-        self, trial_idx: int, start: int, end: int, threshold: float = 1.0
-    ) -> np.ndarray:
-        base_mask = masks.stationary_mask(self.velocity(start, end), threshold)
-        return base_mask & self.trial_analysis_mask(trial_idx)
+    # The bare threshold-based motion_mask / stationary_mask convenience
+    # methods that used to live here were removed alongside the velocity
+    # fix: they read ``filtered_teensy`` unconditionally and diverged from
+    # the ``treadmill_motion_mask`` logic used by ``rc2_glm.io._load_trial``.
+    # Compose ``masks.treadmill_motion_mask(trial_velocity(...), ...)``
+    # yourself if you need a single-call helper.

@@ -125,15 +125,22 @@ def test_session_arrays_lazy(formatted_mat_path):
 # --- Reader: motion / stationary masks ---
 
 
-def test_motion_and_stationary_masks_are_complementary(formatted_mat_path):
+def test_trial_velocity_length_matches_bounds(formatted_mat_path):
     with FormattedDataReader(formatted_mat_path) as r:
         s, e = r.trial_bounds(0)
-        m = r.motion_mask(0, s, e, threshold=1.0)
-        st = r.stationary_mask(0, s, e, threshold=1.0)
-        aw = r.trial_analysis_mask(0)
-        assert m.shape == st.shape == (e - s,)
+        v = r.trial_velocity(0)
+        assert v.shape == (e - s,)
+        assert v.dtype == np.float64
+
+
+def test_simple_threshold_masks_are_complementary_within_analysis_window(formatted_mat_path):
+    with FormattedDataReader(formatted_mat_path) as r:
+        v = r.trial_velocity(0)
+        m = masks.motion_mask(v, threshold=1.0) & r.trial_analysis_mask(0)
+        st = masks.stationary_mask(v, threshold=1.0) & r.trial_analysis_mask(0)
+        assert m.shape == st.shape == v.shape
         assert not (m & st).any()
-        assert (m | st == aw).all()
+        assert (m | st == r.trial_analysis_mask(0)).all()
         assert m.dtype == bool
 
 

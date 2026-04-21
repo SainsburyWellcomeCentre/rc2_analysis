@@ -34,7 +34,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from rc2_formatted_data_reader import StimulusLookup
+from rc2_formatted_data_reader import FormattedDataReader, StimulusLookup
+from rc2_formatted_data_reader.reader import PROTOCOL_VELOCITY_CHANNEL
 from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
 from rc2_glm.config import GLMConfig
 from rc2_glm.cross_validation import cross_validate_glm, make_trial_folds
@@ -42,7 +43,7 @@ from rc2_glm.design_matrix import assemble_design_matrix, assemble_design_matrix
 from rc2_glm.fitting import fit_poisson_glm
 from rc2_glm.forward_selection import SelectionResult, forward_select
 from rc2_glm.io import ProbeData, load_probe_data
-from rc2_glm.prefilter import prefilter_probe
+from rc2_glm.prefilter import per_trial_firing_rate, prefilter_probe
 from rc2_glm.time_binning import bin_cluster
 
 
@@ -137,6 +138,11 @@ def _run_pipeline_inner(
     )
     logger.info("probe_id=%s | n_trials=%d | n_clusters=%d",
                 probe.probe_id, len(probe.trials), len(probe.clusters))
+
+    _log_trial_channel_summary(probe)
+    if output_dir is not None:
+        _emit_trial_channel_report(mat_path, probe, output_dir / "diagnostics")
+        _emit_stationary_motion_fr(probe, output_dir / "diagnostics")
 
     if config.apply_prefilter:
         _banner("Prefilter")
@@ -534,6 +540,128 @@ def _log_prefilter_summary(prefilter_df: pd.DataFrame, keep_ids: set[int]) -> No
         logger.info("  %s: %d", cat, int(n))
     logger.info("total clusters: %d | keep for GLM: %d",
                 int(len(prefilter_df)), len(keep_ids))
+
+
+# --------------------------------------------------------------------------- #
+# Trial-channel diagnostics (protocol velocity selection)
+# --------------------------------------------------------------------------- #
+
+
+# All channels we audit per trial. The "chosen" channel is derived from
+# protocol via PROTOCOL_VELOCITY_CHANNEL; the rest are audited so that a
+# wrong choice or a dead channel is visible in the report.
+_AUDIT_CHANNELS: tuple[str, ...] = (
+    "filtered_teensy",
+    "filtered_teensy_2",
+    "stage",
+    "multiplexer_output",
+)
+
+# A motion fraction below this on the chosen channel is flagged as a
+# likely-bad trial (matches the prompt's 1% heuristic).
+_LOW_MOTION_WARN_FRACTION: float = 0.01
+
+
+def _log_trial_channel_summary(probe: ProbeData) -> None:
+    """Log protocol counts and which velocity channel each protocol resolved to."""
+    proto_counts: dict[str, int] = {}
+    channel_counts: dict[str, int] = {}
+    for t in probe.trials:
+        proto_counts[t.protocol] = proto_counts.get(t.protocol, 0) + 1
+        channel_counts[t.velocity_channel] = channel_counts.get(t.velocity_channel, 0) + 1
+    logger.info("protocol distribution: %s",
+                ", ".join(f"{k}: {v}" for k, v in sorted(proto_counts.items())))
+    logger.info("velocity channel distribution: %s",
+                ", ".join(f"{k}: {v}" for k, v in sorted(channel_counts.items())))
+
+
+def _emit_trial_channel_report(
+    mat_path: str | Path,
+    probe: ProbeData,
+    out_dir: Path,
+) -> None:
+    """Write per-trial motion fractions across all candidate channels.
+
+    One row per trial, with motion fraction (|v| >= 1 cm/s) computed on each
+    of ``filtered_teensy``, ``filtered_teensy_2``, ``stage``, and
+    ``multiplexer_output``, plus the chosen channel's motion fraction. Trials
+    whose chosen-channel motion fraction is < 1% get a WARNING line — on
+    passive paradigms this is the canary for "channel selection is still
+    wrong somewhere."
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    vel_thresh = probe.config.velocity_threshold
+    rows: list[dict] = []
+    with FormattedDataReader(mat_path) as reader:
+        for t in probe.trials:
+            s, e = reader.trial_bounds(t.trial_idx)
+            duration_s = (e - s) / reader.fs if reader.fs else float("nan")
+            row: dict = {
+                "trial_idx": t.trial_idx,
+                "trial_id": t.trial_id,
+                "protocol": t.protocol,
+                "condition": t.condition,
+                "duration_s": duration_s,
+                "chosen_channel": t.velocity_channel,
+            }
+            for ch in _AUDIT_CHANNELS:
+                trace = reader.session_channel(ch, s, e)
+                if trace is None:
+                    row[f"motion_frac_{ch}"] = float("nan")
+                else:
+                    row[f"motion_frac_{ch}"] = float(
+                        (np.abs(trace) >= vel_thresh).mean()
+                    )
+            row["motion_frac_chosen"] = row.get(f"motion_frac_{t.velocity_channel}", float("nan"))
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    report_path = out_dir / "trial_channel_report.csv"
+    df.to_csv(report_path, index=False)
+    logger.info("wrote %s (%d rows)",
+                report_path.relative_to(out_dir.parent), len(df))
+
+    low = df[df["motion_frac_chosen"] < _LOW_MOTION_WARN_FRACTION]
+    for _, row in low.iterrows():
+        logger.warning(
+            "trial_idx=%d trial_id=%d %s: chosen channel %s motion fraction "
+            "%.3f%% < %.1f%% threshold (likely bad trial)",
+            int(row["trial_idx"]), int(row["trial_id"]), row["protocol"],
+            row["chosen_channel"], 100.0 * row["motion_frac_chosen"],
+            100.0 * _LOW_MOTION_WARN_FRACTION,
+        )
+
+
+def _emit_stationary_motion_fr(probe: ProbeData, out_dir: Path) -> None:
+    """Write Python-native per-(cluster,trial) stationary/motion FR.
+
+    Parallel to the MATLAB-generated ``csvs/stationary_vs_motion_fr/<probe>.csv``.
+    Required by ``rc2-glm-compare`` check 7 (stationary-vs-motion FR parity)
+    — the velocity fix must bring the Python and MATLAB numbers within 1e-3
+    median relative error.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    for cluster in probe.clusters:
+        for trial in probe.trials:
+            stat_fr, mot_fr = per_trial_firing_rate(cluster, trial, probe.fs)
+            stat_time = float(trial.stationary_mask.sum()) / probe.fs
+            mot_time = float(trial.motion_mask.sum()) / probe.fs
+            rows.append({
+                "probe_id": probe.probe_id,
+                "trial_id": trial.trial_id,
+                "trial_group_label": trial.condition,
+                "cluster_id": cluster.cluster_id,
+                "stationary_fr": stat_fr,
+                "stationary_time": stat_time,
+                "motion_fr": mot_fr,
+                "motion_time": mot_time,
+            })
+    df = pd.DataFrame(rows)
+    path = out_dir / "stationary_vs_motion_fr_python.csv"
+    df.to_csv(path, index=False)
+    logger.info("wrote %s (%d rows)",
+                path.relative_to(out_dir.parent), len(df))
 
 
 # --------------------------------------------------------------------------- #

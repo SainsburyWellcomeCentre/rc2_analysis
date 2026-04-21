@@ -15,7 +15,7 @@ import numpy as np
 
 from rc2_formatted_data_reader import FormattedDataReader, StimulusLookup, masks
 from rc2_glm.config import GLMConfig
-from rc2_glm.masks_helpers import acceleration_from_velocity, filter_velocity
+from rc2_glm.masks_helpers import acceleration_from_velocity
 
 
 @dataclass
@@ -24,6 +24,7 @@ class TrialData:
     trial_id: int
     condition: str            # 'VT' | 'V' | 'T_Vstatic'
     protocol: str
+    velocity_channel: str     # 'filtered_teensy' | 'stage' | 'multiplexer_output' | ...
     probe_t: np.ndarray
     velocity: np.ndarray      # filtered velocity (cm/s)
     motion_mask: np.ndarray   # treadmill_motion_mask logic
@@ -114,12 +115,13 @@ def _load_trial(
     trial_id = reader.trial_id(trial_idx)
     condition = reader.trial_condition(trial_idx)
     protocol = reader.trial_protocol(trial_idx)
+    velocity_channel = reader.trial_velocity_channel(trial_idx)
 
-    raw_v = np.asarray(reader.velocity(s, e), dtype=np.float64)
-    v = (
-        filter_velocity(raw_v, reader.fs, config.filter_cutoff_hz, config.filter_order)
-        if config.apply_velocity_filter
-        else raw_v
+    v = reader.trial_velocity(
+        trial_idx,
+        apply_filter=config.apply_velocity_filter,
+        cutoff_hz=config.filter_cutoff_hz,
+        filter_order=config.filter_order,
     )
 
     accel = acceleration_from_velocity(v)
@@ -149,6 +151,7 @@ def _load_trial(
         trial_id=trial_id,
         condition=condition,
         protocol=protocol,
+        velocity_channel=velocity_channel,
         probe_t=np.asarray(reader.probe_t(s, e), dtype=np.float64),
         velocity=v,
         motion_mask=m_mask,
