@@ -19,6 +19,33 @@ def test_make_trial_folds_partitions_trials_round_robin():
     assert set(folds.tolist()) == {0, 1, 2, 3, 4}
 
 
+def test_make_trial_folds_stratifies_by_condition_when_provided():
+    trial_ids = np.array([1, 1, 2, 2, 3, 3, 4, 4])
+    conditions = np.array([
+        "stationary", "VT", "stationary", "VT",
+        "stationary", "VT", "stationary", "VT",
+    ], dtype=object)
+
+    folds = make_trial_folds(
+        trial_ids,
+        n_folds=2,
+        seed=0,
+        condition_labels_per_bin=conditions,
+    )
+
+    by_pair = {
+        (int(t), str(c)): set(folds[(trial_ids == t) & (conditions == c)])
+        for t, c in zip(trial_ids, conditions)
+    }
+    for pair, fset in by_pair.items():
+        assert len(fset) == 1, f"pair {pair} spans folds {fset}"
+
+    stationary_folds = {next(iter(fset)) for pair, fset in by_pair.items() if pair[1] == "stationary"}
+    vt_folds = {next(iter(fset)) for pair, fset in by_pair.items() if pair[1] == "VT"}
+    assert stationary_folds == {0, 1}
+    assert vt_folds == {0, 1}
+
+
 def _synth_poisson_with_trials(n_trials=20, n_per_trial=50, seed=0):
     rng = np.random.default_rng(seed)
     n = n_trials * n_per_trial

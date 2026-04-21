@@ -32,19 +32,43 @@ class CVResult:
 
 
 def make_trial_folds(
-    trial_ids_per_bin: np.ndarray, n_folds: int = 5, seed: int = 0
+    trial_ids_per_bin: np.ndarray,
+    n_folds: int = 5,
+    seed: int = 0,
+    condition_labels_per_bin: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Assign each row to a fold based on its trial_id.
+    """Assign each row to a fold based on trial and, optionally, condition.
 
-    Trials are shuffled with `seed` and dealt round-robin across folds,
-    so every fold has comparable trial coverage.
+    When ``condition_labels_per_bin`` is provided, folds are assigned over
+    unique ``(trial_id, condition)`` pairs and stratified independently by
+    condition, matching the MATLAB GLM pipeline.
     """
     trial_ids_per_bin = np.asarray(trial_ids_per_bin)
-    unique_trials = np.unique(trial_ids_per_bin)
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(unique_trials)
-    trial_to_fold = {int(t): int(i % n_folds) for i, t in enumerate(perm)}
-    return np.array([trial_to_fold[int(t)] for t in trial_ids_per_bin], dtype=np.int64)
+
+    if condition_labels_per_bin is None:
+        unique_trials = np.unique(trial_ids_per_bin)
+        perm = rng.permutation(unique_trials)
+        trial_to_fold = {int(t): int(i % n_folds) for i, t in enumerate(perm)}
+        return np.array([trial_to_fold[int(t)] for t in trial_ids_per_bin], dtype=np.int64)
+
+    conditions = np.asarray(condition_labels_per_bin, dtype=object)
+    if conditions.shape[0] != trial_ids_per_bin.shape[0]:
+        raise ValueError("condition_labels_per_bin must match trial_ids_per_bin length")
+
+    pair_to_fold: dict[tuple[int, str], int] = {}
+    for condition in np.unique(conditions):
+        cond_mask = conditions == condition
+        unique_trials = np.unique(trial_ids_per_bin[cond_mask])
+        perm = rng.permutation(unique_trials)
+        for i, trial_id in enumerate(perm):
+            pair_to_fold[(int(trial_id), str(condition))] = int(i % n_folds)
+
+    return np.array(
+        [pair_to_fold[(int(trial_id), str(condition))]
+         for trial_id, condition in zip(trial_ids_per_bin, conditions)],
+        dtype=np.int64,
+    )
 
 
 def cross_validate_glm(

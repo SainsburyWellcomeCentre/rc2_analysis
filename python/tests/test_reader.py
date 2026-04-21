@@ -128,10 +128,12 @@ def test_session_arrays_lazy(formatted_mat_path):
 def test_motion_and_stationary_masks_are_complementary(formatted_mat_path):
     with FormattedDataReader(formatted_mat_path) as r:
         s, e = r.trial_bounds(0)
-        m = r.motion_mask(s, e, threshold=1.0)
-        st = r.stationary_mask(s, e, threshold=1.0)
+        m = r.motion_mask(0, s, e, threshold=1.0)
+        st = r.stationary_mask(0, s, e, threshold=1.0)
+        aw = r.trial_analysis_mask(0)
         assert m.shape == st.shape == (e - s,)
-        assert (m == ~st).all()
+        assert not (m & st).any()
+        assert (m | st == aw).all()
         assert m.dtype == bool
 
 
@@ -164,6 +166,14 @@ def test_treadmill_motion_mask_long_stationary_kept_stationary():
     assert mask[:1000].all()
     assert (~mask[1000:1500]).all()
     assert mask[1500:].all()
+
+
+def test_treadmill_motion_mask_matches_matlab_signed_velocity_threshold():
+    fs = 1000.0
+    velocity = np.full(500, -5.0)
+    accel = np.zeros_like(velocity)
+    mask = masks.treadmill_motion_mask(velocity, accel, fs)
+    assert (~mask).all()
 
 
 # --- Stimulus lookup ---

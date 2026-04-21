@@ -31,6 +31,7 @@ class GLMConfig:
 
     # --- GLM fitting ---
     lambda_ridge: float = 0.0
+    full_interaction_lambda: float = 1.0
     lambda_ridge_min: float = 1e-6
     irls_max_iter: int = 100
     irls_tol: float = 1e-8
@@ -56,7 +57,7 @@ class GLMConfig:
     )  # -π/4, 0, π/4, π/2 (sorted)
 
     # --- Prefilter ---
-    apply_prefilter: bool = False
+    apply_prefilter: bool = True
     prefilter_seed: int = 0
 
     # --- Compute backend ---

@@ -145,6 +145,7 @@ def prefilter_cluster(
     probe: ProbeData,
     cluster: ClusterData,
     alpha: float = 0.05,
+    svm_lookup: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> PrefilterResult:
     """Run the stationary/motion test for T_Vstatic, V, VT and categorise."""
     by_cond: dict[str, list[TrialData]] = {c: [] for c in CONDITIONS}
@@ -160,7 +161,14 @@ def prefilter_cluster(
         stat_rates = np.empty(len(trials))
         mot_rates = np.empty(len(trials))
         for i, trial in enumerate(trials):
-            s, m = per_trial_firing_rate(cluster, trial, probe.fs)
+            if svm_lookup is not None:
+                key = (cluster.cluster_id, trial.trial_id)
+                if key in svm_lookup:
+                    s, m = svm_lookup[key]
+                else:
+                    s, m = float("nan"), float("nan")
+            else:
+                s, m = per_trial_firing_rate(cluster, trial, probe.fs)
             stat_rates[i] = s
             mot_rates[i] = m
         result = stationary_vs_motion_test(stat_rates, mot_rates, alpha=alpha)
@@ -211,12 +219,34 @@ def prefilter_probe(
     probe: ProbeData,
     config: GLMConfig | None = None,
     alpha: float = 0.05,
+    use_precomputed: bool = True,
 ) -> pd.DataFrame:
     """Run the prefilter for every cluster in ``probe`` and return a table."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     config = config or probe.config
+
+    svm_lookup = None
+    if use_precomputed:
+        svm_csv = probe.mat_path.parent / "csvs" / "stationary_vs_motion_fr" / probe.mat_path.with_suffix(".csv").name
+        if svm_csv.exists():
+            logger.info("Loading precomputed stationary vs motion FR from %s", svm_csv.name)
+            try:
+                df = pd.read_csv(svm_csv)
+                # Dictionary mapping (cluster_id, trial_id) -> (stationary_fr, motion_fr)
+                svm_lookup = {
+                    (int(r.cluster_id), int(r.trial_id)): (float(r.stationary_fr), float(r.motion_fr))
+                    for r in df.itertuples()
+                }
+            except Exception as e:
+                logger.warning("Failed to load %s: %s", svm_csv.name, e)
+        else:
+            logger.info("No precomputed stationary vs motion FR found at %s. Recalculating.", svm_csv.name)
+
     rows: list[dict] = []
     for cluster in probe.clusters:
-        res = prefilter_cluster(probe, cluster, alpha=alpha)
+        res = prefilter_cluster(probe, cluster, alpha=alpha, svm_lookup=svm_lookup)
         row = {
             "probe_id": probe.probe_id,
             "cluster_idx": res.cluster_idx,

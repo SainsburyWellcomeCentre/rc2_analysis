@@ -163,10 +163,14 @@ def _run_pipeline_inner(
             logger.info("[%d/%d] cluster %d: no bins, skipped",
                         idx, len(clusters), cluster.cluster_id)
             continue
+        if len(df) < 10:
+            logger.info("[%d/%d] cluster %d: fewer than 10 bins, skipped",
+                        idx, len(clusters), cluster.cluster_id)
+            continue
         t_cluster = time.perf_counter()
         fit = _fit_one_cluster(probe, df, cluster.cluster_id, config, backend)
         if fit is None:
-            logger.info("[%d/%d] cluster %d: no motion spikes, skipped",
+            logger.info("[%d/%d] cluster %d: no usable spikes, skipped",
                         idx, len(clusters), cluster.cluster_id)
             continue
         comparison_rows.append(_comparison_row(probe.probe_id, df, fit))
@@ -226,17 +230,19 @@ def _fit_one_cluster(
     config: GLMConfig,
     backend: str,
 ) -> ClusterFit | None:
-    motion = df[df["condition"] != "stationary"].copy()
-    if motion.empty or motion["spike_count"].sum() == 0:
+    motion_mask = df["condition"] != "stationary"
+    motion = df.loc[motion_mask].copy()
+    if motion.empty or df["spike_count"].sum() == 0:
         return None
 
-    speed = motion["speed"].to_numpy(dtype=np.float64)
-    tf = motion["tf"].to_numpy(dtype=np.float64)
-    onset = motion["time_since_onset"].to_numpy(dtype=np.float64)
-    sf_vals = motion["sf"].to_numpy(dtype=np.float64)
-    or_vals = motion["orientation"].to_numpy(dtype=np.float64)
-    y = motion["spike_count"].to_numpy(dtype=np.float64)
-    trial_ids = motion["trial_id"].to_numpy(dtype=np.int64)
+    speed = df["speed"].to_numpy(dtype=np.float64)
+    tf = df["tf"].to_numpy(dtype=np.float64)
+    onset = df["time_since_onset"].to_numpy(dtype=np.float64)
+    sf_vals = df["sf"].to_numpy(dtype=np.float64)
+    or_vals = df["orientation"].to_numpy(dtype=np.float64)
+    y = df["spike_count"].to_numpy(dtype=np.float64)
+    trial_ids = df["trial_id"].to_numpy(dtype=np.int64)
+    condition_labels = df["condition"].to_numpy(dtype=object)
 
     B_speed = raised_cosine_basis(
         speed, config.n_speed_bases, *config.speed_range
@@ -249,28 +255,44 @@ def _fit_one_cluster(
     )
 
     offset = float(np.log(config.time_bin_width))
-    fold_ids = make_trial_folds(trial_ids, config.n_folds, config.cv_seed)
+    fold_ids = make_trial_folds(
+        trial_ids,
+        config.n_folds,
+        config.cv_seed,
+        condition_labels_per_bin=condition_labels,
+    )
+
+    sf_valid = sf_vals[sf_vals != 0.0]
+    sf_ref_levels = np.sort(np.unique(sf_valid)).tolist() if sf_valid.size > 0 else []
+    
+    or_valid = or_vals[or_vals != 0.0]
+    or_ref_levels = np.sort(np.unique(or_valid)).tolist() if or_valid.size > 0 else []
 
     selection = forward_select(
         B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, fold_ids,
         config=config, backend=backend,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
     additive_cv = _cv_for_label(
         "Additive", B_speed, B_tf, B_onset, sf_vals, or_vals,
-        y, offset, fold_ids, backend,
+        y, offset, fold_ids, backend, config,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
     full_int_cv = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
-        y, offset, fold_ids, backend,
+        y, offset, fold_ids, backend, config,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
     coef_df, betas, col_names_by_model, preds = _fit_plot_models(
         selection.selected_vars,
         B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, config, backend,
+        motion_row_mask=motion_mask.to_numpy(dtype=bool),
         cluster_id=cluster_id,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
     return ClusterFit(
@@ -278,7 +300,7 @@ def _fit_one_cluster(
         selection=selection,
         additive_cv_bps=additive_cv,
         full_interaction_cv_bps=full_int_cv,
-        n_bins=int(motion.shape[0]),
+        n_bins=int(df.shape[0]),
         n_spikes=int(y.sum()),
         coefficients=coef_df,
         cluster_df=df,
@@ -293,14 +315,18 @@ def _cv_for_label(
     B_speed: np.ndarray, B_tf: np.ndarray, B_onset: np.ndarray,
     sf_vals: np.ndarray, or_vals: np.ndarray,
     y: np.ndarray, offset: float,
-    fold_ids: np.ndarray, backend: str,
+    fold_ids: np.ndarray, backend: str, config: GLMConfig,
+    sf_ref_levels: list[float] | None = None,
+    or_ref_levels: list[float] | None = None,
 ) -> float:
     X, _ = assemble_design_matrix(
         B_speed, B_tf, B_onset, sf_vals, or_vals, label,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
     if X.shape[1] >= y.size:
         return float("nan")
-    cv = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=0.0, backend=backend)
+    lambda_ridge = config.full_interaction_lambda if label == "FullInteraction" else 0.0
+    cv = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=lambda_ridge, backend=backend)
     return float(cv.cv_bits_per_spike)
 
 
@@ -318,7 +344,10 @@ def _fit_plot_models(
     sf_vals: np.ndarray, or_vals: np.ndarray,
     y: np.ndarray, offset: float,
     config: GLMConfig, backend: str,
+    motion_row_mask: np.ndarray,
     cluster_id: int,
+    sf_ref_levels: list[float] | None = None,
+    or_ref_levels: list[float] | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, np.ndarray],
@@ -349,6 +378,7 @@ def _fit_plot_models(
     for label, vars_for_label in model_defs:
         X, names = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, vars_for_label,
+            sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         )
         if X.shape[1] == 0:
             logger.warning(
@@ -363,12 +393,18 @@ def _fit_plot_models(
                 cluster_id, label, X.shape[1], y.size,
             )
             continue
+        lambda_ridge = (
+            config.full_interaction_lambda
+            if label == "FullInteraction"
+            else config.lambda_ridge
+        )
         fit = fit_poisson_glm(
-            X, y, offset, lambda_ridge=config.lambda_ridge, backend=backend,
+            X, y, offset, lambda_ridge=lambda_ridge, backend=backend,
         )
         betas[label] = np.asarray(fit.beta, dtype=np.float64).copy()
         col_names_by_model[label] = list(names)
-        preds[label] = np.exp(np.clip(X @ fit.beta, -20.0, 20.0))
+        preds_full = np.exp(np.clip(X @ fit.beta, -20.0, 20.0))
+        preds[label] = preds_full[motion_row_mask]
         logger.info(
             "cluster %d: fit %s | %d coefs | pred FR range [%.2f, %.2f] Hz",
             cluster_id, label, X.shape[1],
@@ -655,8 +691,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Include non-VISp clusters (default: VISp only)",
     )
     parser.add_argument(
-        "--prefilter", action="store_true",
-        help="Run stationary/motion Wilcoxon prefilter before GLM",
+        "--no-prefilter", dest="prefilter", action="store_false",
+        help="Skip the stationary/motion Wilcoxon prefilter before GLM",
     )
     parser.add_argument(
         "--mc-sequence", default=env_mc_seq,
@@ -678,7 +714,7 @@ def main(argv: list[str] | None = None) -> int:
         "--plot-clusters", type=int, default=None,
         help="Cap per-cluster plots to the first N retained clusters (debug).",
     )
-    parser.set_defaults(make_plots=True)
+    parser.set_defaults(make_plots=True, prefilter=True)
     args = parser.parse_args(argv)
 
     mat_path = _resolve_mat_path(args.mat, env_path, env_dir)

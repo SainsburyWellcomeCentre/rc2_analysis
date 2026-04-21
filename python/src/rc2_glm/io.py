@@ -46,6 +46,7 @@ class ClusterData:
 class ProbeData:
     """All trial / cluster data for a single formatted .mat file."""
     probe_id: str
+    mat_path: Path
     fs: float
     config: GLMConfig
     trials: list[TrialData] = field(default_factory=list)
@@ -95,6 +96,7 @@ def load_probe_data(
 
         return ProbeData(
             probe_id=reader.probe_id,
+            mat_path=Path(mat_path),
             fs=fs,
             config=config,
             trials=trials,
@@ -129,7 +131,9 @@ def _load_trial(
         acc_thresh=config.acceleration_threshold,
         min_dur=config.min_stationary_duration,
     )
-    s_mask = ~m_mask
+    analysis_mask = reader.trial_analysis_mask(trial_idx)
+    m_mask = m_mask & analysis_mask
+    s_mask = (~m_mask) & analysis_mask
 
     sf = orient = gain = float("nan")
     excluded = False

@@ -32,13 +32,13 @@ def treadmill_motion_mask(
 ) -> np.ndarray:
     """Replicate MATLAB Trial.treadmill_motion_mask.
 
-    Stationary samples are those with `|velocity| < vel_thresh` AND
+    Stationary samples are those with `velocity < vel_thresh` AND
     `|acceleration| < acc_thresh`. Any contiguous stationary run shorter
     than `min_dur` seconds is promoted to motion. Returns the negation
     (motion mask).
     """
-    speed = np.abs(velocity)
-    stationary = (speed < vel_thresh) & (np.abs(acceleration) < acc_thresh)
+    velocity = np.asarray(velocity, dtype=np.float64)
+    stationary = (velocity < vel_thresh) & (np.abs(acceleration) < acc_thresh)
 
     if not stationary.any():
         return ~stationary

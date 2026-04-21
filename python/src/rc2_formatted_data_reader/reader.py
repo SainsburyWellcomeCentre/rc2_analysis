@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import csv
 from pathlib import Path
 
 import h5py
@@ -44,6 +45,23 @@ class FormattedDataReader:
     def __init__(self, mat_path: str | Path):
         self._path = Path(mat_path)
         self._f: h5py.File | None = h5py.File(self._path, "r")
+        self._replay_offsets = self._load_replay_offsets()
+
+    def _load_replay_offsets(self) -> dict[int, int]:
+        offsets: dict[int, int] = {}
+        csv_path = self._path.parent / "csvs" / "trial_matched_offsets" / self._path.with_suffix(".csv").name
+        if not csv_path.exists():
+            return offsets
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    replay_id = int(row["replay_trial_id"])
+                    offset = int(float(row["sample_offset"]))
+                    offsets[replay_id] = offset
+                except (ValueError, KeyError):
+                    continue
+        return offsets
 
     # --- Context manager / lifecycle ---
 
@@ -134,6 +152,11 @@ class FormattedDataReader:
         f = self._file
         start = int(_deref_scalar(f, f["sessions"]["trials"]["start_idx"][trial_idx, 0]))
         end = int(_deref_scalar(f, f["sessions"]["trials"]["end_idx"][trial_idx, 0]))
+        trial_id = self.trial_id(trial_idx)
+        if trial_id in self._replay_offsets:
+            offset = self._replay_offsets[trial_id]
+            start += offset
+            end += offset
         return start, end
 
     def trial_id(self, trial_idx: int) -> int:
@@ -152,6 +175,103 @@ class FormattedDataReader:
 
     def trial_condition(self, trial_idx: int) -> str:
         return CONDITION_MAP[self._trial_sequence(trial_idx)]
+
+    def _trial_config_scalar(self, trial_idx: int, key: str, default: float = 0.0) -> float:
+        f = self._file
+        cfg_ref = f["sessions"]["trials"]["config"][trial_idx, 0]
+        cfg = f[cfg_ref]
+        if key in cfg:
+            val = cfg[key][0, 0]
+            if type(val).__name__ == 'Reference':
+                return _deref_scalar(f, val)
+            return float(val)
+        return default
+
+    def is_replay(self, trial_idx: int) -> bool:
+        """Returns True if the trial is a replay protocol."""
+        return self.trial_protocol(trial_idx) in ("StageOnly", "ReplayOnly")
+
+    def trial_analysis_mask(self, trial_idx: int) -> np.ndarray:
+        """Returns the boolean analysis window mask replicating AlignedTrial logic."""
+        fs = self.fs
+        start, end = self.trial_bounds(trial_idx)
+        solenoid = self.solenoid(start, end)
+        protocol = self.trial_protocol(trial_idx)
+
+        remove_after_solenoid_start = 0.2
+        remove_at_end = 0.55
+        add_before_solenoid_low = 2.0
+
+        mask = np.zeros(len(solenoid), dtype=bool)
+
+        if protocol in ("Coupled", "EncoderOnly"):
+            idx = np.where(solenoid < 2.5)[0]
+            if len(idx) > 0:
+                idx = idx[:-1] # MATLAB removes last idx
+                p1 = np.arange(int(idx[0] - add_before_solenoid_low * fs), idx[0])
+                p2 = np.arange(int(idx[0] + remove_after_solenoid_start * fs), int(idx[-1] - remove_at_end * fs) + 1)
+                idx_new = np.concatenate([p1, p2])
+                idx_new = idx_new[(idx_new >= 0) & (idx_new < len(solenoid))]
+                mask[idx_new] = True
+
+        elif protocol in ("CoupledMismatch", "EncoderOnlyMismatch"):
+            after_mm_to_remove = 3.0
+            idx = np.where(solenoid < 2.5)[0]
+            if len(idx) > 0:
+                idx = idx[:-1]
+                p1 = np.arange(int(idx[0] - add_before_solenoid_low * fs), idx[0])
+                p2 = np.arange(int(idx[0] + remove_after_solenoid_start * fs), int(idx[-1] - remove_at_end * fs) + 1)
+                idx_new = np.concatenate([p1, p2])
+
+                sess = self._file["sessions"]
+                teensy_gain = sess["minidaq_ao0"][0, start:end] if "minidaq_ao0" in sess else sess["teensy_gain"][0, start:end]
+                is_high = (teensy_gain > 2.5).astype(int)
+                mm_onsets = np.where(np.diff(is_high) == 1)[0]
+                if len(mm_onsets) > 0:
+                    mm_onset_idx = mm_onsets[0] + 1
+                    p1_new = np.arange(idx_new[0] if len(idx_new) > 0 else 0, mm_onset_idx + 1)
+                    p2_new = np.arange(int(mm_onset_idx + after_mm_to_remove * fs), (idx_new[-1] + 1) if len(idx_new) > 0 else len(solenoid))
+                    idx_new = np.concatenate([p1_new, p2_new])
+
+                idx_new = idx_new[(idx_new >= 0) & (idx_new < len(solenoid))]
+                mask[idx_new] = True
+
+        elif protocol in ("StageOnly", "ReplayOnly"):
+            sol_high = np.where(solenoid > 2.5)[0]
+            start_off = 0
+            if len(sol_high) > 0:
+                start_off = int(sol_high[0] + remove_after_solenoid_start * fs)
+
+            vel = self.velocity(start, end)
+            position_tr = np.cumsum(vel) / fs
+
+            c_start_pos = self._trial_config_scalar(trial_idx, "start_pos")
+            c_fwd_limit = self._trial_config_scalar(trial_idx, "forward_limit")
+            thresh = 0.98 * (c_start_pos - c_fwd_limit) / 10.0
+
+            pos_high = np.where(position_tr > thresh)[0]
+            end_off = len(solenoid) - 1
+            if len(pos_high) > 0:
+                end_off = pos_high[0]
+
+            idx_new = np.arange(start_off, end_off + 1)
+            idx_new = idx_new[(idx_new >= 0) & (idx_new < len(solenoid))]
+            mask[idx_new] = True
+
+        rc2_t = np.arange(len(solenoid)) / fs
+        baseline = np.zeros(len(solenoid), dtype=bool)
+        if protocol in ("Coupled", "EncoderOnly", "CoupledMismatch", "EncoderOnlyMismatch"):
+            sol_down = np.where(np.diff((solenoid > 2.5).astype(int)) == -1)[0]
+            if len(sol_down) > 0:
+                t_ref = rc2_t[sol_down[0]]
+                baseline = (rc2_t > (t_ref - 3.0)) & (rc2_t < (t_ref - 1.0))
+        elif protocol in ("StageOnly", "ReplayOnly"):
+            sol_up = np.where(np.diff((solenoid > 2.5).astype(int)) == 1)[0]
+            if len(sol_up) > 0:
+                t_ref = rc2_t[sol_up[0]]
+                baseline = (rc2_t > (t_ref + 2.0)) & (rc2_t < (t_ref + 4.0))
+
+        return mask | baseline
 
     # --- Session-level arrays (lazy slicing) ---
 
@@ -198,11 +318,13 @@ class FormattedDataReader:
     # --- Motion / stationary masks (simple thresholding) ---
 
     def motion_mask(
-        self, start: int, end: int, threshold: float = 1.0
+        self, trial_idx: int, start: int, end: int, threshold: float = 1.0
     ) -> np.ndarray:
-        return masks.motion_mask(self.velocity(start, end), threshold)
+        base_mask = masks.motion_mask(self.velocity(start, end), threshold)
+        return base_mask & self.trial_analysis_mask(trial_idx)
 
     def stationary_mask(
-        self, start: int, end: int, threshold: float = 1.0
+        self, trial_idx: int, start: int, end: int, threshold: float = 1.0
     ) -> np.ndarray:
-        return masks.stationary_mask(self.velocity(start, end), threshold)
+        base_mask = masks.stationary_mask(self.velocity(start, end), threshold)
+        return base_mask & self.trial_analysis_mask(trial_idx)
