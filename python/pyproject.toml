@@ -16,6 +16,8 @@ dependencies = [
     "nemos>=0.2.7",
     "jax",
     "jaxlib",
+    "python-dotenv>=1.0",
+    "matplotlib>=3.5",
 ]
 
 [project.optional-dependencies]
