@@ -1,3 +1,10 @@
 # List of untracked files to ignore
 
 .asv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
