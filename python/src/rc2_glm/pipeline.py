@@ -305,3 +305,59 @@ def _coefficient_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
             "se": row["se"],
         })
     return rows
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: ``rc2-glm <mat> <out_dir> [--backend irls|nemos]``."""
+    import argparse
+    from dataclasses import replace
+
+    parser = argparse.ArgumentParser(
+        prog="rc2-glm",
+        description="Run the rc2 Poisson GLM pipeline on a formatted .mat file.",
+    )
+    parser.add_argument("mat", help="Path to a formatted v7.3 .mat file")
+    parser.add_argument("out_dir", help="Directory for CSV outputs")
+    parser.add_argument(
+        "--backend", choices=("irls", "nemos"), default="irls",
+        help="Fitting backend (default: irls)",
+    )
+    parser.add_argument(
+        "--all-clusters", action="store_true",
+        help="Include non-VISp clusters (default: VISp only)",
+    )
+    parser.add_argument(
+        "--prefilter", action="store_true",
+        help="Run stationary/motion Wilcoxon prefilter before GLM",
+    )
+    parser.add_argument(
+        "--mc-sequence", default=None,
+        help="Motion-cloud sequence .mat (enables V/VT stimulus params)",
+    )
+    parser.add_argument(
+        "--mc-folders", default=None,
+        help="image_folders.mat (paired with --mc-sequence)",
+    )
+    args = parser.parse_args(argv)
+
+    config = replace(GLMConfig(), apply_prefilter=args.prefilter)
+
+    lookup = None
+    if args.mc_sequence and args.mc_folders:
+        from rc2_formatted_data_reader import StimulusLookup
+        lookup = StimulusLookup(args.mc_sequence, args.mc_folders)
+
+    result = run_pipeline(
+        mat_path=args.mat,
+        config=config,
+        output_dir=args.out_dir,
+        stimulus_lookup=lookup,
+        backend=args.backend,
+        visp_only=not args.all_clusters,
+    )
+    print(f"Wrote {len(result.model_comparison)} cluster rows to {args.out_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
