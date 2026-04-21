@@ -1406,6 +1406,24 @@ all_coefficients_per_cluster = cell(n_unique_clusters, 1);
 unique_pids = unique_clusters.probe_id;
 unique_cids = unique_clusters.cluster_id;
 
+% Pre-slice T_master_time into per-cluster tables so the parfor can treat
+% it as a *sliced* variable. Without this, MATLAB broadcasts the whole
+% table to every worker (N_workers × full-table copies resident in RAM).
+fprintf('\n--- Pre-slicing time-bin table per cluster ---\n');
+t_split = tic;
+T_per_cluster = cell(n_unique_clusters, 1);
+for ci_split = 1:n_unique_clusters
+    idx_split = T_master_time.probe_id == unique_pids(ci_split) & ...
+                T_master_time.cluster_id == unique_cids(ci_split);
+    T_per_cluster{ci_split} = T_master_time(idx_split, :);
+end
+fprintf('  Split into %d per-cluster tables in %.1f s\n', n_unique_clusters, toc(t_split));
+
+% Free the full master table — the parfor uses T_per_cluster as a sliced
+% var, and all downstream per-cluster consumers have been migrated. The
+% CSV export at the end rebuilds the concatenated table on demand.
+clear T_master_time
+
 fprintf('\n--- Fitting GLMs in parallel (%d clusters) ---\n', n_unique_clusters);
 
 % === PARALLEL GLM FITTING ===
@@ -1414,15 +1432,13 @@ parfor_results = cell(n_unique_clusters, 1);
 parfor ci = 1:n_unique_clusters
     pid = unique_pids(ci);
     cid = unique_cids(ci);
-    
+
     gt_tag = 'time';  % Only time-bin GLM now
-    
-    % Use time-bin table
-    T_all = T_master_time;
+
     lambda_reg = lambda_time;
-    
-    idx = T_all.probe_id == pid & T_all.cluster_id == cid;
-    T_cluster = T_all(idx, :);
+
+    % Sliced variable: MATLAB sends only T_per_cluster{ci} to this worker.
+    T_cluster = T_per_cluster{ci};
     
     % Initialize result struct for this cluster
     cl_result = struct();
@@ -1523,8 +1539,10 @@ parfor ci = 1:n_unique_clusters
     % =====================================================================
     models_to_fit = {'Null', 'Selected', 'Additive', 'FullInteraction'};
     cl_result.models = struct();
-    cl_coefficients = {};
-    
+    % Collect per-model coefficient cells, then vertcat once at the end —
+    % avoids the quadratic growth of `cl_coefficients{end+1} = …` per row.
+    cl_model_coefficients = cell(length(models_to_fit), 1);
+
     for mi = 1:length(models_to_fit)
         ml = models_to_fit{mi};
         
@@ -1585,25 +1603,27 @@ parfor ci = 1:n_unique_clusters
             cl_result.models.(ml).cv_bps = selected_cv_bps;
         end
         
-        % Store coefficients
+        % Store coefficients (preallocated per model)
         n_beta = length(res.beta);
+        model_coeffs = cell(n_beta, 1);
         for ki = 1:n_beta
-            cl_coefficients{end+1} = {char(pid), cid, gt_tag, ml, col_names{ki}, ...
-                res.beta(ki), res.se(ki)}; %#ok<AGROW>
+            model_coeffs{ki} = {char(pid), cid, gt_tag, ml, col_names{ki}, ...
+                res.beta(ki), res.se(ki)};
         end
+        cl_model_coefficients{mi} = model_coeffs;
         
         % Store predictions
-        cl_result.models.(ml).predicted_count = res.predicted_count;
-        cl_result.models.(ml).cv_predicted_count = cv_predicted;
-        cl_result.models.(ml).predicted_fr = res.predicted_count ./ exp(offset);
+        % Only cv_predicted_fr is consumed downstream (plotting); the other
+        % prediction vectors (predicted_count, cv_predicted_count,
+        % predicted_fr, pearson_residuals) were written but never read, so
+        % we skip them to keep worker→client transfers small.
         cl_result.models.(ml).cv_predicted_fr = cv_predicted ./ exp(offset);
-        cl_result.models.(ml).pearson_residuals = res.pearson_residuals;
         cl_result.models.(ml).beta = res.beta;
         cl_result.models.(ml).se = res.se;
         cl_result.models.(ml).col_names = col_names;
     end
     
-    cl_result.coefficients = cl_coefficients;
+    cl_result.coefficients = vertcat(cl_model_coefficients{:});
     
     % --- Compute delta comparisons ---
     cl_result.delta_bps_selected_vs_null = cl_result.Selected_cv_bps - cl_result.Null_cv_bps;
@@ -1703,11 +1723,7 @@ for ci = 1:n_unique_clusters
             end
             
             if ~cl_result.models.(ml).skipped
-                cluster_predictions.(gt_tag){ci}.(ml).predicted_count = cl_result.models.(ml).predicted_count;
-                cluster_predictions.(gt_tag){ci}.(ml).cv_predicted_count = cl_result.models.(ml).cv_predicted_count;
-                cluster_predictions.(gt_tag){ci}.(ml).predicted_fr = cl_result.models.(ml).predicted_fr;
                 cluster_predictions.(gt_tag){ci}.(ml).cv_predicted_fr = cl_result.models.(ml).cv_predicted_fr;
-                cluster_predictions.(gt_tag){ci}.(ml).pearson_residuals = cl_result.models.(ml).pearson_residuals;
                 cluster_predictions.(gt_tag){ci}.(ml).beta = cl_result.models.(ml).beta;
                 cluster_predictions.(gt_tag){ci}.(ml).se = cl_result.models.(ml).se;
                 cluster_predictions.(gt_tag){ci}.(ml).col_names = cl_result.models.(ml).col_names;
@@ -2253,8 +2269,9 @@ parfor ci = 1:n_unique_clusters
     pid = unique_pids(ci);
     cid = unique_cids(ci);
 
-    idx = T_master_time.probe_id == pid & T_master_time.cluster_id == cid;
-    T_cl = T_master_time(idx, :);
+    % Sliced variable (pre-built before first GLM parfor) — avoids
+    % broadcasting the full T_master_time to every worker.
+    T_cl = T_per_cluster{ci};
 
     r = struct();
     r.valid = false;
@@ -2714,9 +2731,8 @@ for ci = 1:n_unique_clusters
         char(pid), cid, selected_vars_str, class_time_str), 'FontSize', 10, 'FontWeight', 'bold');
     
     % --- Pre-compute smoothed observed FR for this cluster (used in all scatter plots) ---
-    % Extract cluster data once (same for all model rows)
-    idx_cl_scatter = T_master_time.probe_id == pid & T_master_time.cluster_id == cid;
-    T_cluster_scatter = T_master_time(idx_cl_scatter, :);
+    % Use pre-sliced per-cluster table to avoid scanning the full master table.
+    T_cluster_scatter = T_per_cluster{ci};
     
     % Smoothing kernel (boxcar, matching trial-level plots)
     n_smooth_bins_scatter = round(obs_fr_smooth_width / time_bin_width);
@@ -2750,13 +2766,10 @@ for ci = 1:n_unique_clusters
         ml     = scatter_row_defs{ri, 2};
         row_label = scatter_row_defs{ri, 3};
         
-        T_all = T_master_time;
-        
         % Highlight the Selected model row with green border
         is_winner = strcmp(ml, 'Selected');
-        
-        idx = T_all.probe_id == pid & T_all.cluster_id == cid;
-        T_cluster = T_all(idx, :);
+
+        T_cluster = T_per_cluster{ci};
         vt_idx_cl = T_cluster.condition == "VT";
         
         has_predictions = ~isempty(cluster_predictions.(gt_tag){ci}) && ...
@@ -3451,10 +3464,10 @@ for ci = 1:n_unique_clusters
         end
     end
     % Add stationary firing rate (black dot at speed=0)
-    idx_stat_rc = T_master_time.probe_id == pid & T_master_time.cluster_id == cid & ...
-                  T_master_time.condition == "stationary";
+    T_cl_rc = T_per_cluster{ci};
+    idx_stat_rc = T_cl_rc.condition == "stationary";
     if sum(idx_stat_rc) > 0
-        stat_spikes = T_master_time.spike_count(idx_stat_rc);
+        stat_spikes = T_cl_rc.spike_count(idx_stat_rc);
         fr_stat_mean = mean(stat_spikes) / time_bin_width;
         fr_stat_std  = std(stat_spikes / time_bin_width);
         errorbar(0, fr_stat_mean, fr_stat_std, 'ko', 'MarkerFaceColor', 'k', ...
@@ -4975,9 +4988,8 @@ else
         cid_tc = results.(gt_tag_trial).cluster_id(ci);
         vars_str = results.(gt_tag_trial).selected_vars_str{ci};
         
-        % Get cluster data
-        idx_cl = T_master_time.probe_id == pid_tc & T_master_time.cluster_id == cid_tc;
-        T_cluster_trial = T_master_time(idx_cl, :);
+        % Get cluster data (sliced table built once before the GLM parfor)
+        T_cluster_trial = T_per_cluster{ci};
         
         % Get predictions (aligned with T_cluster_trial rows)
         if isempty(cluster_predictions.(gt_tag_trial){ci}) || ...
@@ -5277,8 +5289,12 @@ if csv_output
     end
     
     % --- CSV 4: Trial-level data (time-bin) ---
-    writetable(T_master_time, fullfile(csv_dir, 'glm_time_bin_data.csv'));
-    fprintf('  Saved glm_time_bin_data.csv (%d rows)\n', height(T_master_time));
+    % Rebuild the full table from per-cluster slices for the CSV export
+    % (master table was cleared earlier to reclaim client-side RAM).
+    T_master_time_export = vertcat(T_per_cluster{:});
+    writetable(T_master_time_export, fullfile(csv_dir, 'glm_time_bin_data.csv'));
+    fprintf('  Saved glm_time_bin_data.csv (%d rows)\n', height(T_master_time_export));
+    clear T_master_time_export
     
     % --- Update prefilter_decision_tree.csv with GLM results ---
     % Add forward selection results for each cluster
@@ -5383,7 +5399,7 @@ fprintf('====================================================================\n'
 fprintf('  Total VISp clusters scanned: %d\n', n_prefilter_clusters);
 fprintf('  Clusters after pre-filtering: %d (%.1f%%)\n', n_should_run_glm, 100*n_should_run_glm/n_prefilter_clusters);
 fprintf('  Clusters analysed with GLM: %d\n', n_unique_clusters);
-fprintf('  Time-bin data points: %d\n', height(T_master_time));
+fprintf('  Time-bin data points: %d\n', total_rows_t);
 fprintf('  Forward selection: %d candidates, threshold=%.3f bps\n', length(all_candidates), forward_selection_threshold);
 
 fprintf('\n  --- Pre-filter Category Breakdown (GLM clusters) ---\n');
