@@ -78,44 +78,32 @@ def save_figure(fig: Figure, path_base: Path, fmt: str = "pdf") -> list[Path]:
 
 
 def plot_basis_functions(config: GLMConfig) -> Figure:
-    """Overview of the four basis families used by the GLM."""
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
+    """Overview of the continuous basis families used by the GLM."""
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
 
     speed_grid = np.linspace(config.speed_range[0], config.speed_range[1], 400)
     B_speed = raised_cosine_basis(speed_grid, config.n_speed_bases, *config.speed_range)
     for i in range(B_speed.shape[1]):
-        axes[0, 0].plot(speed_grid, B_speed[:, i], label=f"basis {i + 1}")
-    axes[0, 0].set_title(f"Speed raised cosine ({config.n_speed_bases} bases)")
-    axes[0, 0].set_xlabel("speed (cm/s)")
-    axes[0, 0].set_ylabel("activation")
+        axes[0].plot(speed_grid, B_speed[:, i], label=f"basis {i + 1}")
+    axes[0].set_title(f"Speed raised cosine ({config.n_speed_bases} bases)")
+    axes[0].set_xlabel("speed (cm/s)")
+    axes[0].set_ylabel("activation")
 
     tf_grid = np.linspace(config.tf_range[0], config.tf_range[1], 400)
     B_tf = raised_cosine_basis(tf_grid, config.n_tf_bases, *config.tf_range)
     for i in range(B_tf.shape[1]):
-        axes[0, 1].plot(tf_grid, B_tf[:, i], label=f"basis {i + 1}")
-    axes[0, 1].set_title(f"TF raised cosine ({config.n_tf_bases} bases)")
-    axes[0, 1].set_xlabel("TF (Hz)")
-    axes[0, 1].set_ylabel("activation")
-
-    sf_levels = np.asarray(config.sf_levels, dtype=np.float64)
-    or_levels = np.asarray(config.or_levels, dtype=np.float64)
-    axes[1, 0].vlines(sf_levels, 0, 1, colors="#1f77b4", label="SF levels")
-    axes[1, 0].vlines(or_levels, 0, 0.5, colors="#d62728", label="OR levels (rad)")
-    axes[1, 0].scatter(sf_levels, np.ones_like(sf_levels), marker="D", color="#1f77b4")
-    axes[1, 0].scatter(or_levels, np.full_like(or_levels, 0.5),
-                       marker="s", color="#d62728")
-    axes[1, 0].set_title("SF / OR indicator levels")
-    axes[1, 0].set_xlabel("value")
-    axes[1, 0].set_yticks([])
-    axes[1, 0].legend(loc="upper right", fontsize=8)
+        axes[1].plot(tf_grid, B_tf[:, i], label=f"basis {i + 1}")
+    axes[1].set_title(f"TF raised cosine ({config.n_tf_bases} bases)")
+    axes[1].set_xlabel("TF (Hz)")
+    axes[1].set_ylabel("activation")
 
     onset_grid = np.linspace(0.0, config.onset_range[1], 400)
     B_onset = onset_kernel_basis(onset_grid, config.n_onset_bases, config.onset_range[1])
     for i in range(B_onset.shape[1]):
-        axes[1, 1].plot(onset_grid, B_onset[:, i], label=f"basis {i + 1}")
-    axes[1, 1].set_title(f"Onset kernel ({config.n_onset_bases} bases)")
-    axes[1, 1].set_xlabel("t since onset (s)")
-    axes[1, 1].set_ylabel("activation")
+        axes[2].plot(onset_grid, B_onset[:, i], label=f"basis {i + 1}")
+    axes[2].set_title(f"Onset kernel ({config.n_onset_bases} bases)")
+    axes[2].set_xlabel("t since onset (s)")
+    axes[2].set_ylabel("activation")
 
     fig.suptitle("GLM basis functions")
     return fig
