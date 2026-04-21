@@ -1,0 +1,187 @@
+"""Assemble the GLM design matrix.
+
+Two builders, mirroring the two MATLAB functions:
+
+- `assemble_design_matrix(model_label, ...)` — fixed model labels
+  ('Null', 'M0', 'Additive', 'FullInteraction', 'Additive_no_*'). See
+  MATLAB `assemble_design_matrix` (line 5572).
+- `assemble_design_matrix_selected(selected_vars, ...)` — driven by a
+  list of selected variable / interaction names; mirrors MATLAB
+  `assemble_design_matrix_selected` (line 6147). This is the version
+  used by the forward-selection loop.
+
+Both always include intercept + onset bases. SF / OR are reference-coded
+dummies (first level dropped). Zero-variance columns (except the
+intercept) are removed during training; pass non-empty `sf_ref_levels` /
+`or_ref_levels` to disable that pruning (prediction mode).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+
+def assemble_design_matrix_selected(
+    B_speed: np.ndarray,
+    B_tf: np.ndarray,
+    B_onset: np.ndarray,
+    sf_vals: np.ndarray,
+    or_vals: np.ndarray,
+    selected_vars: list[str],
+    sf_ref_levels: np.ndarray | None = None,
+    or_ref_levels: np.ndarray | None = None,
+) -> tuple[np.ndarray, list[str]]:
+    n = B_speed.shape[0]
+    n_speed_b = B_speed.shape[1]
+    n_tf_b = B_tf.shape[1]
+
+    sf_levels, or_levels = _resolve_reference_levels(
+        sf_vals, or_vals, sf_ref_levels, or_ref_levels
+    )
+
+    cols: list[np.ndarray] = [np.ones((n, 1))]
+    names: list[str] = ["Intercept"]
+
+    cols.append(B_onset)
+    names += [f"Onset_{i + 1}" for i in range(B_onset.shape[1])]
+
+    selected = set(selected_vars)
+
+    if "Speed" in selected:
+        cols.append(B_speed)
+        names += [f"Speed_{i + 1}" for i in range(n_speed_b)]
+    if "TF" in selected:
+        cols.append(B_tf)
+        names += [f"TF_{i + 1}" for i in range(n_tf_b)]
+    if "SF" in selected:
+        for level in sf_levels:
+            cols.append(_dummy(sf_vals, level).reshape(-1, 1))
+            names.append(f"SF_{level:.4f}")
+    if "OR" in selected:
+        for level in or_levels:
+            cols.append(_dummy(or_vals, level).reshape(-1, 1))
+            names.append(f"OR_{level:.3f}")
+
+    if "Speed_x_TF" in selected:
+        for si in range(n_speed_b):
+            for ti in range(n_tf_b):
+                cols.append((B_speed[:, si] * B_tf[:, ti]).reshape(-1, 1))
+                names.append(f"Spd{si + 1}_x_TF{ti + 1}")
+    if "Speed_x_SF" in selected:
+        for si in range(n_speed_b):
+            for level in sf_levels:
+                d = _dummy(sf_vals, level)
+                cols.append((B_speed[:, si] * d).reshape(-1, 1))
+                names.append(f"Spd{si + 1}_x_SF{level:.4f}")
+    if "Speed_x_OR" in selected:
+        for si in range(n_speed_b):
+            for level in or_levels:
+                d = _dummy(or_vals, level)
+                cols.append((B_speed[:, si] * d).reshape(-1, 1))
+                names.append(f"Spd{si + 1}_x_OR{level:.3f}")
+    if "TF_x_SF" in selected:
+        for ti in range(n_tf_b):
+            for level in sf_levels:
+                d = _dummy(sf_vals, level)
+                cols.append((B_tf[:, ti] * d).reshape(-1, 1))
+                names.append(f"TF{ti + 1}_x_SF{level:.4f}")
+    if "TF_x_OR" in selected:
+        for ti in range(n_tf_b):
+            for level in or_levels:
+                d = _dummy(or_vals, level)
+                cols.append((B_tf[:, ti] * d).reshape(-1, 1))
+                names.append(f"TF{ti + 1}_x_OR{level:.3f}")
+    if "SF_x_OR" in selected:
+        for sf_level in sf_levels:
+            d_sf = _dummy(sf_vals, sf_level)
+            for or_level in or_levels:
+                d_or = _dummy(or_vals, or_level)
+                cols.append((d_sf * d_or).reshape(-1, 1))
+                names.append(f"SF{sf_level:.4f}_x_OR{or_level:.3f}")
+
+    X = np.hstack(cols).astype(np.float64, copy=False)
+
+    is_prediction = sf_ref_levels is not None or or_ref_levels is not None
+    if not is_prediction:
+        X, names = _drop_zero_variance(X, names)
+    return X, names
+
+
+def assemble_design_matrix(
+    B_speed: np.ndarray,
+    B_tf: np.ndarray,
+    B_onset: np.ndarray,
+    sf_vals: np.ndarray,
+    or_vals: np.ndarray,
+    model_label: str,
+    sf_ref_levels: np.ndarray | None = None,
+    or_ref_levels: np.ndarray | None = None,
+) -> tuple[np.ndarray, list[str]]:
+    """Build a fixed model matrix labelled by `model_label`."""
+    if model_label == "M0":
+        n = B_speed.shape[0]
+        return np.ones((n, 1)), ["Intercept"]
+    if model_label == "Null":
+        return assemble_design_matrix_selected(
+            B_speed, B_tf, B_onset, sf_vals, or_vals,
+            [], sf_ref_levels, or_ref_levels,
+        )
+    if model_label == "Additive":
+        return assemble_design_matrix_selected(
+            B_speed, B_tf, B_onset, sf_vals, or_vals,
+            ["Speed", "TF", "SF", "OR"], sf_ref_levels, or_ref_levels,
+        )
+    if model_label == "FullInteraction":
+        return assemble_design_matrix_selected(
+            B_speed, B_tf, B_onset, sf_vals, or_vals,
+            ["Speed", "TF", "SF", "OR",
+             "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
+             "TF_x_SF", "TF_x_OR", "SF_x_OR"],
+            sf_ref_levels, or_ref_levels,
+        )
+    if model_label.startswith("Additive_no_"):
+        drop = model_label.removeprefix("Additive_no_")
+        keep = [v for v in ("Speed", "TF", "SF", "OR") if v != drop]
+        return assemble_design_matrix_selected(
+            B_speed, B_tf, B_onset, sf_vals, or_vals,
+            keep, sf_ref_levels, or_ref_levels,
+        )
+    raise ValueError(f"Unknown model label: {model_label}")
+
+
+def _dummy(vals: np.ndarray, level: float) -> np.ndarray:
+    out = (vals == level).astype(np.float64)
+    out[np.isnan(vals)] = 0.0
+    return out
+
+
+def _resolve_reference_levels(
+    sf_vals: np.ndarray,
+    or_vals: np.ndarray,
+    sf_ref: np.ndarray | None,
+    or_ref: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if sf_ref is not None and len(sf_ref) > 0:
+        sf_unique = np.asarray(sf_ref, dtype=np.float64).ravel()
+    else:
+        sf_unique = np.sort(np.unique(sf_vals[~np.isnan(sf_vals)]))
+    sf_levels = sf_unique[1:] if sf_unique.size >= 1 else sf_unique
+
+    if or_ref is not None and len(or_ref) > 0:
+        or_unique = np.asarray(or_ref, dtype=np.float64).ravel()
+    else:
+        or_unique = np.sort(np.unique(or_vals[~np.isnan(or_vals)]))
+    or_levels = or_unique[1:] if or_unique.size >= 1 else or_unique
+    return sf_levels, or_levels
+
+
+def _drop_zero_variance(
+    X: np.ndarray, names: list[str], tol: float = 1e-10
+) -> tuple[np.ndarray, list[str]]:
+    if X.shape[1] <= 1:
+        return X, names
+    keep = np.ones(X.shape[1], dtype=bool)
+    keep[1:] = X[:, 1:].var(axis=0) > tol
+    if keep.all():
+        return X, names
+    return X[:, keep], [n for n, k in zip(names, keep) if k]
