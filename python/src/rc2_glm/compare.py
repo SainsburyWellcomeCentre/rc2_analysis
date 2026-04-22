@@ -40,7 +40,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import pearsonr, spearmanr
+
+from rc2_glm.basis import raised_cosine_basis
+from rc2_glm.config import GLMConfig
 
 logger = logging.getLogger("rc2_glm.compare")
 
@@ -53,10 +56,20 @@ SELECTED_CV_SPEARMAN_THRESHOLD = 0.85
 SELECTED_MINUS_NULL_SIGN_THRESHOLD = 0.95
 COEF_SIGN_FAMILY_THRESHOLD = 0.85
 STATIONARY_MOTION_FR_MEDIAN_REL_ERR_THRESHOLD = 1e-3
+# Tuning-curve prediction-space parity thresholds. ``per_cluster`` gates the
+# row pass/fail via the mean (robust to a few outliers); ``per_cluster_min``
+# is reported as a side metric so a single bad cluster shows up.
+TUNING_CURVE_PEARSON_MEAN_THRESHOLD = 0.90
+TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD = 0.85
 
 # Families we match coefficients across. Any coefficient whose normalised
 # name starts with one of these is routed into the family.
 COEFFICIENT_FAMILIES = ("Speed", "TF", "SF", "OR")
+# Families that are gated on raw-β sign agreement (categorical dummies —
+# one coefficient per level, no identifiability ambiguity). Speed / TF
+# live on correlated raised-cosine bases; their raw-β sign is noisy and
+# is now tracked via prediction-space tuning-curve parity instead.
+COEF_SIGN_GATING_FAMILIES = ("SF", "OR")
 
 
 # --------------------------------------------------------------------------- #
@@ -369,6 +382,7 @@ def _coefficient_sign_agreement(
     for fam in COEFFICIENT_FAMILIES:
         mask = merged["coefficient"].apply(_coefficient_family) == fam
         sub = merged[mask]
+        is_gating = fam in COEF_SIGN_GATING_FAMILIES
         if sub.empty:
             rows.append(_row(
                 f"coefficient_sign_{fam}", float("nan"),
@@ -377,12 +391,153 @@ def _coefficient_sign_agreement(
             ))
             continue
         agree = float((np.sign(sub["estimate_py"]) == np.sign(sub["estimate_ref"])).mean())
-        rows.append(_row(
-            f"coefficient_sign_{fam}", agree,
-            COEF_SIGN_FAMILY_THRESHOLD, agree >= COEF_SIGN_FAMILY_THRESHOLD,
-            note=f"n={len(sub)}",
-        ))
+        if is_gating:
+            rows.append(_row(
+                f"coefficient_sign_{fam}", agree,
+                COEF_SIGN_FAMILY_THRESHOLD, agree >= COEF_SIGN_FAMILY_THRESHOLD,
+                note=f"n={len(sub)}",
+            ))
+        else:
+            # Speed/TF sit on correlated raised-cosine bases: raw-β rotations
+            # produce the same predicted rate, so the sign agreement is an
+            # identifiability artefact, not a model-quality signal. Keep the
+            # number in the report for continuity but do not gate on it —
+            # ``tuning_curve_pearson_{fam}`` is the prediction-space check.
+            rows.append(_row(
+                f"coefficient_sign_{fam}", agree,
+                float("nan"), True,
+                note=(
+                    f"informational — raw-β sign agreement over n={len(sub)} "
+                    f"coefficients; {fam} lives on correlated raised-cosine "
+                    f"bases where sign is not identifiable. See "
+                    f"tuning_curve_pearson_{fam} for the gating check."
+                ),
+            ))
     return rows
+
+
+def _variable_betas_per_cluster(
+    coef_df: pd.DataFrame,
+    variable: str,
+    model: str,
+    n_bases: int,
+) -> dict[tuple[str, int], np.ndarray]:
+    """Return ``{(probe_id, cluster_id): β_vec}`` for one variable × model.
+
+    Only returns entries where all ``n_bases`` β's are present (a sparse
+    model can omit the variable entirely; we skip those silently — the
+    caller pairs what's present on both sides).
+    """
+    prefix = f"{variable}_"
+    has_probe = "probe_id" in coef_df.columns
+    mask = (
+        (coef_df["model"] == model)
+        & coef_df["coefficient"].astype(str).str.startswith(prefix)
+        & ~coef_df["coefficient"].astype(str).str.contains("_x_", regex=False)
+    )
+    sub = coef_df[mask]
+    if sub.empty:
+        return {}
+
+    # Expected basis names in order: Speed_1, Speed_2, ..., Speed_n_bases
+    expected = [f"{variable}_{i + 1}" for i in range(n_bases)]
+    expected_set = set(expected)
+    sub = sub[sub["coefficient"].isin(expected_set)]
+
+    out: dict[tuple[str, int], np.ndarray] = {}
+    group_cols = ["probe_id", "cluster_id"] if has_probe else ["cluster_id"]
+    for key, grp in sub.groupby(group_cols):
+        by_name = dict(zip(grp["coefficient"].astype(str), grp["estimate"]))
+        if not all(name in by_name for name in expected):
+            continue  # partial — skip rather than zero-fill
+        beta = np.array([float(by_name[name]) for name in expected], dtype=np.float64)
+        if has_probe:
+            probe_id, cluster_id = key
+        else:
+            probe_id, cluster_id = "", key
+        out[(str(probe_id), int(cluster_id))] = beta
+    return out
+
+
+def _tuning_curve_pearson(
+    coef_py: pd.DataFrame | None,
+    coef_ref: pd.DataFrame | None,
+    variable: str,
+    config: GLMConfig,
+    model: str = "Selected",
+) -> dict:
+    """Mean per-cluster Pearson r between Python and MATLAB tuning curves.
+
+    Builds the same raised-cosine grid on both sides using Python's basis
+    (MATLAB's is verified numerically identical to ~1e-12), evaluates
+    ``B_grid @ β_var`` for the ``model`` fit (default Selected), and
+    Pearson-correlates the two curves. Mean across clusters is the row
+    value; the gating threshold is on the mean. A per-cluster minimum
+    is reported in the note.
+    """
+    if coef_py is None or coef_ref is None:
+        return _row(
+            f"tuning_curve_pearson_{variable}", float("nan"),
+            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, True,
+            note="skipped: glm_coefficients.csv missing on one side",
+        )
+
+    if variable == "Speed":
+        n_bases = config.n_speed_bases
+        lo, hi = config.speed_range
+    elif variable == "TF":
+        n_bases = config.n_tf_bases
+        lo, hi = config.tf_range
+    else:
+        raise ValueError(f"unsupported variable: {variable!r}")
+
+    py_map = _variable_betas_per_cluster(coef_py, variable, model, n_bases)
+    ref_map = _variable_betas_per_cluster(coef_ref, variable, model, n_bases)
+    common_keys = sorted(set(py_map) & set(ref_map))
+    if not common_keys:
+        return _row(
+            f"tuning_curve_pearson_{variable}", float("nan"),
+            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, True,
+            note=(
+                f"skipped: no common clusters with {variable} in the "
+                f"{model} model on both sides"
+            ),
+        )
+
+    x_grid = np.linspace(float(lo), float(hi), 100)
+    B_grid = raised_cosine_basis(x_grid, n_bases, float(lo), float(hi))
+
+    per_cluster_r: list[float] = []
+    for key in common_keys:
+        curve_py = B_grid @ py_map[key]
+        curve_ref = B_grid @ ref_map[key]
+        # pearsonr is undefined for a constant series; skip degenerate fits.
+        if np.std(curve_py) < 1e-12 or np.std(curve_ref) < 1e-12:
+            continue
+        r, _ = pearsonr(curve_py, curve_ref)
+        if np.isfinite(r):
+            per_cluster_r.append(float(r))
+
+    if not per_cluster_r:
+        return _row(
+            f"tuning_curve_pearson_{variable}", float("nan"),
+            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, False,
+            note="no clusters yielded a finite Pearson r",
+        )
+
+    mean_r = float(np.mean(per_cluster_r))
+    min_r = float(np.min(per_cluster_r))
+    below = int(sum(r < TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD for r in per_cluster_r))
+    passed = mean_r >= TUNING_CURVE_PEARSON_MEAN_THRESHOLD
+    return _row(
+        f"tuning_curve_pearson_{variable}", mean_r,
+        TUNING_CURVE_PEARSON_MEAN_THRESHOLD, passed,
+        note=(
+            f"n={len(per_cluster_r)} clusters | min_r={min_r:.3f} | "
+            f"{below} below per-cluster threshold "
+            f"({TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD}) | model={model}"
+        ),
+    )
 
 
 def _stationary_vs_motion_fr(
@@ -553,6 +708,13 @@ def run_compare(
             ))
 
     rows.extend(_coefficient_sign_agreement(coef_py, coef_ref))
+
+    # Prediction-space tuning-curve parity for Speed / TF. Invariant to
+    # the β-rotation that raised-cosine bases admit; gates on mean r.
+    config = GLMConfig()
+    for variable in ("Speed", "TF"):
+        rows.append(_tuning_curve_pearson(coef_py, coef_ref, variable, config))
+
     rows.append(_stationary_vs_motion_fr(svm_py, svm_ref))
 
     df = pd.DataFrame(rows)

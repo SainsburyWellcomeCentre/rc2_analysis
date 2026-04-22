@@ -204,6 +204,11 @@ def _run_pipeline_inner(
         logger.info("wrote glm_selection_history.csv (%d rows)", len(history_df))
         coef_df.to_csv(output_dir / "glm_coefficients.csv", index=False)
         logger.info("wrote glm_coefficients.csv (%d rows)", len(coef_df))
+        if cluster_fits:
+            _emit_tuning_curves(
+                probe.probe_id, cluster_fits, config,
+                output_dir / "diagnostics",
+            )
         if not prefilter_df.empty:
             prefilter_df.to_csv(output_dir / "prefilter_decision_tree.csv", index=False)
             logger.info("wrote prefilter_decision_tree.csv (%d rows)", len(prefilter_df))
@@ -496,6 +501,132 @@ def _coefficient_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
             "se": row["se"],
         })
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# Tuning-curve export (prediction-space parity)
+# --------------------------------------------------------------------------- #
+
+
+# Number of grid points used for Speed / TF tuning curves. 100 is plenty
+# for Pearson r to stabilise but small enough to keep the CSV modest even
+# across all probes / clusters / models.
+_TUNING_CURVE_GRID_N: int = 100
+
+# Variables we export tuning curves for. Only the two that live on a
+# continuous raised-cosine basis (Speed, TF) — SF / OR are categorical
+# dummies, so their "tuning curve" is just the per-level β and is already
+# captured by the coefficient-sign check.
+_TUNING_CURVE_VARIABLES: tuple[tuple[str, str, str], ...] = (
+    # (variable_label, coef_prefix, config_range_attr)
+    ("Speed", "Speed_", "speed_range"),
+    ("TF", "TF_", "tf_range"),
+)
+
+
+def _tuning_curve_grid(
+    variable: str, config: GLMConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(x_grid, B_grid)`` used to evaluate a tuning curve.
+
+    The grid covers the configured ``speed_range`` / ``tf_range`` with
+    ``_TUNING_CURVE_GRID_N`` linearly-spaced points (the raised-cosine
+    basis already encodes log-spacing internally via ``log(x + 0.5)``,
+    so a linear grid in x is the natural axis for plotting / parity).
+    """
+    if variable == "Speed":
+        lo, hi = config.speed_range
+        n_b = config.n_speed_bases
+    elif variable == "TF":
+        lo, hi = config.tf_range
+        n_b = config.n_tf_bases
+    else:
+        raise ValueError(f"unsupported tuning-curve variable: {variable!r}")
+
+    x_grid = np.linspace(float(lo), float(hi), _TUNING_CURVE_GRID_N)
+    B_grid = raised_cosine_basis(x_grid, n_b, float(lo), float(hi))
+    return x_grid, B_grid
+
+
+def _extract_variable_betas(
+    betas: np.ndarray, col_names: list[str], coef_prefix: str,
+) -> np.ndarray | None:
+    """Return the subvector of ``betas`` whose column names start with ``coef_prefix``.
+
+    Order is taken from ``col_names`` (Speed_1, Speed_2, …). Returns None
+    if the variable isn't present in this model's design — the caller
+    should skip the row.
+    """
+    idx = [
+        i for i, name in enumerate(col_names)
+        if name.startswith(coef_prefix) and "_x_" not in name
+    ]
+    if not idx:
+        return None
+    return np.asarray(betas, dtype=np.float64)[idx]
+
+
+def _tuning_curves_for_fit(
+    probe_id: str, fit: ClusterFit, config: GLMConfig,
+) -> list[dict]:
+    """Emit tuning-curve rows for one cluster, one row per (model, variable, grid point).
+
+    Only the main effect of each variable is exported — interactions are
+    left out so the curve is the marginal ``exp(B_grid @ β_var)`` gain
+    factor. This is a prediction-space quantity that is invariant to
+    basis-rotation of β, which is what we want for parity.
+    """
+    rows: list[dict] = []
+    for variable, coef_prefix, _range_attr in _TUNING_CURVE_VARIABLES:
+        x_grid, B_grid = _tuning_curve_grid(variable, config)
+        for model_label, beta_vec in fit.model_betas.items():
+            col_names = fit.model_col_names.get(model_label, [])
+            beta_var = _extract_variable_betas(beta_vec, col_names, coef_prefix)
+            if beta_var is None:
+                continue
+            if beta_var.size != B_grid.shape[1]:
+                # Defensive: a downstream change that renames or drops a
+                # basis column would land here. Skip rather than crash.
+                logger.warning(
+                    "cluster %d / %s / %s: have %d β for %d bases — skipping tuning row",
+                    fit.cluster_id, model_label, variable,
+                    int(beta_var.size), int(B_grid.shape[1]),
+                )
+                continue
+            log_gain = B_grid @ beta_var
+            gain = np.exp(np.clip(log_gain, -20.0, 20.0))
+            for x, g, lg in zip(x_grid, gain, log_gain):
+                rows.append({
+                    "probe_id": probe_id,
+                    "cluster_id": fit.cluster_id,
+                    "glm_type": GLM_TYPE,
+                    "model": model_label,
+                    "variable": variable,
+                    "grid_x": float(x),
+                    "log_gain": float(lg),
+                    "gain": float(g),
+                })
+    return rows
+
+
+def _emit_tuning_curves(
+    probe_id: str,
+    cluster_fits: list[tuple[ClusterFit, pd.DataFrame]],
+    config: GLMConfig,
+    out_dir: Path,
+) -> None:
+    """Write ``<out_dir>/tuning_curves.csv`` with marginal Speed / TF curves."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    for fit, _df in cluster_fits:
+        rows.extend(_tuning_curves_for_fit(probe_id, fit, config))
+    if not rows:
+        logger.info("no tuning-curve rows to write (no Speed/TF βs?)")
+        return
+    df = pd.DataFrame(rows)
+    path = out_dir / "tuning_curves.csv"
+    df.to_csv(path, index=False)
+    logger.info("wrote %s (%d rows)", path.name, len(df))
 
 
 # --------------------------------------------------------------------------- #
