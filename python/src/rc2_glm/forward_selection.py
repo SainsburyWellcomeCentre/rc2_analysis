@@ -68,7 +68,8 @@ def forward_select(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
     null_cv = cross_validate_glm(
-        X_null, y, offset, fold_ids, lambda_ridge=0.0, backend=backend
+        X_null, y, offset, fold_ids,
+        lambda_ridge=config.lambda_ridge, backend=backend,
     )
 
     selected: list[str] = []
@@ -83,7 +84,8 @@ def forward_select(
         round_result = _try_candidates(
             remaining, selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
             y, offset, fold_ids, current_cv.cv_bits_per_spike,
-            phase=1, round_num=round_num, backend=backend, sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            phase=1, round_num=round_num, backend=backend, config=config,
+            sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         )
         history.append(round_result)
         if round_result.added and round_result.best_candidate is not None:
@@ -92,7 +94,8 @@ def forward_select(
             # Refit & store CV for the new model so subsequent rounds keep going
             current_cv = _cv_for_selected(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
-                y, offset, fold_ids, backend, sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                y, offset, fold_ids, backend, config=config,
+                sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             )
         else:
             break
@@ -107,7 +110,8 @@ def forward_select(
         round_result = _try_candidates(
             eligible, selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
             y, offset, fold_ids, current_cv.cv_bits_per_spike,
-            phase=2, round_num=round_num, backend=backend, sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            phase=2, round_num=round_num, backend=backend, config=config,
+            sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         )
         history.append(round_result)
         if round_result.added and round_result.best_candidate is not None:
@@ -115,7 +119,8 @@ def forward_select(
             eligible.remove(round_result.best_candidate)
             current_cv = _cv_for_selected(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
-                y, offset, fold_ids, backend, sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                y, offset, fold_ids, backend, config=config,
+                sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             )
         else:
             break
@@ -146,10 +151,10 @@ def _try_candidates(
     phase: int,
     round_num: int,
     backend: str,
+    config: GLMConfig,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
 ) -> RoundResult:
-    config = GLMConfig()
     threshold = config.delta_bps_threshold
 
     tested: dict[str, float] = {}
@@ -168,7 +173,8 @@ def _try_candidates(
             deltas[cand] = -np.inf
             continue
         cv = cross_validate_glm(
-            X_test, y, offset, fold_ids, lambda_ridge=0.0, backend=backend
+            X_test, y, offset, fold_ids,
+            lambda_ridge=config.lambda_ridge, backend=backend,
         )
         tested[cand] = cv.cv_bits_per_spike
         deltas[cand] = cv.cv_bits_per_spike - current_bps
@@ -203,6 +209,8 @@ def _cv_for_selected(
     offset: np.ndarray | float,
     fold_ids: np.ndarray,
     backend: str,
+    *,
+    config: GLMConfig,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
 ) -> CVResult:
@@ -210,4 +218,7 @@ def _cv_for_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, list(selected),
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
-    return cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=0.0, backend=backend)
+    return cross_validate_glm(
+        X, y, offset, fold_ids,
+        lambda_ridge=config.lambda_ridge, backend=backend,
+    )

@@ -50,3 +50,22 @@ def test_standard_errors_positive_finite():
     fit = fit_poisson_glm(X, y, offset=0.0)
     assert (fit.se >= 0).all()
     assert np.all(np.isfinite(fit.se))
+
+
+def test_default_lambda_ridge_is_nonzero_for_correlated_basis_identifiability():
+    """GLMConfig().lambda_ridge must be > 0.
+
+    The raised-cosine Speed/TF bases are correlated by construction (Park
+    et al. 2014) so the Poisson likelihood has flat directions — the
+    unregularised fit falls onto a different β rotation than MATLAB's
+    glmnet did, making raw-β sign agreement unreliable.
+
+    Keeping a small non-zero ridge stabilises the fit without materially
+    biasing the tuning curve (B @ β is insensitive to the rotation that
+    ridge prefers). If someone sets this back to 0.0 to "match MATLAB
+    exactly", they should rename this test rather than silently flipping
+    back.
+    """
+    from rc2_glm.config import GLMConfig
+    cfg = GLMConfig()
+    assert cfg.lambda_ridge > 0.0, cfg.lambda_ridge

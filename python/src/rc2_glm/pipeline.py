@@ -337,7 +337,11 @@ def _cv_for_label(
     )
     if X.shape[1] >= y.size:
         return float("nan")
-    lambda_ridge = config.full_interaction_lambda if label == "FullInteraction" else 0.0
+    lambda_ridge = (
+        config.full_interaction_lambda
+        if label == "FullInteraction"
+        else config.lambda_ridge
+    )
     cv = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=lambda_ridge, backend=backend)
     return float(cv.cv_bits_per_spike)
 

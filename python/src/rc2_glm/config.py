@@ -30,7 +30,17 @@ class GLMConfig:
     onset_range: tuple[float, float] = (0.0, 2.0)         # seconds
 
     # --- GLM fitting ---
-    lambda_ridge: float = 0.0
+    # Ridge on all non-intercept columns. Non-zero default picks a
+    # specific rotation in the flat direction of the Poisson likelihood
+    # created by correlated raised-cosine bases (Speed/TF bases are
+    # correlated by construction — Park et al. 2014), which is what
+    # makes tuning-curve parity with MATLAB glmnet's lambda_1se
+    # achievable. 1e-3 was tuned empirically on CAA-1123243_rec1 as
+    # the largest value that still improves tuning-curve Pearson r vs
+    # MATLAB; 1e-2 over-shrinks (hurts parity), 0 leaves β rotation
+    # unconstrained (also hurts parity). FullInteraction keeps its own
+    # (larger) lambda because p approaches n there.
+    lambda_ridge: float = 1e-3
     full_interaction_lambda: float = 1.0
     lambda_ridge_min: float = 1e-6
     irls_max_iter: int = 100
