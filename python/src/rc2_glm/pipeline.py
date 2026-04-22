@@ -86,8 +86,17 @@ def run_pipeline(
     make_plots: bool = True,
     plot_format: str = "pdf",
     plot_clusters: int | None = None,
+    n_jobs: int = -1,
 ) -> PipelineResult:
-    """Load a probe .mat, fit GLMs cluster-by-cluster, write CSVs + plots."""
+    """Load a probe .mat, fit GLMs cluster-by-cluster, write CSVs + plots.
+
+    ``n_jobs`` controls the per-cluster fit parallelism (joblib loky /
+    process backend). -1 uses all cores; 1 forces serial execution (also
+    useful for debugging — lets per-cluster worker log lines reach
+    run.log). Output is deterministic up to BLAS-level FP rounding
+    (~1e-11 absolute in CV-bps); cluster order and variable selection
+    are preserved exactly.
+    """
     config = config or GLMConfig()
 
     out_path = Path(output_dir) if output_dir is not None else None
@@ -107,6 +116,7 @@ def run_pipeline(
             make_plots=make_plots,
             plot_format=plot_format,
             plot_clusters=plot_clusters,
+            n_jobs=n_jobs,
         )
     finally:
         for h in log_handlers:
@@ -124,6 +134,7 @@ def _run_pipeline_inner(
     make_plots: bool,
     plot_format: str,
     plot_clusters: int | None,
+    n_jobs: int,
 ) -> PipelineResult:
     _banner("Loading data")
     logger.info("mat file: %s", mat_path)
@@ -156,13 +167,16 @@ def _run_pipeline_inner(
         logger.info("prefilter skipped (apply_prefilter=False)")
 
     _banner("Forward selection")
-    logger.info("fitting %d clusters", len(clusters))
+    logger.info("fitting %d clusters (n_jobs=%d)", len(clusters), n_jobs)
     comparison_rows: list[dict] = []
     history_rows: list[dict] = []
     coefficient_rows: list[dict] = []
     cluster_fits: list[tuple[ClusterFit, pd.DataFrame]] = []
 
     t0 = time.perf_counter()
+    # Phase 1: bin every cluster on the main thread (cheap, touches `probe`).
+    # Drop empties / too-short runs up-front so joblib dispatches real work only.
+    fit_tasks: list[tuple[int, int, pd.DataFrame]] = []
     for idx, cluster in enumerate(clusters, start=1):
         df = bin_cluster(probe, cluster)
         if df.empty:
@@ -173,22 +187,41 @@ def _run_pipeline_inner(
             logger.info("[%d/%d] cluster %d: fewer than 10 bins, skipped",
                         idx, len(clusters), cluster.cluster_id)
             continue
-        t_cluster = time.perf_counter()
-        fit = _fit_one_cluster(probe, df, cluster.cluster_id, config, backend)
+        fit_tasks.append((idx, cluster.cluster_id, df))
+
+    # Phase 2: fit (serial or process-parallel via joblib loky).
+    # Processes avoid BLAS thread oversubscription on Accelerate / OpenBLAS
+    # (threading backend was break-even here because each IRLS matmul
+    # already saturates all cores). Trade-off: per-cluster info lines
+    # emitted inside workers stay in the worker's stderr and do NOT
+    # land in run.log; summary lines below are the user-visible trace.
+    if n_jobs == 1 or len(fit_tasks) <= 1:
+        fit_results = [
+            _fit_one_cluster(df, cid, config, backend)
+            for (_, cid, df) in fit_tasks
+        ]
+    else:
+        from joblib import Parallel, delayed
+        fit_results = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_one_cluster)(df, cid, config, backend)
+            for (_, cid, df) in fit_tasks
+        )
+
+    # Phase 3: collect in deterministic cluster order.
+    for (idx, cid, df), fit in zip(fit_tasks, fit_results):
         if fit is None:
             logger.info("[%d/%d] cluster %d: no usable spikes, skipped",
-                        idx, len(clusters), cluster.cluster_id)
+                        idx, len(clusters), cid)
             continue
         comparison_rows.append(_comparison_row(probe.probe_id, df, fit))
         history_rows.extend(_history_rows(probe.probe_id, fit))
         coefficient_rows.extend(_coefficient_rows(probe.probe_id, fit))
         cluster_fits.append((fit, df))
         logger.info(
-            "[%d/%d] cluster %d: selected=%s | null %.3f → sel %.3f bps (%.1fs)",
-            idx, len(clusters), cluster.cluster_id,
+            "[%d/%d] cluster %d: selected=%s | null %.3f → sel %.3f bps",
+            idx, len(clusters), cid,
             "+".join(fit.selection.selected_vars) or "Null",
             fit.selection.null_cv_bps, fit.selection.final_cv_bps,
-            time.perf_counter() - t_cluster,
         )
     logger.info("forward selection done in %.1fs", time.perf_counter() - t0)
 
@@ -236,7 +269,6 @@ def _run_pipeline_inner(
 
 
 def _fit_one_cluster(
-    probe: ProbeData,
     df: pd.DataFrame,
     cluster_id: int,
     config: GLMConfig,
@@ -982,6 +1014,12 @@ def main(argv: list[str] | None = None) -> int:
         "--plot-clusters", type=int, default=None,
         help="Cap per-cluster plots to the first N retained clusters (debug).",
     )
+    parser.add_argument(
+        "--n-jobs", type=int, default=-1,
+        help="Parallel fit workers for the per-cluster loop "
+             "(joblib loky / process backend). -1 = all cores (default), "
+             "1 = serial (use this to see per-cluster worker logs).",
+    )
     parser.set_defaults(make_plots=True, prefilter=True)
     args = parser.parse_args(argv)
 
@@ -1009,6 +1047,7 @@ def main(argv: list[str] | None = None) -> int:
         make_plots=args.make_plots,
         plot_format=args.plot_format,
         plot_clusters=args.plot_clusters,
+        n_jobs=args.n_jobs,
     )
     # run_pipeline has already torn down its handlers; a bare print is fine.
     print(f"rc2-glm: wrote {len(result.model_comparison)} cluster rows to {args.out_dir}")
