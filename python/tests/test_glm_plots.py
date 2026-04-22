@@ -19,12 +19,15 @@ from rc2_glm.plots import (
     _BETA_GROUP_COLORS,
     _BETA_GROUP_ORDER,
     _beta_group_tag,
+    _trial_quantiles_by_bin,
+    _trial_quantiles_by_level,
     plot_basis_functions,
     plot_cluster_model_overview,
     plot_forward_selection_summary,
     plot_tuning_curves,
     save_figure,
 )
+from rc2_glm.precomputed_bins import PrecomputedBinEdges
 
 
 def test_plot_basis_functions_returns_figure():
@@ -241,6 +244,100 @@ def test_beta_group_order_and_palette_cover_all_six_interaction_pairs():
                  "TF x SF", "TF x OR", "SF x OR"):
         assert pair in _BETA_GROUP_ORDER, pair
         assert pair in _BETA_GROUP_COLORS, pair
+
+
+def test_trial_quantiles_by_bin_returns_iqr_not_mean_std():
+    """Median/IQR should be robust to a single high-count trial.
+
+    Observed firing rates are right-skewed — a single burst-trial would
+    pull the mean up and balloon std, making the displayed error bar
+    misrepresent where most trials sit. Median stays on the centre of the
+    mass; Q1/Q3 bracket the middle 50% of trials.
+    """
+    bin_edges = np.array([0.0, 1.0, 2.0])
+    bin_width = 0.05
+    rows = []
+    # bin 0: four trials with 1 spike each (rate=20 Hz) + one burst trial
+    # with 20 spikes (rate=400 Hz). Median=20 Hz, mean=96 Hz — very
+    # different, and the burst swamps std.
+    for tid, n_spikes in enumerate([1, 1, 1, 1, 20]):
+        rows.append({
+            "trial_id": tid, "speed": 0.5,
+            "spike_count": n_spikes,
+        })
+    df = pd.DataFrame(rows)
+    median, q1, q3 = _trial_quantiles_by_bin(
+        df, value_col="speed", bin_edges=bin_edges, bin_width=bin_width,
+    )
+    # Bin 0 dominated by the quiet majority.
+    assert median[0] == 20.0
+    assert q1[0] == 20.0
+    # Q3 is the 75th percentile of [20,20,20,20,400] = 20.0 — linear
+    # interpolation puts the knee at index 3 (=20), not above.
+    assert q3[0] == 20.0
+    # Bin 1 has nothing.
+    assert np.isnan(median[1])
+
+
+def test_trial_quantiles_by_bin_single_trial_returns_zero_width_error():
+    """Single-trial bin renders with median set, q1==q3==median (no bar)."""
+    bin_edges = np.array([0.0, 1.0, 2.0])
+    df = pd.DataFrame([
+        {"trial_id": 0, "speed": 0.5, "spike_count": 3},
+    ])
+    median, q1, q3 = _trial_quantiles_by_bin(
+        df, value_col="speed", bin_edges=bin_edges, bin_width=0.1,
+    )
+    assert median[0] == 30.0
+    assert q1[0] == 30.0
+    assert q3[0] == 30.0
+
+
+def test_trial_quantiles_by_level_returns_asymmetric_iqr():
+    """One-sided distribution → Q3 above median, Q1 equal to median."""
+    levels = np.array([0.003])
+    rows = [
+        # 4 quiet trials, 1 moderate burst at the same SF level.
+        {"trial_id": 0, "sf": 0.003, "spike_count": 0},
+        {"trial_id": 1, "sf": 0.003, "spike_count": 0},
+        {"trial_id": 2, "sf": 0.003, "spike_count": 0},
+        {"trial_id": 3, "sf": 0.003, "spike_count": 2},
+        {"trial_id": 4, "sf": 0.003, "spike_count": 10},
+    ]
+    df = pd.DataFrame(rows)
+    median, q1, q3 = _trial_quantiles_by_level(
+        df, value_col="sf", levels=levels, tol=1e-4, bin_width=0.1,
+    )
+    # Trial rates = [0, 0, 0, 20, 100]. Median=0, Q1=0, Q3=20.
+    assert median[0] == 0.0
+    assert q1[0] == 0.0
+    assert q3[0] == 20.0
+
+
+def test_plot_tuning_curves_accepts_precomputed_bins():
+    """Pipeline wiring: plot_tuning_curves must not choke on the kwarg."""
+    cluster_df = _synthetic_cluster_df()
+    betas, col_names, _ = _synthetic_model_dicts(cluster_df)
+    precomputed = PrecomputedBinEdges(
+        speed_by_group={
+            "VT": np.linspace(0.0, 50.0, 21),
+            "V": np.linspace(0.0, 50.0, 21),
+            "T_Vstatic": np.linspace(0.0, 50.0, 21),
+        },
+        tf_by_group={
+            "VT": np.linspace(0.0, 8.0, 21),
+            "V": np.linspace(0.0, 8.0, 21),
+            "T_Vstatic": np.linspace(0.0, 8.0, 21),
+        },
+    )
+    fig = plot_tuning_curves(
+        probe_id="p0", cluster_id=1, cluster_df=cluster_df,
+        model_betas=betas, model_col_names=col_names,
+        config=GLMConfig(), n_sweep=10,
+        precomputed_bins=precomputed,
+    )
+    assert isinstance(fig, Figure)
+    plt.close(fig)
 
 
 def test_save_figure_pdf(tmp_path):

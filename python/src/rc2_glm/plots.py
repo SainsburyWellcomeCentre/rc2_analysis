@@ -26,6 +26,7 @@ from matplotlib.figure import Figure
 from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
 from rc2_glm.config import GLMConfig
 from rc2_glm.design_matrix import assemble_design_matrix_selected
+from rc2_glm.precomputed_bins import PrecomputedBinEdges
 
 logger = logging.getLogger("rc2_glm")
 
@@ -173,6 +174,7 @@ def plot_tuning_curves(
     model_col_names: dict[str, list[str]],
     config: GLMConfig,
     n_sweep: int = 20,
+    precomputed_bins: PrecomputedBinEdges | None = None,
 ) -> Figure:
     """Reconstructed tuning curves matching MATLAB Fig 5 (5×4 grid).
 
@@ -259,6 +261,7 @@ def plot_tuning_curves(
     _plot_observed_row(
         axes[0, :], cluster_df, config,
         sf_plot=sf_plot, or_plot=or_plot,
+        precomputed_bins=precomputed_bins,
     )
 
     model_vars = {
@@ -1031,38 +1034,55 @@ def _plot_observed_row(
     *,
     sf_plot: np.ndarray,
     or_plot: np.ndarray,
+    precomputed_bins: PrecomputedBinEdges | None = None,
 ) -> None:
     """Observed rates per condition, aggregated trial-first (matches MATLAB).
 
     Rates for each bin/level are computed by first grouping within-condition
     rows by ``trial_id`` and taking the mean ``spike_count / bin_width`` per
-    trial within that bin, then averaging across trials with std for the
-    error bar. Single-trial bins render as a dot with no error bar; empty
-    bins are skipped.
+    trial within that bin, then taking the median + IQR across trials.
+    Single-trial cells render as a dot with no error bar; empty cells are
+    skipped.
+
+    When ``precomputed_bins`` is provided, Speed and TF panels use the
+    MATLAB-cached 5%-quantile edges per trial group (so each bin holds ~5%
+    of motion-masked samples). Otherwise they fall back to a uniform
+    linspace spanning the config range — bins at high speeds/TFs will then
+    contain very few samples.
     """
     bw = config.time_bin_width
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
 
-    spd_edges = np.linspace(config.speed_range[0], config.speed_range[1], 11)
-    spd_centres = 0.5 * (spd_edges[:-1] + spd_edges[1:])
-    tf_edges = np.linspace(config.tf_range[0], config.tf_range[1], 11)
-    tf_centres = 0.5 * (tf_edges[:-1] + tf_edges[1:])
+    fallback_spd_edges = np.linspace(
+        config.speed_range[0], config.speed_range[1], 11,
+    )
+    fallback_tf_edges = np.linspace(
+        config.tf_range[0], config.tf_range[1], 11,
+    )
 
     # Speed: T_Vstatic + VT (MATLAB skips V for speed since its speed=0)
     for cond in ("T_Vstatic", "VT"):
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
-        mean, std = _trial_mean_std_by_bin(
-            sub, value_col="speed", bin_edges=spd_edges, bin_width=bw,
+        edges = (
+            precomputed_bins.speed_edges(cond)
+            if precomputed_bins is not None else None
         )
-        good = ~np.isnan(mean)
+        if edges is None:
+            edges = fallback_spd_edges
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        median, q1, q3 = _trial_quantiles_by_bin(
+            sub, value_col="speed", bin_edges=edges, bin_width=bw,
+        )
+        good = ~np.isnan(median)
         if good.any():
-            ax_spd.errorbar(spd_centres[good], mean[good], yerr=std[good],
+            yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+            ax_spd.errorbar(centres[good], median[good], yerr=yerr,
                             fmt="o-", color=COND_COLORS[cond],
                             markersize=4, linewidth=1, capsize=3)
 
-    # Stationary dot at speed=0 — per-trial mean then across trials
+    # Stationary dot at speed=0 — per-trial median + IQR
     stat = cluster_df[cluster_df["condition"] == "stationary"]
     if not stat.empty:
         per_trial = (
@@ -1071,9 +1091,14 @@ def _plot_observed_row(
         ).to_numpy(dtype=np.float64)
         per_trial = per_trial[~np.isnan(per_trial)]
         if per_trial.size >= 1:
-            mean_stat = float(per_trial.mean())
-            std_stat = float(per_trial.std(ddof=0)) if per_trial.size >= 2 else 0.0
-            ax_spd.errorbar(0.0, mean_stat, yerr=std_stat,
+            med_stat = float(np.median(per_trial))
+            if per_trial.size >= 2:
+                q1_stat = float(np.quantile(per_trial, 0.25))
+                q3_stat = float(np.quantile(per_trial, 0.75))
+            else:
+                q1_stat = q3_stat = med_stat
+            yerr_stat = np.array([[med_stat - q1_stat], [q3_stat - med_stat]])
+            ax_spd.errorbar(0.0, med_stat, yerr=yerr_stat,
                             fmt="o", color=COND_COLORS["stationary"],
                             markersize=6, capsize=4)
 
@@ -1082,12 +1107,20 @@ def _plot_observed_row(
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
-        mean, std = _trial_mean_std_by_bin(
-            sub, value_col="tf", bin_edges=tf_edges, bin_width=bw,
+        edges = (
+            precomputed_bins.tf_edges(cond)
+            if precomputed_bins is not None else None
         )
-        good = ~np.isnan(mean)
+        if edges is None:
+            edges = fallback_tf_edges
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        median, q1, q3 = _trial_quantiles_by_bin(
+            sub, value_col="tf", bin_edges=edges, bin_width=bw,
+        )
+        good = ~np.isnan(median)
         if good.any():
-            ax_tf.errorbar(tf_centres[good], mean[good], yerr=std[good],
+            yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+            ax_tf.errorbar(centres[good], median[good], yerr=yerr,
                            fmt="o-", color=COND_COLORS[cond],
                            markersize=4, linewidth=1, capsize=3)
 
@@ -1096,13 +1129,14 @@ def _plot_observed_row(
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
-        mean, std = _trial_mean_std_by_level(
+        median, q1, q3 = _trial_quantiles_by_level(
             sub, value_col="sf", levels=sf_plot, tol=0.001, bin_width=bw,
         )
-        good = ~np.isnan(mean)
+        good = ~np.isnan(median)
         if good.any():
-            ax_sf.errorbar(np.arange(sf_plot.size)[good], mean[good],
-                           yerr=std[good],
+            yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+            ax_sf.errorbar(np.arange(sf_plot.size)[good], median[good],
+                           yerr=yerr,
                            fmt="o-", color=COND_COLORS[cond],
                            markersize=5, linewidth=1, capsize=4)
     ax_sf.set_xticks(np.arange(sf_plot.size))
@@ -1113,13 +1147,14 @@ def _plot_observed_row(
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
-        mean, std = _trial_mean_std_by_level(
+        median, q1, q3 = _trial_quantiles_by_level(
             sub, value_col="orientation", levels=or_plot, tol=0.01, bin_width=bw,
         )
-        good = ~np.isnan(mean)
+        good = ~np.isnan(median)
         if good.any():
-            ax_or.errorbar(np.arange(or_plot.size)[good], mean[good],
-                           yerr=std[good],
+            yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+            ax_or.errorbar(np.arange(or_plot.size)[good], median[good],
+                           yerr=yerr,
                            fmt="o-", color=COND_COLORS[cond],
                            markersize=5, linewidth=1, capsize=4)
     ax_or.set_xticks(np.arange(or_plot.size))
@@ -1440,30 +1475,36 @@ def _interaction_matches(col_name: str, var: str) -> bool:
     return col_name.startswith(pa) and f"_x_{pb}" in col_name
 
 
-def _trial_mean_std_by_bin(
+def _trial_quantiles_by_bin(
     sub_df: pd.DataFrame,
     *,
     value_col: str,
     bin_edges: np.ndarray,
     bin_width: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-trial mean rate inside each ``bin_edges`` bucket of ``value_col``.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-trial median / Q1 / Q3 rate inside each ``bin_edges`` bucket.
 
-    Divergence from MATLAB: we plot every cell with ≥``MIN_TRIALS_PER_CELL``
-    contributing trials (default 1) so the observed data is always visible.
-    MATLAB required ≥2 trials and silently dropped single-trial cells.
-    Single-trial cells render with ``std=0`` (no error bar).
+    Returns median, q1, q3 arrays with NaN where the cell has fewer than
+    ``MIN_TRIALS_PER_CELL`` contributing trials (MATLAB required ≥2, we
+    default to 1 so observed data is always visible — single-trial cells
+    render with q1==q3==median, i.e. no visible error bar).
+
+    Switched from mean±std to quartiles: firing-rate-per-trial distributions
+    are right-skewed with occasional high-count trials, so std is a poor
+    summary of where the middle of the distribution sits. Q1/Q3 is robust
+    and renders asymmetric when the distribution is one-sided.
     """
     x = sub_df[value_col].to_numpy(dtype=np.float64)
     rate = sub_df["spike_count"].to_numpy(dtype=np.float64) / bin_width
     trial_ids = sub_df["trial_id"].to_numpy(dtype=np.int64)
     n_bins = bin_edges.size - 1
-    mean = np.full(n_bins, np.nan)
-    std = np.full(n_bins, np.nan)
+    median = np.full(n_bins, np.nan)
+    q1 = np.full(n_bins, np.nan)
+    q3 = np.full(n_bins, np.nan)
     good = ~np.isnan(x) & ~np.isnan(rate)
     x, rate, trial_ids = x[good], rate[good], trial_ids[good]
     if x.size == 0:
-        return mean, std
+        return median, q1, q3
     bin_idx = np.clip(np.digitize(x, bin_edges) - 1, 0, n_bins - 1)
     inside = (x >= bin_edges[0]) & (x < bin_edges[-1])
     bin_idx = np.where(inside, bin_idx, -1)
@@ -1478,29 +1519,35 @@ def _trial_mean_std_by_bin(
         ]
         if len(trial_rates) >= MIN_TRIALS_PER_CELL:
             arr = np.asarray(trial_rates, dtype=np.float64)
-            mean[b] = float(arr.mean())
-            std[b] = float(arr.std(ddof=0)) if arr.size >= 2 else 0.0
-    return mean, std
+            median[b] = float(np.median(arr))
+            if arr.size >= 2:
+                q1[b] = float(np.quantile(arr, 0.25))
+                q3[b] = float(np.quantile(arr, 0.75))
+            else:
+                q1[b] = median[b]
+                q3[b] = median[b]
+    return median, q1, q3
 
 
-def _trial_mean_std_by_level(
+def _trial_quantiles_by_level(
     sub_df: pd.DataFrame,
     *,
     value_col: str,
     levels: np.ndarray,
     tol: float,
     bin_width: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-trial mean rate at each discrete level (SF / OR)."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-trial median / Q1 / Q3 rate at each discrete level (SF / OR)."""
     x = sub_df[value_col].to_numpy(dtype=np.float64)
     rate = sub_df["spike_count"].to_numpy(dtype=np.float64) / bin_width
     trial_ids = sub_df["trial_id"].to_numpy(dtype=np.int64)
-    mean = np.full(levels.size, np.nan)
-    std = np.full(levels.size, np.nan)
+    median = np.full(levels.size, np.nan)
+    q1 = np.full(levels.size, np.nan)
+    q3 = np.full(levels.size, np.nan)
     good = ~np.isnan(x) & ~np.isnan(rate)
     x, rate, trial_ids = x[good], rate[good], trial_ids[good]
     if x.size == 0:
-        return mean, std
+        return median, q1, q3
     for i, level in enumerate(levels):
         sel = np.abs(x - level) < tol
         if not sel.any():
@@ -1512,9 +1559,14 @@ def _trial_mean_std_by_level(
         ]
         if len(trial_rates) >= MIN_TRIALS_PER_CELL:
             arr = np.asarray(trial_rates, dtype=np.float64)
-            mean[i] = float(arr.mean())
-            std[i] = float(arr.std(ddof=0)) if arr.size >= 2 else 0.0
-    return mean, std
+            median[i] = float(np.median(arr))
+            if arr.size >= 2:
+                q1[i] = float(np.quantile(arr, 0.25))
+                q3[i] = float(np.quantile(arr, 0.75))
+            else:
+                q1[i] = median[i]
+                q3[i] = median[i]
+    return median, q1, q3
 
 
 # --------------------------------------------------------------------------- #

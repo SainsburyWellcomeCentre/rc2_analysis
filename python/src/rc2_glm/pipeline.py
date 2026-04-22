@@ -218,6 +218,7 @@ def _run_pipeline_inner(
             _write_all_plots(
                 probe.probe_id, comparison_df, history_df, coef_df,
                 cluster_fits, config, output_dir / "figs",
+                formatted_mat_path=probe.mat_path,
                 plot_format=plot_format, plot_clusters=plot_clusters,
                 backend=backend,
             )
@@ -808,13 +809,17 @@ def _write_all_plots(
     config: GLMConfig,
     figs_dir: Path,
     *,
+    formatted_mat_path: Path,
     plot_format: str,
     plot_clusters: int | None,
     backend: str,
 ) -> None:
     from rc2_glm import plots
+    from rc2_glm.precomputed_bins import load_precomputed_bin_edges
 
     figs_dir.mkdir(parents=True, exist_ok=True)
+
+    precomputed_bins = load_precomputed_bin_edges(formatted_mat_path)
 
     for path in plots.save_figure(
         plots.plot_basis_functions(config),
@@ -853,6 +858,7 @@ def _write_all_plots(
                 model_betas=fit.model_betas,
                 model_col_names=fit.model_col_names,
                 config=config,
+                precomputed_bins=precomputed_bins,
              ), f"cluster_{cid}_tuning"),
         ):
             for path in plots.save_figure(fn, figs_dir / name, fmt=plot_format):
