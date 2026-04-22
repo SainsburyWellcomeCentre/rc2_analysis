@@ -251,6 +251,47 @@ def _cv_bps_correlation(
                 note=f"n={len(merged)} common non-NaN clusters")
 
 
+def _cv_bps_mean_offset(
+    py: pd.DataFrame, ref: pd.DataFrame, column_candidates: tuple[str, ...],
+    check_name: str,
+) -> dict:
+    """Informational: report ``mean(py - ref)`` in cv bits-per-spike.
+
+    Absolute bps values scale with the time-bin width used for binning
+    (Poisson per-bin entropy changes with bin width, although the
+    Spearman ranking is invariant). Two runs using different bin widths
+    will show a constant offset even when the models agree. This row
+    never gates — it's reported so the sign + magnitude of any offset
+    is visible in the report.
+    """
+    py_col = _select_first_present(py, *column_candidates)
+    ref_col = _select_first_present(ref, *column_candidates)
+    if py_col is None or ref_col is None:
+        return _row(check_name, float("nan"), float("nan"), True,
+                    note=f"skipped: none of {column_candidates} present on one side")
+    key = _merge_key(py, ref)
+    py_df = py[key].copy()
+    py_df["v_py"] = py_col.values
+    ref_df = ref[key].copy()
+    ref_df["v_ref"] = ref_col.values
+    merged = py_df.merge(ref_df, on=key).dropna()
+    if merged.empty:
+        return _row(check_name, float("nan"), float("nan"), True,
+                    note="skipped: no common non-NaN clusters")
+    diff = merged["v_py"].to_numpy() - merged["v_ref"].to_numpy()
+    mean_offset = float(np.mean(diff))
+    std_offset = float(np.std(diff))
+    return _row(
+        check_name, mean_offset, float("nan"), True,
+        note=(
+            f"informational — mean(py-ref) over n={len(merged)} common "
+            f"clusters, std={std_offset:.3f}; absolute bps depends on "
+            f"time-bin width convention (see summary/rc2_analysis-"
+            f"python-matlab-parity.md, 'CV-bps offset — resolved')"
+        ),
+    )
+
+
 def _selected_minus_null_sign_agreement(
     py: pd.DataFrame, ref: pd.DataFrame
 ) -> dict:
@@ -485,9 +526,17 @@ def run_compare(
             cmp_py, cmp_ref, ("Null_cv_bps",),
             "null_cv_bps_spearman", NULL_CV_SPEARMAN_THRESHOLD,
         ))
+        rows.append(_cv_bps_mean_offset(
+            cmp_py, cmp_ref, ("Null_cv_bps",),
+            "null_cv_bps_mean_offset",
+        ))
         rows.append(_cv_bps_correlation(
             cmp_py, cmp_ref, ("Selected_cv_bps",),
             "selected_cv_bps_spearman", SELECTED_CV_SPEARMAN_THRESHOLD,
+        ))
+        rows.append(_cv_bps_mean_offset(
+            cmp_py, cmp_ref, ("Selected_cv_bps",),
+            "selected_cv_bps_mean_offset",
         ))
         rows.append(_selected_minus_null_sign_agreement(cmp_py, cmp_ref))
     else:
