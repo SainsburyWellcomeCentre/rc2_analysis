@@ -16,6 +16,9 @@ from matplotlib.figure import Figure
 
 from rc2_glm.config import GLMConfig
 from rc2_glm.plots import (
+    _BETA_GROUP_COLORS,
+    _BETA_GROUP_ORDER,
+    _beta_group_tag,
     plot_basis_functions,
     plot_cluster_model_overview,
     plot_forward_selection_summary,
@@ -188,6 +191,56 @@ def test_plot_cluster_model_overview_handles_missing_model():
     )
     assert isinstance(fig, Figure)
     plt.close(fig)
+
+
+def test_beta_group_tag_routes_each_interaction_pair_to_its_own_group():
+    """Every interaction pair must land in a distinct group.
+
+    The pre-fix tag function used ``"_x_SF" in col_name`` / ``"_x_OR" in col_name``
+    which collapsed ``TF1_x_SF0.003``, ``TF1_x_OR0.000`` and
+    ``SF0.003_x_OR0.000`` into the Spd×SF / Spd×OR groups respectively, so
+    three of the six interaction categories never appeared on the swarm plot.
+    Split on ``_x_`` and disambiguate on the left prefix.
+    """
+    cases = {
+        # Spd×*
+        "Spd1_x_TF1":       "Spd x TF",
+        "Spd3_x_TF2":       "Spd x TF",
+        "Spd1_x_SF0.0030":  "Spd x SF",
+        "Spd2_x_SF0.0120":  "Spd x SF",
+        "Spd1_x_OR0.000":   "Spd x OR",
+        "Spd4_x_OR1.571":   "Spd x OR",
+        # TF×* — these three used to misroute
+        "TF1_x_SF0.0030":   "TF x SF",
+        "TF2_x_SF0.0120":   "TF x SF",
+        "TF1_x_OR0.000":    "TF x OR",
+        "TF2_x_OR0.785":    "TF x OR",
+        # SF×OR — also misrouted pre-fix
+        "SF0.0030_x_OR0.000":   "SF x OR",
+        "SF0.0120_x_OR1.571":   "SF x OR",
+    }
+    for col, expected in cases.items():
+        assert _beta_group_tag(col) == expected, (col, _beta_group_tag(col))
+
+
+def test_beta_group_tag_main_effects_and_special_columns():
+    assert _beta_group_tag("Intercept") == "Intercept"
+    assert _beta_group_tag("Speed_1") == "Speed"
+    assert _beta_group_tag("Speed_5") == "Speed"
+    assert _beta_group_tag("TF_1") == "TF"
+    assert _beta_group_tag("SF_0.0030") == "SF"
+    assert _beta_group_tag("OR_0.785") == "OR"
+    assert _beta_group_tag("Onset_1") == "Time"
+    assert _beta_group_tag("Time_3") == "Time"
+    assert _beta_group_tag("unknown_column") == "Other"
+
+
+def test_beta_group_order_and_palette_cover_all_six_interaction_pairs():
+    """All six pair groups must appear in the display order + palette."""
+    for pair in ("Spd x TF", "Spd x SF", "Spd x OR",
+                 "TF x SF", "TF x OR", "SF x OR"):
+        assert pair in _BETA_GROUP_ORDER, pair
+        assert pair in _BETA_GROUP_COLORS, pair
 
 
 def test_save_figure_pdf(tmp_path):

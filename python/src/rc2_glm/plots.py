@@ -332,7 +332,9 @@ def plot_tuning_curves(
 # Keys are MATLAB group tags; values are the palette row and tick label.
 _BETA_GROUP_ORDER: tuple[str, ...] = (
     "Intercept", "Speed", "TF", "SF", "OR", "Time",
-    "Spd x TF", "Spd x SF", "Spd x OR", "Other",
+    "Spd x TF", "Spd x SF", "Spd x OR",
+    "TF x SF", "TF x OR", "SF x OR",
+    "Other",
 )
 _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "Intercept":  (0.5, 0.5, 0.5),
@@ -344,6 +346,9 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "Spd x TF":   (0.6, 0.35, 0.05),
     "Spd x SF":   (0.55, 0.50, 0.05),
     "Spd x OR":   (0.50, 0.10, 0.10),
+    "TF x SF":    (0.85, 0.60, 0.05),
+    "TF x OR":    (0.75, 0.20, 0.15),
+    "SF x OR":    (0.55, 0.25, 0.35),
     "Other":      (0.7, 0.7, 0.7),
 }
 
@@ -553,15 +558,31 @@ def _plot_beta_swarm(ax, beta: np.ndarray, col_names: list[str]) -> None:
 
 
 def _beta_group_tag(col_name: str) -> str:
-    """Map a design column name onto one of ``_BETA_GROUP_ORDER``."""
+    """Map a design column name onto one of ``_BETA_GROUP_ORDER``.
+
+    Interaction columns are ``<A>_x_<B>`` where both sides carry a variable
+    prefix (``Spd``, ``TF``, ``SF``, ``OR``). Earlier versions used
+    ``"_x_SF" in col_name`` which collapsed ``TF1_x_SF0.003`` into the Spd×SF
+    bucket — split on ``_x_`` and read the left prefix so all six pairings
+    land in their own group.
+    """
     if col_name == "Intercept":
         return "Intercept"
-    if "_x_TF" in col_name:
-        return "Spd x TF"
-    if "_x_SF" in col_name:
-        return "Spd x SF"
-    if "_x_OR" in col_name:
-        return "Spd x OR"
+    if "_x_" in col_name:
+        left, right = col_name.split("_x_", 1)
+        if left.startswith("Spd") and right.startswith("TF"):
+            return "Spd x TF"
+        if left.startswith("Spd") and right.startswith("SF"):
+            return "Spd x SF"
+        if left.startswith("Spd") and right.startswith("OR"):
+            return "Spd x OR"
+        if left.startswith("TF") and right.startswith("SF"):
+            return "TF x SF"
+        if left.startswith("TF") and right.startswith("OR"):
+            return "TF x OR"
+        if left.startswith("SF") and right.startswith("OR"):
+            return "SF x OR"
+        return "Other"
     if col_name.startswith("Speed_"):
         return "Speed"
     if col_name.startswith("TF_"):
