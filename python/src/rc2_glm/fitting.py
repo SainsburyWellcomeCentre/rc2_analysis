@@ -7,19 +7,80 @@ Two backends:
   Uses the same eta clipping, mu floor, ridge-on-non-intercept, and
   Cholesky-based standard errors. Deterministic; matches MATLAB to
   ~1e-10 once the same random / numerical context is in place.
+  **This is the parity oracle for the rc2_analysis port** — every row
+  in ``rc2-glm-compare`` is phrased against the IRLS backend.
 
 - ``"nemos"``: Uses ``nemos.glm.GLM`` with Poisson observation model
-  and Ridge regularisation. NeMoS doesn't accept a per-sample offset
-  directly; for uniform 100 ms bins we absorb the constant
-  ``log(time_bin_width)`` into the intercept.
+  and Ridge regularisation. NeMoS solves with L-BFGS (jaxopt), not
+  Newton-IRLS, so its β lands at a numerically different optimum than
+  IRLS/MATLAB even on identical data (expected; the likelihoods are
+  within float precision of each other, the parameter rotation differs
+  — see co-scientist note "identifiability ≠ correctness" in the
+  obsidian-agents CLAUDE.md). Use NeMoS for throughput and GPU
+  acceleration, not for chasing MATLAB parity. The ``--device`` CLI
+  flag routes to ``configure_jax_device`` below; set it before any
+  ``import jax`` / ``import nemos`` to bind the JAX backend for the
+  process. NeMoS doesn't accept a per-sample offset directly; for
+  uniform 100 ms bins we absorb the constant ``log(time_bin_width)``
+  into the intercept.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 
 import numpy as np
 from scipy.special import gammaln
+
+logger = logging.getLogger(__name__)
+
+
+_JAX_DEVICE_CONFIGURED: str | None = None
+
+
+def configure_jax_device(device: str = "auto") -> str:
+    """Pin JAX to ``cpu`` / ``gpu`` / auto-detect, before ``import jax``.
+
+    JAX selects its backend at import time from the ``JAX_PLATFORMS`` env
+    var. Call this once per process, before ``import nemos`` (which
+    imports jax transitively). Subsequent calls with the same ``device``
+    are a no-op; a later different ``device`` logs a warning and is
+    ignored — JAX cannot switch platforms after import.
+
+    Returns the resolved backend name (``"cpu"``, ``"gpu"``, ``"tpu"``,
+    or ``"<unavailable>"`` when the requested device is missing).
+    """
+    global _JAX_DEVICE_CONFIGURED
+
+    device = (device or "auto").lower()
+    if device not in ("auto", "cpu", "gpu", "tpu"):
+        raise ValueError(f"Unknown JAX device: {device!r}")
+
+    if _JAX_DEVICE_CONFIGURED is not None:
+        if device != _JAX_DEVICE_CONFIGURED:
+            logger.warning(
+                "JAX already configured for %r; cannot switch to %r "
+                "within the same process.",
+                _JAX_DEVICE_CONFIGURED, device,
+            )
+        return _current_jax_backend()
+
+    if device != "auto":
+        os.environ["JAX_PLATFORMS"] = device
+
+    _JAX_DEVICE_CONFIGURED = device
+    return _current_jax_backend()
+
+
+def _current_jax_backend() -> str:
+    """Import jax (honours ``JAX_PLATFORMS``) and report its backend."""
+    try:
+        import jax  # noqa: F401
+        return str(jax.default_backend())
+    except Exception as exc:  # pragma: no cover — depends on install
+        return f"<unavailable: {exc}>"
 
 
 @dataclass

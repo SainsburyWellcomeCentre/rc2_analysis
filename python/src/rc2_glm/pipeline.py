@@ -140,6 +140,11 @@ def _run_pipeline_inner(
     logger.info("mat file: %s", mat_path)
     logger.info("backend: %s | visp_only: %s | prefilter: %s",
                 backend, visp_only, config.apply_prefilter)
+    if backend == "nemos":
+        from rc2_glm.fitting import configure_jax_device
+        resolved = configure_jax_device(config.device)
+        logger.info("nemos → JAX backend=%s (requested device=%s)",
+                    resolved, config.device)
 
     probe = load_probe_data(
         mat_path,
@@ -1023,6 +1028,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Fitting backend (default: irls)",
     )
     parser.add_argument(
+        "--device", choices=("auto", "cpu", "gpu"), default="auto",
+        help="JAX device for the nemos backend. 'auto' leaves JAX to "
+             "pick (uses GPU if visible, else CPU). Ignored when "
+             "--backend=irls. Applied before any JAX import — don't "
+             "import jax in a caller before invoking rc2-glm.",
+    )
+    parser.add_argument(
         "--all-clusters", action="store_true",
         help="Include non-VISp clusters (default: VISp only)",
     )
@@ -1066,7 +1078,11 @@ def main(argv: list[str] | None = None) -> int:
             "or set RC2_GLM_OUTPUT_DIR in python/.env."
         )
 
-    config = replace(GLMConfig(), apply_prefilter=args.prefilter)
+    config = replace(
+        GLMConfig(),
+        apply_prefilter=args.prefilter,
+        device=args.device,
+    )
 
     lookup = None
     if args.mc_sequence and args.mc_folders:
