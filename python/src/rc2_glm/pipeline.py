@@ -907,6 +907,35 @@ def _write_all_plots(
             for path in plots.save_figure(fn, figs_dir / name, fmt=plot_format):
                 logger.info("wrote %s", path.relative_to(figs_dir.parent))
 
+    # Trial-level predictions: MATLAB Section 8b picks the top 4 clusters with
+    # ≥2 selected vars by Selected cv_bps. Fewer than 4 is fine if the session
+    # doesn't produce enough rich models — we just render what we have.
+    trial_level_candidates = [
+        fit for fit, _ in cluster_fits
+        if len(fit.selection.selected_vars) >= 2
+        and np.isfinite(fit.selection.final_cv_bps)
+    ]
+    trial_level_candidates.sort(
+        key=lambda f: f.selection.final_cv_bps, reverse=True,
+    )
+    for fit in trial_level_candidates[:4]:
+        cid = fit.cluster_id
+        for path in plots.save_figure(
+            plots.plot_trial_level_predictions(
+                probe_id=probe_id,
+                cluster_id=cid,
+                cluster_df=fit.cluster_df,
+                model_predictions=fit.model_predictions,
+                config=config,
+                cv_bps=fit.selection.final_cv_bps,
+                selected_vars=list(fit.selection.selected_vars),
+                seed=0,
+            ),
+            figs_dir / f"trial_level_cluster_{cid}",
+            fmt=plot_format,
+        ):
+            logger.info("wrote %s", path.relative_to(figs_dir.parent))
+
 
 # --------------------------------------------------------------------------- #
 # CLI

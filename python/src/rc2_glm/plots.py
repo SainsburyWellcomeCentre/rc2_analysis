@@ -668,6 +668,240 @@ def plot_tuning_curves(
 
 
 # --------------------------------------------------------------------------- #
+# Fig 8b — per-trial Speed/TF + observed-vs-predicted FR over time
+# (MATLAB lines 4941-5198 of glm_single_cluster_analysis.m)
+# --------------------------------------------------------------------------- #
+
+
+_TRIAL_LEVEL_COND_COLORS: dict[str, tuple[float, float, float]] = {
+    "T_Vstatic": (0.2, 0.6, 0.2),  # green
+    "V":         (0.8, 0.2, 0.2),  # red
+    "VT":        (0.2, 0.2, 0.8),  # blue
+}
+_TRIAL_LEVEL_COND_CAPTION: dict[str, str] = {
+    "T_Vstatic": "T (speed only)",
+    "V":         "V (visual only)",
+    "VT":        "VT (multi-sensory)",
+}
+
+
+def plot_trial_level_predictions(
+    probe_id: str,
+    cluster_id: int,
+    cluster_df: pd.DataFrame,
+    model_predictions: dict[str, np.ndarray],
+    config: GLMConfig,
+    *,
+    selected_label: str = "Selected",
+    cv_bps: float | None = None,
+    selected_vars: list[str] | None = None,
+    seed: int = 0,
+) -> Figure:
+    """Per-trial Speed / TF / observed-vs-predicted FR traces.
+
+    Ports MATLAB ``Section 8b`` (``glm_single_cluster_analysis.m`` lines
+    4941-5198): selects 8 representative trials per cluster (2 T_Vstatic,
+    2 V, 4 VT, drawn with a deterministic RNG so re-runs produce the
+    same figures) and renders an N×3 grid:
+
+    - Col 0: Speed(t) coloured by condition.
+    - Col 1: TF(t) coloured by condition; y-axis shared across trials
+      for the cluster so amplitude differences are visible.
+    - Col 2: Boxcar-smoothed observed FR (grey) overlaid with the
+      Selected-model predicted FR (red).
+
+    Deviation from MATLAB: the Python pipeline currently stores the
+    full-data refit predictions (``ClusterFit.model_predictions``), not
+    concatenated held-out CV predictions. The trace is therefore
+    in-sample — fine for "does the model capture the time-course?"
+    inspection, but will mask out-of-sample shortfall compared to
+    MATLAB's CV version. The pipeline issue tracking a switch to CV
+    predictions is Commit 10 (`FullInteraction skip audit trail + stats
+    storage review`).
+    """
+    motion_mask = (cluster_df["condition"] != "stationary").to_numpy()
+    motion_df = cluster_df.loc[motion_mask].copy()
+    preds = model_predictions.get(selected_label)
+
+    title_parts = [f"Trial-Level Predictions | {probe_id} cluster {cluster_id}"]
+    if cv_bps is not None and np.isfinite(cv_bps):
+        title_parts.append(f"cv_bps={cv_bps:.3f}")
+    if selected_vars:
+        title_parts.append(f"vars: {'+'.join(selected_vars) or 'Null'}")
+    title = "  |  ".join(title_parts)
+
+    if motion_df.empty or preds is None or preds.size != len(motion_df):
+        fig, ax = plt.subplots(figsize=(10, 4), constrained_layout=True)
+        ax.text(
+            0.5, 0.5,
+            "no motion rows or predictions unavailable",
+            ha="center", va="center", transform=ax.transAxes,
+            fontsize=11, color=(0.5, 0.5, 0.5),
+        )
+        ax.set_axis_off()
+        fig.suptitle(title, fontsize=11, fontweight="bold")
+        return fig
+
+    motion_df = motion_df.reset_index(drop=True)
+    motion_df["_pred_fr"] = preds
+    # Full-cluster obs FR, then filter to motion (keeps boxcar smoothing
+    # inside each trial consistent with Fig 4).
+    obs_fr_full = _smoothed_obs_per_trial(
+        cluster_df, config.time_bin_width, OBS_FR_SMOOTH_WIDTH,
+    )
+    motion_df["_obs_fr"] = obs_fr_full[motion_mask]
+
+    rng = np.random.default_rng(seed)
+
+    # Unique trials per condition (one row per trial_id × sf × orientation).
+    trial_meta = (
+        motion_df[["trial_id", "condition", "sf", "orientation"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+
+    picks: list[tuple[int, str, str]] = []
+
+    def _pick_random(cond: str, k: int) -> list[int]:
+        pool = trial_meta.loc[trial_meta["condition"] == cond, "trial_id"].to_numpy()
+        if pool.size == 0 or k <= 0:
+            return []
+        take = min(k, pool.size)
+        return list(rng.choice(pool, size=take, replace=False))
+
+    for tid in _pick_random("T_Vstatic", 2):
+        picks.append((int(tid), "T_Vstatic", "T (speed only)"))
+    for tid in _pick_random("V", 2):
+        row = trial_meta.loc[trial_meta["trial_id"] == tid].iloc[0]
+        picks.append((int(tid), "V",
+                      f"V: SF={row['sf']:.3f}, OR={row['orientation']:.2f}"))
+
+    # VT: try to sample 4 distinct (sf, orientation) combos first, then fill.
+    vt_meta = trial_meta.loc[trial_meta["condition"] == "VT"].copy()
+    if not vt_meta.empty:
+        combos = (
+            vt_meta.drop_duplicates(subset=["sf", "orientation"])
+            .reset_index(drop=True)
+        )
+        k_combo = min(4, len(combos))
+        if k_combo:
+            combo_idx = rng.choice(len(combos), size=k_combo, replace=False)
+            for ci in combo_idx:
+                combo = combos.iloc[int(ci)]
+                matching = vt_meta.loc[
+                    (vt_meta["sf"] == combo["sf"])
+                    & (vt_meta["orientation"] == combo["orientation"]),
+                    "trial_id",
+                ].to_numpy()
+                if matching.size == 0:
+                    continue
+                tid = int(rng.choice(matching))
+                picks.append((
+                    tid, "VT",
+                    f"VT: SF={combo['sf']:.3f}, OR={combo['orientation']:.2f}",
+                ))
+        if len(picks) < 8 and len(vt_meta) > k_combo:
+            already = {tid for tid, _, _ in picks}
+            extra_pool = vt_meta.loc[~vt_meta["trial_id"].isin(already), "trial_id"].to_numpy()
+            if extra_pool.size:
+                take = min(8 - len(picks), extra_pool.size)
+                for tid in rng.choice(extra_pool, size=take, replace=False):
+                    row = vt_meta.loc[vt_meta["trial_id"] == tid].iloc[0]
+                    picks.append((
+                        int(tid), "VT",
+                        f"VT: SF={row['sf']:.3f}, OR={row['orientation']:.2f}",
+                    ))
+
+    if not picks:
+        fig, ax = plt.subplots(figsize=(10, 4), constrained_layout=True)
+        ax.text(
+            0.5, 0.5, "no motion trials to plot",
+            ha="center", va="center", transform=ax.transAxes,
+            fontsize=11, color=(0.5, 0.5, 0.5),
+        )
+        ax.set_axis_off()
+        fig.suptitle(title, fontsize=11, fontweight="bold")
+        return fig
+
+    # Pre-compute per-trial slices + cluster-wide TF ceiling.
+    trial_slices: list[dict] = []
+    tf_max_global = 0.0
+    for tid, cond, label in picks:
+        rows = motion_df.loc[motion_df["trial_id"] == tid].sort_values("time_in_trial")
+        if rows.empty:
+            continue
+        tf_max_global = max(tf_max_global, float(rows["tf"].max(skipna=True) or 0.0))
+        trial_slices.append(dict(
+            trial_id=tid, cond=cond, label=label,
+            time=rows["time_in_trial"].to_numpy(dtype=float),
+            speed=rows["speed"].to_numpy(dtype=float),
+            tf=rows["tf"].to_numpy(dtype=float),
+            obs_fr=rows["_obs_fr"].to_numpy(dtype=float),
+            pred_fr=rows["_pred_fr"].to_numpy(dtype=float),
+        ))
+
+    n_rows = len(trial_slices)
+    fig, axes = plt.subplots(
+        n_rows, 3,
+        figsize=(10, max(2.0, 1.5 * n_rows)),
+        squeeze=False, constrained_layout=True,
+    )
+    tf_ylim = (0.0, max(tf_max_global * 1.1, 0.1))
+
+    for r, slc in enumerate(trial_slices):
+        cond_clr = _TRIAL_LEVEL_COND_COLORS.get(slc["cond"], (0.3, 0.3, 0.3))
+        t = slc["time"]
+        xlim = (float(t.min() - 0.05), float(t.max() + 0.05))
+
+        ax_sp = axes[r, 0]
+        ax_sp.plot(t, slc["speed"], "-", color=cond_clr, linewidth=1.2)
+        ax_sp.set_ylabel("Speed (cm/s)", fontsize=8)
+        ax_sp.set_xlim(*xlim)
+        ax_sp.text(
+            -0.20, 0.5, f"Trial {slc['trial_id']}\n{slc['label']}",
+            transform=ax_sp.transAxes, ha="right", va="center",
+            fontsize=7, color=(0.2, 0.2, 0.2),
+        )
+        if r == 0:
+            ax_sp.set_title("Speed", fontweight="bold", fontsize=10)
+
+        ax_tf = axes[r, 1]
+        ax_tf.plot(t, slc["tf"], "-", color=cond_clr, linewidth=1.2)
+        ax_tf.set_ylabel("TF (Hz)", fontsize=8)
+        ax_tf.set_xlim(*xlim)
+        ax_tf.set_ylim(*tf_ylim)
+        if r == 0:
+            ax_tf.set_title("Temporal Freq", fontweight="bold", fontsize=10)
+
+        ax_fr = axes[r, 2]
+        ax_fr.plot(t, slc["obs_fr"], "-", color=(0.5, 0.5, 0.5),
+                   linewidth=1.2, label="Observed")
+        ax_fr.plot(t, slc["pred_fr"], "-", color=(0.8, 0.2, 0.2),
+                   linewidth=1.5, label="Predicted")
+        ax_fr.set_ylabel("FR (Hz)", fontsize=8)
+        ax_fr.set_xlim(*xlim)
+        fr_max = max(
+            float(np.nanmax(slc["obs_fr"]) if slc["obs_fr"].size else 0.0),
+            float(np.nanmax(slc["pred_fr"]) if slc["pred_fr"].size else 0.0),
+            1.0,
+        )
+        ax_fr.set_ylim(0.0, fr_max * 1.1)
+        if r == 0:
+            ax_fr.set_title("Firing Rate", fontweight="bold", fontsize=10)
+            ax_fr.legend(loc="upper right", fontsize=6, frameon=False)
+
+        for ax in (ax_sp, ax_tf, ax_fr):
+            ax.tick_params(labelsize=7)
+            for sp in ("top", "right"):
+                ax.spines[sp].set_visible(False)
+            if r == n_rows - 1:
+                ax.set_xlabel("Time (s)", fontsize=8)
+
+    fig.suptitle(title, fontsize=11, fontweight="bold")
+    return fig
+
+
+# --------------------------------------------------------------------------- #
 # Fig 4 — per-cluster model overview with scatter panels
 # (MATLAB lines 2727-3290 of glm_single_cluster_analysis.m)
 # --------------------------------------------------------------------------- #
