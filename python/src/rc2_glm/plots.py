@@ -115,49 +115,273 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
 # --------------------------------------------------------------------------- #
 
 
+# MATLAB colour scheme (glm_single_cluster_analysis.m lines 1862-1996).
+_COLOR_SPEED = (0.17, 0.63, 0.17)
+_COLOR_TF = (1.00, 0.50, 0.05)
+_COLOR_SF = (0.95, 0.85, 0.10)
+_COLOR_OR = (0.84, 0.15, 0.16)
+_COLOR_NULL = (0.75, 0.75, 0.75)
+_COLOR_4PLUS = (0.35, 0.35, 0.35)
+_COLOR_INT_BLUE = (0.20, 0.40, 0.80)
+
+_MAIN_EFFECT_NAMES = ("Speed", "TF", "SF", "OR")
+_MAIN_EFFECT_COLORS: dict[str, tuple[float, float, float]] = {
+    "Speed": _COLOR_SPEED, "TF": _COLOR_TF,
+    "SF": _COLOR_SF, "OR": _COLOR_OR,
+}
+_MAIN_EFFECT_LABELS = {"Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR"}
+_INTERACTION_LABELS = {
+    "Speed_x_TF": "SxT", "Speed_x_SF": "SxSF", "Speed_x_OR": "SxO",
+    "TF_x_SF": "TxSF", "TF_x_OR": "TxO", "SF_x_OR": "SFxO",
+}
+# Keys are sorted "+"-joined main-effect lists (matches MATLAB main_key).
+_COMBO_COLORS: dict[str, tuple[float, float, float]] = {
+    "Speed": _COLOR_SPEED, "TF": _COLOR_TF,
+    "SF": _COLOR_SF, "OR": _COLOR_OR,
+    "Speed+TF": (0.12, 0.47, 0.71),
+    "SF+Speed": (0.26, 0.58, 0.85),
+    "OR+Speed": (0.05, 0.30, 0.55),
+    "SF+TF": (0.40, 0.60, 0.80),
+    "OR+TF": (0.15, 0.40, 0.65),
+    "OR+SF": (0.30, 0.50, 0.75),
+    "SF+Speed+TF": (0.50, 0.70, 0.90),
+    "OR+Speed+TF": (0.35, 0.55, 0.80),
+    "OR+SF+Speed": (0.45, 0.65, 0.85),
+    "OR+SF+TF": (0.55, 0.75, 0.92),
+    "OR+SF+Speed+TF": _COLOR_4PLUS,
+}
+
+
+def _darken(c: tuple[float, float, float], factor: float = 0.65) -> tuple[float, float, float]:
+    return tuple(max(x * factor, 0.0) for x in c)  # type: ignore[return-value]
+
+
+def _parse_selected_vars(s: str) -> list[str]:
+    if not s or s == "Null":
+        return []
+    return s.split("+")
+
+
 def plot_forward_selection_summary(
-    comparison_df: pd.DataFrame, history_df: pd.DataFrame,
+    comparison_df: pd.DataFrame, history_df: pd.DataFrame | None = None,
 ) -> Figure:
-    """Three panels: null-vs-selected scatter, #selected histogram, var counts."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), constrained_layout=True)
+    """MATLAB Fig 2 port — forward-selection classification summary.
 
-    null_col = "time_Null_cv_bps"
-    sel_col = "time_Selected_cv_bps"
-    n_sel_col = "time_n_selected_vars"
+    Three panels mirroring ``glm_single_cluster_analysis.m`` lines
+    1828-2209:
 
+    1. Stacked bar by model complexity (Null / 1 var / 2 / 3 / 4+).
+       Each stack segment is a distinct model type; colour encodes
+       composition (pure colour for single-variable models, blue
+       variations for multi-variable combos, darker if the model
+       contains interactions). Segments with ≥2 main effects are
+       overlaid with horizontal bands cycling through the constituent
+       main-effect colours — this replaces MATLAB's diagonal stripe
+       pattern with the same horizontal-band scheme MATLAB actually
+       draws (`patch` bands, lines 2100-2117).
+    2. Variable-inclusion rates (horizontal bar: Speed/TF/SF/OR/Any
+       Interact.), same colour scheme as Panel 1.
+    3. Pairwise interaction breakdown (horizontal bar for the six
+       interactions).
+
+    ``history_df`` is accepted for call-site compatibility and unused —
+    Panel 1's complexity view already covers what the old
+    null-vs-selected-scatter / var-pick-counts plots showed.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Rectangle
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
+
+    if (
+        comparison_df.empty
+        or "time_selected_vars" not in comparison_df.columns
+    ):
+        fig.suptitle("Forward Selection Summary — no data")
+        return fig
+
+    n_total = len(comparison_df)
+
+    # --- Build catalog: sorted-key -> metadata for each distinct model
+    catalog: dict[str, dict] = {}
+    for raw in comparison_df["time_selected_vars"].astype(str):
+        sv = _parse_selected_vars(raw)
+        key = "+".join(sorted(sv)) if sv else "Null"
+        if key not in catalog:
+            main_effects = sorted(v for v in sv if v in _MAIN_EFFECT_NAMES)
+            interactions = sorted(v for v in sv if v not in _MAIN_EFFECT_NAMES)
+            catalog[key] = {
+                "count": 0,
+                "complexity": len(sv),
+                "main_effects": main_effects,
+                "interactions": interactions,
+            }
+        catalog[key]["count"] += 1
+
+    for key, info in catalog.items():
+        if key == "Null":
+            info["color"] = _COLOR_NULL
+            info["label"] = "Null"
+            continue
+        main_key = "+".join(info["main_effects"])
+        base = _COMBO_COLORS.get(main_key, (0.5, 0.5, 0.5))
+        info["color"] = _darken(base) if info["interactions"] else base
+        parts = [_MAIN_EFFECT_LABELS[m] for m in info["main_effects"]]
+        parts += [_INTERACTION_LABELS.get(i, i) for i in info["interactions"]]
+        info["label"] = "+".join(parts)
+
+    # Complexity → bar position: 0 vars → 1, 1 → 2, …, ≥4 → 5.
+    by_level: dict[int, list[dict]] = {i: [] for i in range(1, 6)}
+    for info in catalog.values():
+        level = min(info["complexity"] + 1, 5)
+        by_level[level].append(info)
+    for level in by_level:
+        by_level[level].sort(key=lambda d: -d["count"])
+
+    # --- Panel 1: Model complexity stacked bar ---
     ax = axes[0]
-    if not comparison_df.empty and null_col in comparison_df and sel_col in comparison_df:
-        ax.scatter(
-            comparison_df[null_col], comparison_df[sel_col],
-            s=25, color="#1f77b4", alpha=0.7, edgecolors="none",
+    bar_width = 0.8
+    legend_entries: list[dict] = []
+    totals = [sum(d["count"] for d in by_level[lv]) for lv in range(1, 6)]
+    max_total = max(totals) if totals else 0
+
+    for level, segments in by_level.items():
+        y_bottom = 0.0
+        for info in segments:
+            height = info["count"]
+            if height <= 0:
+                continue
+            ax.bar(
+                level, height, width=bar_width, bottom=y_bottom,
+                color=info["color"], edgecolor=(0.3, 0.3, 0.3), linewidth=0.5,
+            )
+            me = info["main_effects"]
+            if len(me) >= 2:
+                n_eff = len(me)
+                band_h = height / (n_eff * 3)
+                band_colors = [_MAIN_EFFECT_COLORS[m] for m in me]
+                y_pos = y_bottom
+                band_idx = 0
+                while y_pos < y_bottom + height - 1e-9:
+                    band_top = min(y_pos + band_h, y_bottom + height)
+                    c = band_colors[band_idx % n_eff]
+                    ax.add_patch(Rectangle(
+                        (level - bar_width / 2, y_pos),
+                        bar_width, band_top - y_pos,
+                        facecolor=c, alpha=0.85, edgecolor="none",
+                    ))
+                    y_pos = band_top
+                    band_idx += 1
+            y_bottom += height
+            legend_entries.append(info)
+
+    for level, total in enumerate(totals, start=1):
+        if total <= 0:
+            continue
+        ax.text(
+            level, total + max_total * 0.03,
+            f"{total}\n({100 * total / n_total:.0f}%)",
+            ha="center", va="bottom", fontsize=7,
         )
-        lo = float(min(comparison_df[null_col].min(), comparison_df[sel_col].min()))
-        hi = float(max(comparison_df[null_col].max(), comparison_df[sel_col].max()))
-        ax.plot([lo, hi], [lo, hi], linestyle=":", color="#888")
-    ax.set_title("Null vs Selected CV bps")
-    ax.set_xlabel("null CV bps")
-    ax.set_ylabel("selected CV bps")
+    ax.set_xticks(range(1, 6))
+    ax.set_xticklabels(["Null", "1 var", "2 vars", "3 vars", "4+ vars"], rotation=30)
+    ax.set_ylabel("# Neurons")
+    ax.set_title("Model Complexity (Forward Selection)", fontsize=10)
+    ax.set_ylim(0, max(max_total * 1.25, 1))
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
 
+    legend_handles: list[Line2D] = []
+    legend_labels: list[str] = []
+    for info in legend_entries:
+        me = info["main_effects"]
+        if len(me) <= 1:
+            handle = Line2D(
+                [0], [0], marker="s", linestyle="none",
+                markerfacecolor=info["color"],
+                markeredgecolor=(0.3, 0.3, 0.3),
+                markersize=8,
+            )
+        else:
+            handle = Line2D(
+                [0], [0], marker="s", linestyle="none",
+                markerfacecolor=_MAIN_EFFECT_COLORS[me[0]],
+                markeredgecolor=_MAIN_EFFECT_COLORS[me[1]],
+                markeredgewidth=2, markersize=8,
+            )
+        legend_handles.append(handle)
+        legend_labels.append(f"{info['label']} ({info['count']})")
+    if legend_handles:
+        ax.legend(
+            legend_handles, legend_labels,
+            loc="upper right", fontsize=5, frameon=True,
+        )
+
+    # --- Panel 2: Variable-inclusion rates ---
     ax = axes[1]
-    if not comparison_df.empty and n_sel_col in comparison_df:
-        counts = comparison_df[n_sel_col].value_counts().sort_index()
-        ax.bar(counts.index.astype(int), counts.values, color="#2ca02c")
-    ax.set_title("Selected variable count per cluster")
-    ax.set_xlabel("# selected vars")
-    ax.set_ylabel("# clusters")
+    me_counts = [
+        int(comparison_df["time_is_speed_tuned"].sum()),
+        int(comparison_df["time_is_tf_tuned"].sum()),
+        int(comparison_df["time_is_sf_tuned"].sum()),
+        int(comparison_df["time_is_or_tuned"].sum()),
+        int(comparison_df["time_has_interaction"].sum()),
+    ]
+    me_labels = ["Speed", "TF", "SF", "OR", "Any Interact."]
+    me_colors = [_COLOR_SPEED, _COLOR_TF, _COLOR_SF, _COLOR_OR, _COLOR_INT_BLUE]
+    y_pos = np.arange(1, len(me_counts) + 1)
+    ax.barh(y_pos, me_counts, color=me_colors, edgecolor="none")
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(me_labels)
+    ax.set_xlabel("# Neurons")
+    ax.set_title(f"Variable Inclusion (n={n_total})", fontsize=10)
+    max_me = max(me_counts) if any(me_counts) else 1
+    for yi, c in zip(y_pos, me_counts):
+        ax.text(
+            c + max_me * 0.02, yi,
+            f"{c} ({100 * c / n_total:.0f}%)",
+            va="center", fontsize=8,
+        )
+    ax.set_xlim(0, max_me * 1.35)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
 
+    # --- Panel 3: Interaction breakdown ---
     ax = axes[2]
-    if not history_df.empty and "added" in history_df.columns:
-        picked = history_df[history_df["added"]]["best_candidate"]
-        var_counts = picked.value_counts()
-        ax.bar(range(len(var_counts)), var_counts.values, color="#d62728")
-        ax.set_xticks(range(len(var_counts)))
-        ax.set_xticklabels(var_counts.index, rotation=45, ha="right")
-    ax.set_title("How often each variable was picked")
-    ax.set_xlabel("variable")
-    ax.set_ylabel("# times picked")
+    int_counts = [
+        int(comparison_df["time_has_speed_x_tf"].sum()),
+        int(comparison_df["time_has_speed_x_sf"].sum()),
+        int(comparison_df["time_has_speed_x_or"].sum()),
+        int(comparison_df["time_has_tf_x_sf"].sum()),
+        int(comparison_df["time_has_tf_x_or"].sum()),
+        int(comparison_df["time_has_sf_x_or"].sum()),
+    ]
+    int_labels = ["Spd x TF", "Spd x SF", "Spd x OR", "TF x SF", "TF x OR", "SF x OR"]
+    int_colors = [
+        (0.9, 0.2, 0.2), (0.8, 0.5, 0.2), (0.6, 0.2, 0.6),
+        (0.5, 0.8, 0.2), (0.2, 0.5, 0.8), (0.9, 0.6, 0.6),
+    ]
+    y_pos = np.arange(1, len(int_counts) + 1)
+    ax.barh(y_pos, int_counts, color=int_colors, edgecolor="none")
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(int_labels)
+    ax.set_xlabel("# Neurons")
+    ax.set_title("Interaction Breakdown", fontsize=10)
+    max_int = max(max(int_counts), 1)
+    for yi, c in zip(y_pos, int_counts):
+        ax.text(
+            c + max_int * 0.02, yi,
+            f"{c} ({100 * c / n_total:.0f}%)",
+            va="center", fontsize=8,
+        )
+    ax.set_xlim(0, max_int * 1.4)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
 
-    fig.suptitle("Forward-selection summary across clusters")
+    thr = GLMConfig().delta_bps_threshold
+    fig.suptitle(
+        f"Forward Selection Results (threshold: Δ bps > {thr:.3f})",
+        fontsize=12, fontweight="bold",
+    )
     return fig
 
 
