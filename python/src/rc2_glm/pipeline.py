@@ -52,6 +52,11 @@ GLM_TYPE = "time"   # only one glm_type in the Python port
 logger = logging.getLogger("rc2_glm")
 
 
+_FIT_STATUS_FITTED = "fitted"
+_FIT_STATUS_P_GE_N = "skipped_p_ge_n"
+_FIT_STATUS_EMPTY = "skipped_empty_design"
+
+
 @dataclass
 class ClusterFit:
     cluster_id: int
@@ -65,6 +70,16 @@ class ClusterFit:
     model_betas: dict[str, np.ndarray]           # 'Null'|'Selected'|'Additive'|'FullInteraction' -> β
     model_col_names: dict[str, list[str]]        # same keys -> design column names
     model_predictions: dict[str, np.ndarray]     # same keys -> per-motion-row predicted FR (Hz)
+    # Status trail for each model: one of the _FIT_STATUS_* constants above.
+    # ``cv_status`` tracks the cross-validated Additive / FullInteraction
+    # columns in ``glm_model_comparison.csv`` (NaN values become
+    # explicable); ``refit_status`` tracks the full-data refits behind
+    # ``model_betas`` / ``model_predictions`` (blank rows in per-cluster
+    # plots become explicable). The two can disagree on the same cluster
+    # because the CV folds have ~80% of the bins that the refit has, so
+    # ``p>=n`` can fire for the CV but not the refit.
+    cv_status: dict[str, str]        # keys: "Additive", "FullInteraction"
+    refit_status: dict[str, str]     # keys: "Null", "Selected", "Additive", "FullInteraction"
 
 
 @dataclass
@@ -229,6 +244,7 @@ def _run_pipeline_inner(
             fit.selection.null_cv_bps, fit.selection.final_cv_bps,
         )
     logger.info("forward selection done in %.1fs", time.perf_counter() - t0)
+    _log_fit_status_summary(cluster_fits)
 
     comparison_df = pd.DataFrame(comparison_rows)
     history_df = pd.DataFrame(history_rows)
@@ -271,6 +287,33 @@ def _run_pipeline_inner(
         selection_history=history_df,
         coefficients=coef_df,
     )
+
+
+def _log_fit_status_summary(
+    cluster_fits: list[tuple[ClusterFit, pd.DataFrame]],
+) -> None:
+    """Log per-model skip counts so the run log explains NaN CV-bps rows."""
+    if not cluster_fits:
+        return
+    cv_counts: dict[str, dict[str, int]] = {}
+    refit_counts: dict[str, dict[str, int]] = {}
+    for fit, _ in cluster_fits:
+        for label, status in fit.cv_status.items():
+            cv_counts.setdefault(label, {}).setdefault(status, 0)
+            cv_counts[label][status] += 1
+        for label, status in fit.refit_status.items():
+            refit_counts.setdefault(label, {}).setdefault(status, 0)
+            refit_counts[label][status] += 1
+    for label in sorted(cv_counts):
+        parts = ", ".join(
+            f"{st}={cv_counts[label][st]}" for st in sorted(cv_counts[label])
+        )
+        logger.info("cv-status %s: %s", label, parts)
+    for label in sorted(refit_counts):
+        parts = ", ".join(
+            f"{st}={refit_counts[label][st]}" for st in sorted(refit_counts[label])
+        )
+        logger.info("refit-status %s: %s", label, parts)
 
 
 def _fit_one_cluster(
@@ -324,18 +367,20 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
-    additive_cv = _cv_for_label(
+    additive_cv, additive_status = _cv_for_label(
         "Additive", B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, fold_ids, backend, config,
+        cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
-    full_int_cv = _cv_for_label(
+    full_int_cv, full_int_status = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, fold_ids, backend, config,
+        cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
-    coef_df, betas, col_names_by_model, preds = _fit_plot_models(
+    coef_df, betas, col_names_by_model, preds, refit_status = _fit_plot_models(
         selection.selected_vars,
         B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, config, backend,
@@ -356,6 +401,8 @@ def _fit_one_cluster(
         model_betas=betas,
         model_col_names=col_names_by_model,
         model_predictions=preds,
+        cv_status={"Additive": additive_status, "FullInteraction": full_int_status},
+        refit_status=refit_status,
     )
 
 
@@ -365,22 +412,34 @@ def _cv_for_label(
     sf_vals: np.ndarray, or_vals: np.ndarray,
     y: np.ndarray, offset: float,
     fold_ids: np.ndarray, backend: str, config: GLMConfig,
+    cluster_id: int,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
-) -> float:
+) -> tuple[float, str]:
     X, _ = assemble_design_matrix(
         B_speed, B_tf, B_onset, sf_vals, or_vals, label,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
+    if X.shape[1] == 0:
+        logger.warning(
+            "cluster %d: CV(%s) skipped — 0 design columns",
+            cluster_id, label,
+        )
+        return float("nan"), _FIT_STATUS_EMPTY
     if X.shape[1] >= y.size:
-        return float("nan")
+        logger.warning(
+            "cluster %d: CV(%s) skipped — design has %d cols vs %d bins "
+            "(X.shape[1] >= y.size); comparison CSV row will be NaN.",
+            cluster_id, label, X.shape[1], y.size,
+        )
+        return float("nan"), _FIT_STATUS_P_GE_N
     lambda_ridge = (
         config.full_interaction_lambda
         if label == "FullInteraction"
         else config.lambda_ridge
     )
     cv = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=lambda_ridge, backend=backend)
-    return float(cv.cv_bits_per_spike)
+    return float(cv.cv_bits_per_spike), _FIT_STATUS_FITTED
 
 
 _ADDITIVE_VARS = ["Speed", "TF", "SF", "OR"]
@@ -406,20 +465,24 @@ def _fit_plot_models(
     dict[str, np.ndarray],
     dict[str, list[str]],
     dict[str, np.ndarray],
+    dict[str, str],
 ]:
     """Fit Null / Selected / Additive / FullInteraction in-sample.
 
     Returns the CSV coefficient table (Selected + Additive only, preserving the
     existing export surface) plus the per-model β vectors, design column
-    names, and per-motion-row predicted firing rates (Hz) that the
-    per-cluster plots need. Each fit decision (fitted, skipped because
-    ``X.shape[1] >= y.size``, or empty design) is logged so a run-log
-    reader can explain blank rows in ``cluster_<id>_overview.pdf``.
+    names, per-motion-row predicted firing rates (Hz) for the cluster
+    plots, and a ``refit_status`` dict keyed by model label with one of
+    ``_FIT_STATUS_FITTED`` / ``_FIT_STATUS_P_GE_N`` /
+    ``_FIT_STATUS_EMPTY`` so blank rows in ``cluster_<id>_overview.pdf``
+    can be explained from the run log or the comparison CSV without
+    re-reading the warnings stream.
     """
     csv_rows: list[dict] = []
     betas: dict[str, np.ndarray] = {}
     col_names_by_model: dict[str, list[str]] = {}
     preds: dict[str, np.ndarray] = {}
+    refit_status: dict[str, str] = {}
 
     model_defs: list[tuple[str, list[str]]] = [
         ("Null", []),
@@ -435,16 +498,18 @@ def _fit_plot_models(
         )
         if X.shape[1] == 0:
             logger.warning(
-                "cluster %d: model %s has 0 design columns, skipping (vars=%s)",
+                "cluster %d: refit %s has 0 design columns, skipping (vars=%s)",
                 cluster_id, label, vars_for_label,
             )
+            refit_status[label] = _FIT_STATUS_EMPTY
             continue
         if X.shape[1] >= y.size:
             logger.warning(
-                "cluster %d: model %s skipped — design has %d cols but only "
+                "cluster %d: refit %s skipped — design has %d cols but only "
                 "%d bins (X.shape[1] >= y.size). Row will render as N/A.",
                 cluster_id, label, X.shape[1], y.size,
             )
+            refit_status[label] = _FIT_STATUS_P_GE_N
             continue
         lambda_ridge = (
             config.full_interaction_lambda
@@ -458,6 +523,7 @@ def _fit_plot_models(
         col_names_by_model[label] = list(names)
         preds_full = np.exp(np.clip(X @ fit.beta, -20.0, 20.0))
         preds[label] = preds_full[motion_row_mask]
+        refit_status[label] = _FIT_STATUS_FITTED
         logger.info(
             "cluster %d: fit %s | %d coefs | pred FR range [%.2f, %.2f] Hz",
             cluster_id, label, X.shape[1],
@@ -468,7 +534,7 @@ def _fit_plot_models(
                 "model": label, "coefficient": name,
                 "estimate": float(beta_v), "se": float(se_v),
             })
-    return pd.DataFrame(csv_rows), betas, col_names_by_model, preds
+    return pd.DataFrame(csv_rows), betas, col_names_by_model, preds, refit_status
 
 
 # --------------------------------------------------------------------------- #
@@ -495,7 +561,14 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_Null_cv_bps": sel.null_cv_bps,
         f"{GLM_TYPE}_Selected_cv_bps": sel.final_cv_bps,
         f"{GLM_TYPE}_Additive_cv_bps": fit.additive_cv_bps,
+        f"{GLM_TYPE}_Additive_cv_status": fit.cv_status.get("Additive", _FIT_STATUS_FITTED),
         f"{GLM_TYPE}_FullInteraction_cv_bps": fit.full_interaction_cv_bps,
+        f"{GLM_TYPE}_FullInteraction_cv_status": fit.cv_status.get(
+            "FullInteraction", _FIT_STATUS_FITTED,
+        ),
+        f"{GLM_TYPE}_FullInteraction_refit_status": fit.refit_status.get(
+            "FullInteraction", _FIT_STATUS_FITTED,
+        ),
         f"{GLM_TYPE}_delta_selected_vs_null": delta,
         f"{GLM_TYPE}_delta_additive_vs_null": fit.additive_cv_bps - sel.null_cv_bps,
         f"{GLM_TYPE}_delta_interaction": fit.full_interaction_cv_bps - fit.additive_cv_bps,
