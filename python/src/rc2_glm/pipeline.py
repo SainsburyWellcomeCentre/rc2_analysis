@@ -871,6 +871,13 @@ def _write_all_plots(
     ):
         logger.info("wrote %s", path.relative_to(figs_dir.parent))
 
+    for path in plots.save_figure(
+        plots.plot_cv_bps_deltas(comparison_df),
+        figs_dir / "cv_bps_deltas",
+        fmt=plot_format,
+    ):
+        logger.info("wrote %s", path.relative_to(figs_dir.parent))
+
     fits_to_plot = (
         cluster_fits if plot_clusters is None else cluster_fits[:plot_clusters]
     )

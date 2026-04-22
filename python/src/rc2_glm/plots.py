@@ -386,6 +386,124 @@ def plot_forward_selection_summary(
 
 
 # --------------------------------------------------------------------------- #
+# Fig 2b — CV bps deltas (replaces the old null-vs-selected scatter)
+# --------------------------------------------------------------------------- #
+
+
+def plot_cv_bps_deltas(comparison_df: pd.DataFrame) -> Figure:
+    """Per-cluster Δ CV-bps distributions across model comparisons.
+
+    Raw CV bps is dominated by a cluster-level baseline (its null log-
+    likelihood), so plotting absolute CV bps makes it nearly impossible
+    to see model-comparison effects — every point sits at the cluster's
+    own scale. The informative quantity is the Δ between two nested
+    models on the same cluster, which isolates the information gain
+    attributable to the added / removed structure.
+
+    Four panels (strip plots, one dot per cluster, jittered):
+
+    - ΔSelected − Null       : info gain from forward selection vs null.
+    - ΔAdditive − Null       : info gain of the saturated main-effects
+                               model vs null (upper envelope of what
+                               main effects alone can contribute).
+    - ΔSelected − Additive   : does forward selection beat the saturated
+                               additive model? Should typically be ≥ 0
+                               for selection to earn its keep, but can
+                               be slightly negative when selection drops
+                               marginal predictors that the CV actually
+                               wanted.
+    - ΔFullInteraction − Additive : do all pairwise interactions help?
+                               Mostly ≤ 0 on this dataset (p≫n region),
+                               which is the motivation for keeping the
+                               per-interaction forward-selection loop.
+
+    Each panel shows per-cluster dots, a horizontal median marker, the
+    y=0 reference line, and the selection threshold (±config default)
+    as a shaded band. An annotation in the corner reports
+    ``N>0 | N<0 | median``.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
+
+    deltas = [
+        ("time_delta_selected_vs_null",
+         "Δ Selected − Null",
+         "info gain: forward selection vs null",
+         (0.20, 0.60, 0.20)),
+        ("time_delta_additive_vs_null",
+         "Δ Additive − Null",
+         "info gain: saturated main effects vs null",
+         (0.25, 0.45, 0.75)),
+        ("time_delta_selected_vs_additive",
+         "Δ Selected − Additive",
+         "does selection beat saturated additive?",
+         (0.70, 0.40, 0.10)),
+        ("time_delta_interaction",
+         "Δ FullInteraction − Additive",
+         "do pairwise interactions help?",
+         (0.60, 0.20, 0.50)),
+    ]
+
+    threshold = GLMConfig().delta_bps_threshold
+    rng = np.random.default_rng(0)  # deterministic jitter
+
+    for ax, (col, title, subtitle, color) in zip(axes.flat, deltas):
+        if col not in comparison_df.columns or comparison_df.empty:
+            ax.set_title(f"{title}\n(column missing)", fontsize=10)
+            continue
+        vals = comparison_df[col].to_numpy(dtype=float)
+        vals = vals[~np.isnan(vals)]
+        if vals.size == 0:
+            ax.set_title(f"{title}\n(no data)", fontsize=10)
+            continue
+        n_pos = int((vals > 0).sum())
+        n_neg = int((vals < 0).sum())
+        median = float(np.median(vals))
+
+        jitter = rng.uniform(-0.2, 0.2, size=vals.size)
+        ax.scatter(
+            jitter, vals, s=25, color=color, alpha=0.65, edgecolors="none",
+        )
+        ax.axhline(0.0, color=(0.4, 0.4, 0.4), linestyle="--", linewidth=0.8)
+        ax.axhspan(-threshold, threshold, color=(0.85, 0.85, 0.85), alpha=0.4,
+                   label=f"±{threshold:g} threshold")
+        ax.hlines(
+            median, -0.35, 0.35,
+            colors="black", linewidth=2.5, zorder=3,
+        )
+        ax.scatter([0], [median], s=60, color="black", zorder=4,
+                   label=f"median = {median:+.4f}")
+
+        ax.set_xlim(-0.6, 0.6)
+        ax.set_xticks([])
+        ax.set_ylabel("Δ bits / spike")
+        ax.set_title(title, fontsize=11)
+        ax.text(
+            0.5, -0.18, subtitle,
+            transform=ax.transAxes,
+            ha="center", va="top", fontsize=9, color=(0.3, 0.3, 0.3),
+        )
+        ax.text(
+            0.02, 0.98,
+            f"N>0: {n_pos}\nN<0: {n_neg}\nmedian: {median:+.4f}",
+            transform=ax.transAxes, va="top", ha="left",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.3",
+                      facecolor="white", edgecolor=(0.7, 0.7, 0.7),
+                      alpha=0.9),
+        )
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+
+    n_total = int(len(comparison_df))
+    fig.suptitle(
+        f"CV bps model-comparison Δ per cluster  (n={n_total}, "
+        f"threshold ±{threshold:g})",
+        fontsize=12, fontweight="bold",
+    )
+    return fig
+
+
+# --------------------------------------------------------------------------- #
 # Fig 5 — reconstructed tuning curves (MATLAB Section 8b)
 # --------------------------------------------------------------------------- #
 
