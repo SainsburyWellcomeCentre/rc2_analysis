@@ -114,6 +114,19 @@ def _select_first_present(df: pd.DataFrame, *names: str) -> pd.Series | None:
 # --------------------------------------------------------------------------- #
 
 
+def _merge_key(py: pd.DataFrame, ref: pd.DataFrame) -> list[str]:
+    """Return the join key to use for per-cluster comparisons.
+
+    MATLAB reference CSVs span multiple probes; python outputs typically
+    contain a single probe. Merging on ``cluster_id`` alone therefore
+    collides rows across probes and reports spurious disagreement. If both
+    tables carry ``probe_id`` we scope the join to ``(probe_id, cluster_id)``.
+    """
+    if "probe_id" in py.columns and "probe_id" in ref.columns:
+        return ["probe_id", "cluster_id"]
+    return ["cluster_id"]
+
+
 def _row(
     check: str,
     value: float,
@@ -139,15 +152,16 @@ def _prefilter_category_agreement(
             PREFILTER_CATEGORY_THRESHOLD, True,
             note="skipped: prefilter_decision_tree.csv missing on one side",
         )
-    merged = py[["cluster_id", "category"]].merge(
-        ref[["cluster_id", "category"]], on="cluster_id",
+    key = _merge_key(py, ref)
+    merged = py[key + ["category"]].merge(
+        ref[key + ["category"]], on=key,
         suffixes=("_py", "_ref"),
     )
     if merged.empty:
         return _row(
             "prefilter_category_agreement", float("nan"),
             PREFILTER_CATEGORY_THRESHOLD, False,
-            note="no overlapping cluster_ids",
+            note=f"no overlapping {'+'.join(key)}",
         )
     agree = float((merged["category_py"] == merged["category_ref"]).mean())
     return _row(
@@ -158,12 +172,15 @@ def _prefilter_category_agreement(
 
 
 def _jaccard(a: str, b: str) -> float:
-    # Selected vars come in as '+'-joined strings like 'Speed+TF'. 'Null' / '' mean empty.
+    # Python writes '+'-joined, MATLAB writes ', '-joined. Accept either.
+    # 'Null' / '' mean empty.
     def _to_set(s: str) -> set[str]:
         if not isinstance(s, str):
             return set()
-        tokens = [t for t in s.split("+") if t and t != "Null"]
-        return set(tokens)
+        # Normalise both separators to a single delimiter before splitting.
+        norm = s.replace(", ", "+").replace(",", "+")
+        tokens = [t.strip() for t in norm.split("+")]
+        return {t for t in tokens if t and t != "Null"}
 
     A, B = _to_set(a), _to_set(b)
     if not A and not B:
@@ -185,18 +202,17 @@ def _selected_vars_jaccard(
                  note="skipped: selected_vars column absent on one side"),
             [],
         )
-    merged = pd.DataFrame({
-        "cluster_id": py["cluster_id"],
-        "sv_py": py_sv.values,
-    }).merge(
-        pd.DataFrame({"cluster_id": ref["cluster_id"], "sv_ref": ref_sv.values}),
-        on="cluster_id",
-    )
+    key = _merge_key(py, ref)
+    py_df = py[key].copy()
+    py_df["sv_py"] = py_sv.values
+    ref_df = ref[key].copy()
+    ref_df["sv_ref"] = ref_sv.values
+    merged = py_df.merge(ref_df, on=key)
     if merged.empty:
         return (
             _row("selected_vars_jaccard", float("nan"),
                  SELECTED_VARS_JACCARD_THRESHOLD, False,
-                 note="no overlapping cluster_ids"),
+                 note=f"no overlapping {'+'.join(key)}"),
             [],
         )
     jaccards = [_jaccard(a, b) for a, b in zip(merged["sv_py"], merged["sv_ref"])]
@@ -220,12 +236,12 @@ def _cv_bps_correlation(
     if py_col is None or ref_col is None:
         return _row(check_name, float("nan"), threshold, True,
                     note=f"skipped: none of {column_candidates} present on one side")
-    merged = pd.DataFrame({
-        "cluster_id": py["cluster_id"], "v_py": py_col.values,
-    }).merge(
-        pd.DataFrame({"cluster_id": ref["cluster_id"], "v_ref": ref_col.values}),
-        on="cluster_id",
-    ).dropna()
+    key = _merge_key(py, ref)
+    py_df = py[key].copy()
+    py_df["v_py"] = py_col.values
+    ref_df = ref[key].copy()
+    ref_df["v_ref"] = ref_col.values
+    merged = py_df.merge(ref_df, on=key).dropna()
     if len(merged) < 3:
         return _row(check_name, float("nan"), threshold, False,
                     note=f"fewer than 3 common non-NaN clusters (n={len(merged)})")
@@ -251,12 +267,12 @@ def _selected_minus_null_sign_agreement(
         return _row("selected_minus_null_sign_agreement", float("nan"),
                     SELECTED_MINUS_NULL_SIGN_THRESHOLD, True,
                     note="skipped: Selected_cv_bps or Null_cv_bps missing on one side")
-    merged = pd.DataFrame({
-        "cluster_id": py["cluster_id"], "d_py": py_d,
-    }).merge(
-        pd.DataFrame({"cluster_id": ref["cluster_id"], "d_ref": ref_d}),
-        on="cluster_id",
-    ).dropna()
+    key = _merge_key(py, ref)
+    py_df = py[key].copy()
+    py_df["d_py"] = py_d
+    ref_df = ref[key].copy()
+    ref_df["d_ref"] = ref_d
+    merged = py_df.merge(ref_df, on=key).dropna()
     if merged.empty:
         return _row("selected_minus_null_sign_agreement", float("nan"),
                     SELECTED_MINUS_NULL_SIGN_THRESHOLD, False,
@@ -303,7 +319,7 @@ def _coefficient_sign_agreement(
 
     py_f = _filtered(py)
     ref_f = _filtered(ref)
-    key_cols = ["cluster_id", "coefficient"]
+    key_cols = _merge_key(py_f, ref_f) + ["coefficient"]
     merged = py_f[key_cols + ["estimate"]].merge(
         ref_f[key_cols + ["estimate"]], on=key_cols,
         suffixes=("_py", "_ref"),
@@ -341,7 +357,7 @@ def _stationary_vs_motion_fr(
                 "from a pipeline run)"
             ),
         )
-    key = ["cluster_id", "trial_id"]
+    key = _merge_key(py, ref) + ["trial_id"]
     py = py[key + ["stationary_fr", "motion_fr"]].copy()
     ref = ref[key + ["stationary_fr", "motion_fr"]].copy()
     merged = py.merge(ref, on=key, suffixes=("_py", "_ref")).dropna()
@@ -374,6 +390,23 @@ def _stationary_vs_motion_fr(
 # --------------------------------------------------------------------------- #
 # Top-level runner
 # --------------------------------------------------------------------------- #
+
+
+def _probe_ids(*dfs: pd.DataFrame | None) -> set[str]:
+    out: set[str] = set()
+    for df in dfs:
+        if df is None or "probe_id" not in df.columns:
+            continue
+        out.update(str(x) for x in df["probe_id"].dropna().unique())
+    return out
+
+
+def _filter_probes(
+    df: pd.DataFrame | None, probes: set[str]
+) -> pd.DataFrame | None:
+    if df is None or "probe_id" not in df.columns:
+        return df
+    return df[df["probe_id"].astype(str).isin(probes)].reset_index(drop=True)
 
 
 def run_compare(
@@ -424,6 +457,22 @@ def run_compare(
     pre_ref = _read(ref_pre)
     svm_py = _read(py_svm)
     svm_ref = _read(ref_svm)
+
+    # Preflight: if the python side has only one probe but the reference
+    # spans several, scope the reference down so cluster_ids don't collide
+    # across probes. Log both sets so discrepancies are obvious.
+    py_probes = _probe_ids(cmp_py, coef_py, pre_py, svm_py)
+    ref_probes = _probe_ids(cmp_ref, coef_ref, pre_ref, svm_ref)
+    if py_probes and ref_probes and py_probes.issubset(ref_probes) and py_probes != ref_probes:
+        logger.warning(
+            "reference covers %d probes %s but python-dir has only %s — "
+            "filtering reference to the python probe set for per-cluster checks",
+            len(ref_probes), sorted(ref_probes), sorted(py_probes),
+        )
+        cmp_ref = _filter_probes(cmp_ref, py_probes)
+        coef_ref = _filter_probes(coef_ref, py_probes)
+        pre_ref = _filter_probes(pre_ref, py_probes)
+        svm_ref = _filter_probes(svm_ref, py_probes)
 
     rows: list[dict] = []
 

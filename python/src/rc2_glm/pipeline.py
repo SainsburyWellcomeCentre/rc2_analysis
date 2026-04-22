@@ -268,10 +268,10 @@ def _fit_one_cluster(
         condition_labels_per_bin=condition_labels,
     )
 
-    sf_valid = sf_vals[sf_vals != 0.0]
+    sf_valid = sf_vals[(sf_vals != 0.0) & ~np.isnan(sf_vals)]
     sf_ref_levels = np.sort(np.unique(sf_valid)).tolist() if sf_valid.size > 0 else []
-    
-    or_valid = or_vals[or_vals != 0.0]
+
+    or_valid = or_vals[(or_vals != 0.0) & ~np.isnan(or_vals)]
     or_ref_levels = np.sort(np.unique(or_valid)).tolist() if or_valid.size > 0 else []
 
     selection = forward_select(
@@ -416,12 +416,11 @@ def _fit_plot_models(
             cluster_id, label, X.shape[1],
             float(preds[label].min()), float(preds[label].max()),
         )
-        if label in ("Selected", "Additive"):
-            for name, beta_v, se_v in zip(names, fit.beta, fit.se):
-                csv_rows.append({
-                    "model": label, "coefficient": name,
-                    "estimate": float(beta_v), "se": float(se_v),
-                })
+        for name, beta_v, se_v in zip(names, fit.beta, fit.se):
+            csv_rows.append({
+                "model": label, "coefficient": name,
+                "estimate": float(beta_v), "se": float(se_v),
+            })
     return pd.DataFrame(csv_rows), betas, col_names_by_model, preds
 
 
