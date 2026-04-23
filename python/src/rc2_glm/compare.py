@@ -786,6 +786,232 @@ def _plot_classification_differences(
     )
 
 
+# All variables the forward selector can pick (main effects + interactions).
+# Plot order matches the design-matrix block order in assemble_design_matrix.
+SELECTED_VARS_PLOT_ORDER = (
+    "Speed", "TF", "SF", "OR",
+    "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
+    "TF_x_SF", "TF_x_OR", "SF_x_OR",
+)
+
+# Short axis labels for the selected-vars figure.
+_SELECTED_VARS_LABELS = {
+    "Speed_x_TF": "Sp×TF",
+    "Speed_x_SF": "Sp×SF",
+    "Speed_x_OR": "Sp×OR",
+    "TF_x_SF": "TF×SF",
+    "TF_x_OR": "TF×OR",
+    "SF_x_OR": "SF×OR",
+}
+
+
+def _variable_agreement_counts(
+    py_vars: pd.Series, ref_vars: pd.Series,
+) -> pd.DataFrame:
+    """For each variable in ``SELECTED_VARS_PLOT_ORDER``, count clusters.
+
+    Returns a DataFrame with one row per variable and columns
+    ``both``, ``python_only``, ``matlab_only``, ``neither``. The counts
+    add up to ``len(py_vars)`` (= number of merged clusters).
+    """
+    def _sets(s: pd.Series) -> list[set[str]]:
+        out = []
+        for raw in s:
+            if not isinstance(raw, str):
+                out.append(set())
+                continue
+            norm = raw.replace(", ", "+").replace(",", "+")
+            tokens = {t.strip() for t in norm.split("+")}
+            out.append({t for t in tokens if t and t != "Null"})
+        return out
+
+    py_sets = _sets(py_vars)
+    ref_sets = _sets(ref_vars)
+    rows = []
+    for var in SELECTED_VARS_PLOT_ORDER:
+        both = sum(1 for p, r in zip(py_sets, ref_sets) if var in p and var in r)
+        py_only = sum(1 for p, r in zip(py_sets, ref_sets) if var in p and var not in r)
+        ml_only = sum(1 for p, r in zip(py_sets, ref_sets) if var not in p and var in r)
+        neither = sum(1 for p, r in zip(py_sets, ref_sets) if var not in p and var not in r)
+        rows.append({
+            "variable": var, "both": both, "python_only": py_only,
+            "matlab_only": ml_only, "neither": neither,
+        })
+    return pd.DataFrame(rows)
+
+
+def _draw_selected_vars_panel(ax, counts: pd.DataFrame, title: str) -> None:
+    """One probe's selected-vars agreement as a grouped bar chart.
+
+    x axis: variables (main effects then interactions).
+    Three stacked counts per variable: ``both`` (grey), ``python_only``
+    (warm red, tagged PY+), ``matlab_only`` (cool blue, tagged ML+).
+    ``neither`` is omitted — it is by far the largest bucket for most
+    clusters and would crush the bars that actually carry signal.
+    """
+    n = len(counts)
+    x = np.arange(n)
+    labels = [_SELECTED_VARS_LABELS.get(v, v) for v in counts["variable"]]
+    both = counts["both"].to_numpy()
+    py_only = counts["python_only"].to_numpy()
+    ml_only = counts["matlab_only"].to_numpy()
+
+    # Stack: "both" at the bottom (grey), then PY-only (red) + ML-only
+    # (blue) side-by-side as half-width bars so disagreement is the eye's
+    # first target.
+    ax.bar(x, both, width=0.8, color=(0.55, 0.55, 0.55), label="both")
+    ax.bar(x - 0.2, py_only, width=0.38, bottom=both,
+           color=(0.85, 0.3, 0.3), label="Python only")
+    ax.bar(x + 0.2, ml_only, width=0.38, bottom=both,
+           color=(0.3, 0.5, 0.85), label="MATLAB only")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=7)
+    ax.set_ylabel("# clusters", fontsize=8)
+    ax.set_title(title, fontsize=9)
+    ax.grid(axis="y", alpha=0.25, linestyle=":")
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+
+
+def _plot_selected_vars_differences(
+    cmp_py: pd.DataFrame | None,
+    cmp_ref: pd.DataFrame | None,
+    out_pdf: Path,
+    out_disagreements_csv: Path,
+) -> dict:
+    """Per-probe grouped bars of selected-variable agreement PY vs ML.
+
+    Companion to the prefilter-category figure. Answers the question
+    "across common clusters, for each candidate variable, how often do
+    the two pipelines agree on including it?". Also emits a per-cluster
+    disagreement CSV with columns ``probe_id, cluster_id, jaccard,
+    python_vars, matlab_vars, python_only, matlab_only``.
+    """
+    if cmp_py is None or cmp_ref is None:
+        return _row(
+            "selected_vars_differences_figure", float("nan"),
+            float("nan"), True,
+            note="skipped: glm_model_comparison.csv missing on one side",
+        )
+
+    py_sv_col = "time_selected_vars" if "time_selected_vars" in cmp_py.columns \
+        else "selected_vars"
+    ref_sv_col = "time_selected_vars" if "time_selected_vars" in cmp_ref.columns \
+        else "selected_vars"
+    if py_sv_col not in cmp_py.columns or ref_sv_col not in cmp_ref.columns:
+        return _row(
+            "selected_vars_differences_figure", float("nan"),
+            float("nan"), True,
+            note="skipped: selected_vars column absent on one side",
+        )
+
+    key = _merge_key(cmp_py, cmp_ref)
+    py_df = cmp_py[key + [py_sv_col]].rename(columns={py_sv_col: "sv_py"})
+    ref_df = cmp_ref[key + [ref_sv_col]].rename(columns={ref_sv_col: "sv_ref"})
+    merged = py_df.merge(ref_df, on=key)
+    if merged.empty:
+        return _row(
+            "selected_vars_differences_figure", float("nan"),
+            float("nan"), False,
+            note=f"no overlapping {'+'.join(key)} — figure not rendered",
+        )
+
+    # Per-cluster disagreement table (Jaccard, symmetric differences).
+    def _as_set(s) -> set[str]:
+        if not isinstance(s, str):
+            return set()
+        norm = s.replace(", ", "+").replace(",", "+")
+        return {t.strip() for t in norm.split("+") if t.strip() and t.strip() != "Null"}
+
+    merged["py_set"] = merged["sv_py"].apply(_as_set)
+    merged["ref_set"] = merged["sv_ref"].apply(_as_set)
+    merged["jaccard"] = merged.apply(
+        lambda r: (
+            1.0 if not r["py_set"] and not r["ref_set"]
+            else len(r["py_set"] & r["ref_set"]) / len(r["py_set"] | r["ref_set"])
+            if (r["py_set"] | r["ref_set"]) else 1.0
+        ),
+        axis=1,
+    )
+    merged["python_only"] = merged.apply(
+        lambda r: "+".join(sorted(r["py_set"] - r["ref_set"])), axis=1,
+    )
+    merged["matlab_only"] = merged.apply(
+        lambda r: "+".join(sorted(r["ref_set"] - r["py_set"])), axis=1,
+    )
+    disagree = merged[merged["jaccard"] < 1.0].copy()
+    disagree = disagree[key + ["jaccard", "sv_py", "sv_ref",
+                               "python_only", "matlab_only"]]
+    disagree = disagree.rename(columns={
+        "sv_py": "python_vars", "sv_ref": "matlab_vars",
+    })
+    out_disagreements_csv.parent.mkdir(parents=True, exist_ok=True)
+    disagree.to_csv(out_disagreements_csv, index=False)
+
+    probes = sorted(merged["probe_id"].unique()) if "probe_id" in merged.columns else [""]
+    multi = len(probes) > 1
+    n_panels = len(probes) + (1 if multi else 0)
+    n_cols = min(3, n_panels)
+    n_rows = (n_panels + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(6.0 * n_cols, 4.2 * n_rows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    for i, probe in enumerate(probes):
+        sub = merged[merged["probe_id"] == probe] if probe else merged
+        counts = _variable_agreement_counts(sub["sv_py"], sub["sv_ref"])
+        mean_jac = float(sub["jaccard"].mean())
+        title = (
+            f"{probe or 'all'}  (n={len(sub)} clusters, "
+            f"mean Jaccard={mean_jac:.3f})"
+        )
+        _draw_selected_vars_panel(axes_flat[i], counts, title)
+
+    if multi:
+        counts_all = _variable_agreement_counts(merged["sv_py"], merged["sv_ref"])
+        _draw_selected_vars_panel(
+            axes_flat[len(probes)], counts_all,
+            f"ALL probes  (n={len(merged)} clusters, "
+            f"mean Jaccard={merged['jaccard'].mean():.3f})",
+        )
+
+    for ax in axes_flat[n_panels:]:
+        ax.axis("off")
+
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor=(0.55, 0.55, 0.55), label="both"),
+        plt.Rectangle((0, 0), 1, 1, facecolor=(0.85, 0.3, 0.3), label="Python only"),
+        plt.Rectangle((0, 0), 1, 1, facecolor=(0.3, 0.5, 0.85), label="MATLAB only"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=9,
+               frameon=False, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(
+        "Selected variables — agreement between Python and MATLAB",
+        fontsize=11, y=0.995,
+    )
+    fig.tight_layout(rect=(0.0, 0.04, 1.0, 0.97))
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf")
+    plt.close(fig)
+
+    mean_jac_all = float(merged["jaccard"].mean())
+    return _row(
+        "selected_vars_differences_figure", mean_jac_all,
+        SELECTED_VARS_JACCARD_THRESHOLD,
+        mean_jac_all >= SELECTED_VARS_JACCARD_THRESHOLD,
+        note=(
+            f"wrote {out_pdf.name} ({len(probes)} probes, "
+            f"{len(merged)} common clusters, {len(disagree)} with "
+            f"partial selected-vars disagreement) and "
+            f"{out_disagreements_csv.name}"
+        ),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Top-level runner
 # --------------------------------------------------------------------------- #
@@ -939,6 +1165,11 @@ def run_compare(
             pre_py, pre_ref,
             out_pdf=figures_dir / "classification_differences.pdf",
             out_disagreements_csv=figures_dir / "classification_disagreements.csv",
+        ))
+        rows.append(_plot_selected_vars_differences(
+            cmp_py, cmp_ref,
+            out_pdf=figures_dir / "selected_vars_differences.pdf",
+            out_disagreements_csv=figures_dir / "selected_vars_disagreements.csv",
         ))
 
     df = pd.DataFrame(rows)
