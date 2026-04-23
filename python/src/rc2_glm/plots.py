@@ -157,9 +157,18 @@ def _darken(c: tuple[float, float, float], factor: float = 0.65) -> tuple[float,
 
 
 def _parse_selected_vars(s: str) -> list[str]:
-    if not s or s == "Null":
+    """Split a selected-vars token string on either separator.
+
+    Python writes ``"Speed+TF"``; MATLAB writes ``"Speed, TF"``. Accepting
+    both means this plot renders truthfully from either side's CSV —
+    without this, a MATLAB-side aggregate collapses every multi-variable
+    model into a single-variable bucket (the full token ``"Speed, TF"``
+    parses as one unit).
+    """
+    if not isinstance(s, str) or not s or s == "Null":
         return []
-    return s.split("+")
+    norm = s.replace(", ", "+").replace(",", "+")
+    return [t.strip() for t in norm.split("+") if t.strip()]
 
 
 def plot_forward_selection_summary(

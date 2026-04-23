@@ -1012,6 +1012,61 @@ def _plot_selected_vars_differences(
     )
 
 
+def _render_aggregate_forward_selection(
+    cmp_df: pd.DataFrame | None,
+    side: str,  # "python" | "matlab"
+    out_pdf: Path,
+) -> dict:
+    """Render the MATLAB Fig 2 forward-selection summary across **all probes**.
+
+    Per-probe runs already get a ``forward_selection_summary.pdf`` under
+    ``{_runs}/{probe}/figs/``. This aggregate variant answers "across all
+    probes, what fraction of clusters have each model type?" in a single
+    view — the one the paper figure would show.
+    """
+    if cmp_df is None or cmp_df.empty:
+        return _row(
+            f"forward_selection_summary_{side}", float("nan"),
+            float("nan"), True,
+            note=f"skipped: no {side} model_comparison data",
+        )
+    # Lazy import — plots module pulls in the full plotting stack, which we
+    # don't want to load for the report-CSV-only code path.
+    from rc2_glm.plots import plot_forward_selection_summary
+
+    # The plot function expects every classification column prefixed with
+    # ``time_`` (the MATLAB glm_type scope). Both sides ship these columns
+    # prefixed; ``_normalise_comparison_columns`` strips the prefix earlier
+    # in the pipeline for generic merge logic. Re-add it here so the plot
+    # function sees its expected schema on whichever ``cmp_df`` it gets.
+    df = cmp_df.copy()
+    time_cols = (
+        "selected_vars", "is_speed_tuned", "is_tf_tuned", "is_sf_tuned",
+        "is_or_tuned", "has_interaction", "has_speed_x_tf", "has_speed_x_sf",
+        "has_speed_x_or", "has_tf_x_sf", "has_tf_x_or", "has_sf_x_or",
+        "delta_selected_vs_null", "delta_additive_vs_null",
+        "delta_selected_vs_additive", "delta_interaction",
+    )
+    renames = {c: f"time_{c}" for c in time_cols if c in df.columns}
+    df = df.rename(columns=renames)
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig = plot_forward_selection_summary(df)
+    fig.suptitle(
+        f"Forward-selection summary ({side}) — "
+        f"{df['probe_id'].nunique() if 'probe_id' in df.columns else 1} probes, "
+        f"{len(df)} clusters",
+        fontsize=11,
+    )
+    fig.savefig(out_pdf, format="pdf")
+    plt.close(fig)
+    return _row(
+        f"forward_selection_summary_{side}", float(len(df)),
+        float("nan"), True,
+        note=f"wrote {out_pdf.name} ({len(df)} clusters)",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Top-level runner
 # --------------------------------------------------------------------------- #
@@ -1170,6 +1225,18 @@ def run_compare(
             cmp_py, cmp_ref,
             out_pdf=figures_dir / "selected_vars_differences.pdf",
             out_disagreements_csv=figures_dir / "selected_vars_disagreements.csv",
+        ))
+        # Aggregate MATLAB Fig 2 port (per-probe figures already land in
+        # {py_run}/_runs/{probe}/figs/ as part of the per-probe pipeline).
+        # Also render a MATLAB-side aggregate when glm_model_comparison.csv
+        # is available, so the two sides can be flipped side-by-side.
+        rows.append(_render_aggregate_forward_selection(
+            cmp_py, "python",
+            out_pdf=figures_dir / "forward_selection_summary_python.pdf",
+        ))
+        rows.append(_render_aggregate_forward_selection(
+            cmp_ref, "matlab",
+            out_pdf=figures_dir / "forward_selection_summary_matlab.pdf",
         ))
 
     df = pd.DataFrame(rows)
