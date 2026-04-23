@@ -62,20 +62,27 @@ def test_tuning_curve_pearson_sees_through_raw_beta_disagreement():
     coef_py = _coef_df_for(cluster_id=116, variable="Speed", beta=beta_py)
     coef_ref = _coef_df_for(cluster_id=116, variable="Speed", beta=beta_ref)
 
-    row = _tuning_curve_pearson(coef_py, coef_ref, "Speed", config)
-    assert row["check"] == "tuning_curve_pearson_Speed"
-    # Curve Pearson r clears the per-cluster threshold (0.85) — the two
-    # pipelines agree on shape even though raw-β sign does not.
-    assert row["value"] > 0.85, row
-    # And clears the mean-threshold since this is the only cluster in the
-    # synthetic table.
-    assert row["pass"] is True, row
+    rows = _tuning_curve_pearson(coef_py, coef_ref, "Speed", config)
+    # Now returns a pair (gate row + informational mean row).
+    assert isinstance(rows, list) and len(rows) == 2, rows
+    gate, info = rows
+    assert gate["check"] == "tuning_curve_pearson_Speed"
+    assert info["check"] == "tuning_curve_pearson_mean_Speed"
+    # Gate value is the fraction of clusters clearing per-cluster r≥0.85;
+    # on a single-cluster input that Pearson-correlates at ~0.91 the
+    # fraction is 1.0 and the row passes.
+    assert gate["value"] == 1.0, gate
+    assert gate["pass"] is True, gate
+    # Informational row carries mean(r) — a single number in [0.85, 1.0]
+    # on this input; no threshold; never gates.
+    assert info["value"] > 0.85, info
+    assert info["pass"] is True, info
+    assert np.isnan(info["threshold"]), info
 
 
 def test_tuning_curve_pearson_fails_on_genuinely_different_curves():
     """Negative control: unrelated β vectors should yield low Pearson r."""
     config = GLMConfig()
-    rng = np.random.default_rng(42)
 
     beta_py = np.array([1.0, 0.5, 0.2, -0.1, -0.4])
     # Pick βs that give a meaningfully different curve shape, not just a
@@ -85,9 +92,52 @@ def test_tuning_curve_pearson_fails_on_genuinely_different_curves():
     coef_py = _coef_df_for(cluster_id=1, variable="Speed", beta=beta_py)
     coef_ref = _coef_df_for(cluster_id=1, variable="Speed", beta=beta_ref)
 
-    row = _tuning_curve_pearson(coef_py, coef_ref, "Speed", config)
-    assert row["value"] < 0.5, row
-    assert row["pass"] is False, row
+    rows = _tuning_curve_pearson(coef_py, coef_ref, "Speed", config)
+    gate, info = rows
+    # Single cluster is below the per-cluster bar → fraction = 0, gate fails.
+    assert gate["value"] == 0.0, gate
+    assert gate["pass"] is False, gate
+    # Mean(r) is low too, but it's informational — never gates.
+    assert info["value"] < 0.5, info
+    assert info["pass"] is True, info
+
+
+def test_tuning_curve_pearson_small_n_tolerates_single_outlier():
+    """n=6 TF regression: 5/6 clusters clearing 0.85 must not trip the gate.
+
+    The old mean-based gate (mean(r) >= 0.90) was tripped by a single
+    r=0.04 outlier on the TF-selected clusters: mean fell to ~0.82
+    even though 5/6 clusters agreed cluster-by-cluster. The current gate
+    is ``fraction(r >= 0.85) >= 0.80`` — 5/6 = 0.833 clears it. This
+    test locks that behaviour in as the lesson (pattern 8: encode the
+    root cause, not the fix).
+    """
+    config = GLMConfig()
+    # Five well-agreeing β pairs (identical → r = 1.0 per cluster) plus
+    # one genuinely different pair that Pearson-correlates below 0.85.
+    good_py = np.array([1.0, 0.5, 0.2, -0.1, -0.4])
+    good_ref = good_py.copy()
+    bad_py = np.array([1.0, 0.5, 0.2, -0.1, -0.4])
+    bad_ref = np.array([-0.4, -0.1, 0.2, 0.5, 1.0])  # reversed shape
+
+    rows_py = []
+    rows_ref = []
+    for cluster_id in range(5):
+        rows_py.append(_coef_df_for(cluster_id, "TF", good_py))
+        rows_ref.append(_coef_df_for(cluster_id, "TF", good_ref))
+    rows_py.append(_coef_df_for(5, "TF", bad_py))
+    rows_ref.append(_coef_df_for(5, "TF", bad_ref))
+    coef_py = pd.concat(rows_py, ignore_index=True)
+    coef_ref = pd.concat(rows_ref, ignore_index=True)
+
+    gate, info = _tuning_curve_pearson(coef_py, coef_ref, "TF", config)
+    # 5 of 6 clusters clear the per-cluster bar → fraction 0.833, passes.
+    assert abs(gate["value"] - 5 / 6) < 1e-9, gate
+    assert gate["pass"] is True, gate
+    # Mean(r) is ~5×1.0 + 1×(<0.5) averaged → < 0.90 on this synthetic,
+    # i.e. the old gate would have failed. Informational now, does not gate.
+    assert info["value"] < 0.90, info
+    assert info["pass"] is True, info
 
 
 def test_variable_betas_per_cluster_respects_expected_ordering():

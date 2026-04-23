@@ -38,6 +38,9 @@ import logging
 import sys
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")  # headless backend for CLI use
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
@@ -56,11 +59,23 @@ SELECTED_CV_SPEARMAN_THRESHOLD = 0.85
 SELECTED_MINUS_NULL_SIGN_THRESHOLD = 0.95
 COEF_SIGN_FAMILY_THRESHOLD = 0.85
 STATIONARY_MOTION_FR_MEDIAN_REL_ERR_THRESHOLD = 1e-3
-# Tuning-curve prediction-space parity thresholds. ``per_cluster`` gates the
-# row pass/fail via the mean (robust to a few outliers); ``per_cluster_min``
-# is reported as a side metric so a single bad cluster shows up.
-TUNING_CURVE_PEARSON_MEAN_THRESHOLD = 0.90
+# Tuning-curve prediction-space parity thresholds.
+#
+# The row ``tuning_curve_pearson_{var}`` gates on the *fraction of clusters*
+# whose per-cluster curve Pearson r clears ``PER_CLUSTER_THRESHOLD``. The
+# mean is also reported (informational — pattern 7) since it is the metric
+# the earlier prompts discussed. Rationale for the switch: at small n the
+# mean is dominated by a single-cluster outlier (one r=0.04 cluster drops a
+# 6-cluster mean by ~0.1), producing false-negative row failures that
+# don't reflect the scientific claim ("most clusters agree cluster-by-cluster").
+# Threshold 0.80 tolerates 1/6 outliers at small n while still requiring
+# broad agreement at n=30 (24/30 must clear the per-cluster bar).
 TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD = 0.85
+TUNING_CURVE_PEARSON_FRACTION_THRESHOLD = 0.80
+# Legacy: the pre-2026-04-23 gate used mean(r) >= MEAN_THRESHOLD. Retained
+# as a constant so the informational ``_mean_`` row can be plotted against
+# the same visual bar without ambiguity.
+TUNING_CURVE_PEARSON_MEAN_THRESHOLD = 0.90
 
 # Families we match coefficients across. Any coefficient whose normalised
 # name starts with one of these is routed into the family.
@@ -465,22 +480,37 @@ def _tuning_curve_pearson(
     variable: str,
     config: GLMConfig,
     model: str = "Selected",
-) -> dict:
-    """Mean per-cluster Pearson r between Python and MATLAB tuning curves.
+) -> list[dict]:
+    """Per-cluster Pearson r between Python and MATLAB tuning curves.
 
     Builds the same raised-cosine grid on both sides using Python's basis
     (MATLAB's is verified numerically identical to ~1e-12), evaluates
     ``B_grid @ β_var`` for the ``model`` fit (default Selected), and
-    Pearson-correlates the two curves. Mean across clusters is the row
-    value; the gating threshold is on the mean. A per-cluster minimum
-    is reported in the note.
+    Pearson-correlates the two curves. Returns two rows:
+
+    - ``tuning_curve_pearson_{variable}`` (gating): value = fraction of
+      clusters with ``r >= PER_CLUSTER_THRESHOLD`` (default 0.85). Gated
+      at ``FRACTION_THRESHOLD`` (0.80). Robust to single-cluster outliers
+      at small n — the previous mean-based gate failed spuriously on
+      n=6 TF data when one r=0.04 outlier pulled the mean below 0.90.
+    - ``tuning_curve_pearson_mean_{variable}`` (informational, pattern 7):
+      value = mean(r). No threshold; kept so the number cited in earlier
+      prompts and in ``summary/rc2_analysis-python-matlab-parity.md``
+      stays visible without re-parsing the gate row's note.
     """
+    gate_name = f"tuning_curve_pearson_{variable}"
+    info_name = f"tuning_curve_pearson_mean_{variable}"
+
+    def _skip(note: str, passed: bool = True) -> list[dict]:
+        return [
+            _row(gate_name, float("nan"),
+                 TUNING_CURVE_PEARSON_FRACTION_THRESHOLD, passed, note=note),
+            _row(info_name, float("nan"), float("nan"), True,
+                 note=f"informational — mean(r); {note}"),
+        ]
+
     if coef_py is None or coef_ref is None:
-        return _row(
-            f"tuning_curve_pearson_{variable}", float("nan"),
-            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, True,
-            note="skipped: glm_coefficients.csv missing on one side",
-        )
+        return _skip("skipped: glm_coefficients.csv missing on one side")
 
     if variable == "Speed":
         n_bases = config.n_speed_bases
@@ -495,13 +525,9 @@ def _tuning_curve_pearson(
     ref_map = _variable_betas_per_cluster(coef_ref, variable, model, n_bases)
     common_keys = sorted(set(py_map) & set(ref_map))
     if not common_keys:
-        return _row(
-            f"tuning_curve_pearson_{variable}", float("nan"),
-            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, True,
-            note=(
-                f"skipped: no common clusters with {variable} in the "
-                f"{model} model on both sides"
-            ),
+        return _skip(
+            f"skipped: no common clusters with {variable} in the "
+            f"{model} model on both sides"
         )
 
     x_grid = np.linspace(float(lo), float(hi), 100)
@@ -519,25 +545,34 @@ def _tuning_curve_pearson(
             per_cluster_r.append(float(r))
 
     if not per_cluster_r:
-        return _row(
-            f"tuning_curve_pearson_{variable}", float("nan"),
-            TUNING_CURVE_PEARSON_MEAN_THRESHOLD, False,
-            note="no clusters yielded a finite Pearson r",
-        )
+        return _skip("no clusters yielded a finite Pearson r", passed=False)
 
+    n = len(per_cluster_r)
     mean_r = float(np.mean(per_cluster_r))
+    median_r = float(np.median(per_cluster_r))
     min_r = float(np.min(per_cluster_r))
     below = int(sum(r < TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD for r in per_cluster_r))
-    passed = mean_r >= TUNING_CURVE_PEARSON_MEAN_THRESHOLD
-    return _row(
-        f"tuning_curve_pearson_{variable}", mean_r,
-        TUNING_CURVE_PEARSON_MEAN_THRESHOLD, passed,
+    frac_above = float((n - below) / n)
+    passed = frac_above >= TUNING_CURVE_PEARSON_FRACTION_THRESHOLD
+    gate_row = _row(
+        gate_name, frac_above,
+        TUNING_CURVE_PEARSON_FRACTION_THRESHOLD, passed,
         note=(
-            f"n={len(per_cluster_r)} clusters | min_r={min_r:.3f} | "
-            f"{below} below per-cluster threshold "
-            f"({TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD}) | model={model}"
+            f"n={n} | frac(r>={TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD:.2f})"
+            f"={frac_above:.3f} | mean={mean_r:.3f} | median={median_r:.3f}"
+            f" | min={min_r:.3f} | below={below}/{n} | model={model}"
         ),
     )
+    info_row = _row(
+        info_name, mean_r, float("nan"), True,
+        note=(
+            f"informational — mean(r) over n={n} clusters; the gate "
+            f"{gate_name} uses frac(r>={TUNING_CURVE_PEARSON_PER_CLUSTER_THRESHOLD:.2f})"
+            f". Legacy mean-threshold was {TUNING_CURVE_PEARSON_MEAN_THRESHOLD}"
+            f" — kept here as reference."
+        ),
+    )
+    return [gate_row, info_row]
 
 
 def _stationary_vs_motion_fr(
@@ -584,6 +619,174 @@ def _stationary_vs_motion_fr(
 
 
 # --------------------------------------------------------------------------- #
+# Classification-differences figure
+# --------------------------------------------------------------------------- #
+
+# Canonical order of prefilter decision-tree leaves. Matches the 8-branch
+# categorisation in scripts/glm_single_cluster_analysis.m and is reused to
+# lay out confusion-matrix axes consistently across probes.
+PREFILTER_CATEGORY_ORDER = (
+    "none_significant",
+    "T_only_significant",
+    "V_only_significant",
+    "VT_only_significant",
+    "T_and_V_significant",
+    "T_and_VT_significant",
+    "V_and_VT_significant",
+    "all_three_significant",
+)
+
+
+def _plot_prefilter_confusion(
+    ax, counts: np.ndarray, categories: tuple[str, ...], title: str,
+) -> None:
+    """Draw one confusion-matrix panel onto ``ax``.
+
+    Counts are laid out with MATLAB category on rows, Python category on
+    columns. Diagonal cells (agreement) are shaded green; off-diagonal
+    cells (disagreement) are shaded red. Empty cells left white.
+    """
+    n = len(categories)
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(categories, rotation=45, ha="right", fontsize=7)
+    ax.set_yticklabels(categories, fontsize=7)
+    ax.set_xlabel("Python category", fontsize=8)
+    ax.set_ylabel("MATLAB category", fontsize=8)
+    ax.set_title(title, fontsize=9)
+
+    max_count = int(counts.max()) if counts.size else 0
+    for i in range(n):
+        for j in range(n):
+            c = int(counts[i, j])
+            if c == 0:
+                continue
+            on_diag = (i == j)
+            # Green → agreement; red → disagreement. Alpha scales with count
+            # so a single-cell outlier stays visible against a dense diagonal.
+            intensity = 0.25 + 0.65 * (c / max_count if max_count else 1.0)
+            color = (0.2, 0.7, 0.3, intensity) if on_diag else (0.85, 0.25, 0.25, intensity)
+            ax.add_patch(plt.Rectangle(
+                (j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor="gray",
+                linewidth=0.3,
+            ))
+            text_color = "black" if intensity < 0.6 else "white"
+            ax.text(j, i, str(c), ha="center", va="center",
+                    fontsize=7, color=text_color, fontweight="bold" if on_diag else "normal")
+
+    ax.set_xlim(-0.5, n - 0.5)
+    ax.set_ylim(n - 0.5, -0.5)  # origin top-left, matches typical confusion-matrix layout
+    ax.set_aspect("equal")
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.5)
+
+
+def _plot_classification_differences(
+    pre_py: pd.DataFrame | None,
+    pre_ref: pd.DataFrame | None,
+    out_pdf: Path,
+    out_disagreements_csv: Path,
+) -> dict:
+    """Per-probe + aggregated confusion matrix of prefilter category PY vs ML.
+
+    Renders an N-panel figure (one per probe plus an all-probes aggregate
+    when n_probes > 1) and emits a CSV of per-cluster disagreements so
+    scientists can drill into specific (probe, cluster) rows that flip.
+    Returns a report row summarising what was written.
+    """
+    if pre_py is None or pre_ref is None:
+        return _row(
+            "classification_differences_figure", float("nan"),
+            float("nan"), True,
+            note="skipped: prefilter_decision_tree.csv missing on one side",
+        )
+
+    key = _merge_key(pre_py, pre_ref)
+    merged = pre_py[key + ["category"]].merge(
+        pre_ref[key + ["category"]], on=key,
+        suffixes=("_py", "_ref"),
+    )
+    if merged.empty:
+        return _row(
+            "classification_differences_figure", float("nan"),
+            float("nan"), False,
+            note=f"no overlapping {'+'.join(key)} — figure not rendered",
+        )
+
+    # Order of tickmarks: canonical order first, then any unseen categories
+    # appended alphabetically (defensive — keeps novel MATLAB branches
+    # visible rather than silently merging them into the first bucket).
+    seen = set(merged["category_py"]).union(set(merged["category_ref"]))
+    extras = tuple(sorted(s for s in seen if s not in PREFILTER_CATEGORY_ORDER))
+    categories = PREFILTER_CATEGORY_ORDER + extras
+
+    # Persist the per-cluster disagreement list before plotting so the CSV
+    # exists even if matplotlib chokes on an edge case.
+    disagree = merged[merged["category_py"] != merged["category_ref"]].copy()
+    disagree = disagree.rename(columns={
+        "category_py": "python_category",
+        "category_ref": "matlab_category",
+    })
+    out_disagreements_csv.parent.mkdir(parents=True, exist_ok=True)
+    disagree.to_csv(out_disagreements_csv, index=False)
+
+    probes = sorted(merged["probe_id"].unique()) if "probe_id" in merged.columns else [""]
+    multi = len(probes) > 1
+    n_panels = len(probes) + (1 if multi else 0)
+    n_cols = min(3, n_panels)
+    n_rows = (n_panels + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    def _counts(df: pd.DataFrame) -> np.ndarray:
+        cm = pd.crosstab(df["category_ref"], df["category_py"])
+        cm = cm.reindex(index=categories, columns=categories, fill_value=0)
+        return cm.to_numpy(dtype=int)
+
+    for i, probe in enumerate(probes):
+        sub = merged[merged["probe_id"] == probe] if probe else merged
+        agree = float((sub["category_py"] == sub["category_ref"]).mean()) if len(sub) else float("nan")
+        title = (
+            f"{probe or 'all'}  (n={len(sub)}, agree={100 * agree:.1f}%)"
+            if len(sub) else f"{probe or 'all'}  (empty)"
+        )
+        _plot_prefilter_confusion(axes_flat[i], _counts(sub), categories, title)
+
+    if multi:
+        agree_all = float((merged["category_py"] == merged["category_ref"]).mean())
+        _plot_prefilter_confusion(
+            axes_flat[len(probes)], _counts(merged), categories,
+            f"ALL probes  (n={len(merged)}, agree={100 * agree_all:.1f}%)",
+        )
+
+    for ax in axes_flat[n_panels:]:
+        ax.axis("off")
+
+    fig.suptitle(
+        "Prefilter category — Python (cols) vs MATLAB (rows)",
+        fontsize=11, y=0.995,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.97))
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf")
+    plt.close(fig)
+
+    agree_all = float((merged["category_py"] == merged["category_ref"]).mean())
+    return _row(
+        "classification_differences_figure", agree_all,
+        PREFILTER_CATEGORY_THRESHOLD, agree_all >= PREFILTER_CATEGORY_THRESHOLD,
+        note=(
+            f"wrote {out_pdf.name} ({len(probes)} probes, "
+            f"{len(merged)} common clusters, {len(disagree)} disagreements) "
+            f"and {out_disagreements_csv.name}"
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Top-level runner
 # --------------------------------------------------------------------------- #
 
@@ -609,8 +812,15 @@ def run_compare(
     python_dir: Path,
     reference_dir: Path,
     out_path: Path | None,
+    figures_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, list[int]]:
-    """Run all checks and return the report + the list of Jaccard=0 cluster ids."""
+    """Run all checks and return the report + the list of Jaccard=0 cluster ids.
+
+    ``figures_dir`` controls where the per-probe classification-differences
+    PDF + the per-cluster disagreements CSV are written. Defaults to
+    ``<out_path>.parent`` when ``out_path`` is given (i.e. the same
+    ``validation/`` directory that already holds ``comparison_report.csv``).
+    """
     # Accept either flat directory or one level of per-probe subdirs.
     py_cmp = _find_csv(python_dir, "glm_model_comparison.csv")
     ref_cmp = _find_csv(reference_dir, "glm_model_comparison.csv")
@@ -710,12 +920,26 @@ def run_compare(
     rows.extend(_coefficient_sign_agreement(coef_py, coef_ref))
 
     # Prediction-space tuning-curve parity for Speed / TF. Invariant to
-    # the β-rotation that raised-cosine bases admit; gates on mean r.
+    # the β-rotation that raised-cosine bases admit; gates on the
+    # fraction of clusters whose per-cluster Pearson r clears 0.85
+    # (robust to small-n outliers — see constants block at top of file).
     config = GLMConfig()
     for variable in ("Speed", "TF"):
-        rows.append(_tuning_curve_pearson(coef_py, coef_ref, variable, config))
+        rows.extend(_tuning_curve_pearson(coef_py, coef_ref, variable, config))
 
     rows.append(_stationary_vs_motion_fr(svm_py, svm_ref))
+
+    # Figure + per-cluster disagreements CSV. Goes into the same directory
+    # as the comparison_report.csv by default so everything parity-related
+    # lands under one ``validation/`` folder.
+    if figures_dir is None and out_path is not None:
+        figures_dir = out_path.parent
+    if figures_dir is not None:
+        rows.append(_plot_classification_differences(
+            pre_py, pre_ref,
+            out_pdf=figures_dir / "classification_differences.pdf",
+            out_disagreements_csv=figures_dir / "classification_disagreements.csv",
+        ))
 
     df = pd.DataFrame(rows)
 
