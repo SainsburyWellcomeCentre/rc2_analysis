@@ -257,11 +257,24 @@ if not pre_ml.empty:
 # (section "CV-bps offset — resolved"). The compare tool reports this as
 # an informational row (`null_cv_bps_mean_offset`, `selected_cv_bps_mean_offset`).
 #
-# **Motion-mask caveat.** On ReplayOnly protocol, there is no treadmill
-# translation; motion lives in the visual-flow signal. Whether the mask
-# correctly captures ReplayOnly motion bins — and whether MATLAB's
-# FullInteraction fit on these clusters works because MATLAB does something
-# different — is a pending investigation (prompt 02.8).
+# **Motion-mask semantic (confirmed 2026-04-23).** Laura's lab-convention
+# anchor: MATLAB's pre-computed motion masks are **condition-aware**:
+#
+# - `T_Vstatic` / `VT`: motion mask = active translation (treadmill or
+#   stage velocity above threshold).
+# - `V`: motion mask = visual flow active. The stationary period is the
+#   analysis window *before* visual-flow onset, always present.
+#
+# Python already matches this via the per-protocol velocity-channel map
+# from prompt 02.5 — ReplayOnly→`multiplexer_output` carries visual-flow
+# velocity on V trials, so thresholding it produces visual-flow-active
+# motion bins by construction. Empirical per-condition motion fractions
+# on the 4-probe run (from section 2's trial-channel report): T_Vstatic
+# and VT ~44.5% on `stage`; V ~16% on `multiplexer_output`. Regression
+# test: `tests/test_protocol_velocity.py::test_motion_mask_reflects_condition_appropriate_signal`.
+# FullInteraction fit rate is 0 NaN / 129 clusters on Python and
+# 0 NaN / 88 on MATLAB — the ridge=1e-3 stabilisation also resolved the
+# original skip-rate concern.
 
 # %%
 def summarise_bin_counts(paths: ParityPaths) -> pd.DataFrame:
@@ -505,14 +518,24 @@ if not cmp_ml.empty:
 # ``fraction(per_cluster_r ≥ 0.85) ≥ 0.80`` so single-cluster outliers
 # at small n (n=6 TF-selected) don't trip a row spuriously.
 #
-# **Known caveat (future work).** The tuning curves are evaluated at
-# ``t_since_onset = 1.5 s`` (steady-state of the onset kernel) and with
-# the other continuous variable (TF when plotting Speed, and vice versa)
-# held at its empirical mean. Both are conventions, not facts about the
-# cells. Prompt 02.8 (future) adds an opt-in "trial-averaged" mode that
-# marginalises the onset basis and the other continuous variables over
-# their empirical per-cluster distributions. Until then, treat tuning
-# curves as **steady-state**, not as trial-averaged.
+# **Trial-averaged rendering (default 2026-04-23).** Per Laura's option B,
+# the pipeline now defaults to ``config.tuning_curve_mode = "trial-averaged"``:
+# at each sweep grid point, predicted rate is averaged across the cluster's
+# observed per-condition motion bins, marginalising out ``time_since_onset``,
+# the other continuous variable (TF when plotting Speed and vice versa),
+# and SF / OR (when not pinned by the MATLAB condition convention).
+#
+# The condition-specific pins from MATLAB Fig 5 are preserved so the
+# green/orange/blue line semantic stays interpretable: T_Vstatic Speed
+# sweep still pins tf=0 (visual off), V TF sweep still pins speed=0
+# (mouse not translating), and so on. Only the previously-fixed
+# steady-state t=1.5 s + mean-tf held constants are now marginalised.
+# Set ``--tuning-curve-mode steady-state`` to recover the pre-2026-04-23
+# behaviour for side-by-side comparison.
+#
+# The prediction-space **parity check** below uses the Selected model's
+# β on a shared raised-cosine grid regardless of rendering mode — the
+# gate is invariant to the display choice.
 
 # %%
 from rc2_glm.compare import _tuning_curve_pearson, _variable_betas_per_cluster  # noqa: E402
@@ -620,6 +643,30 @@ if not cmp_ml.empty:
     print(f"wrote {validation_dir / 'selected_vars_differences.pdf'}")
 
 # %% [markdown]
+# ## 9b. Forward-selection summary, all probes, both sides
+#
+# The MATLAB Fig 2 port (per-probe: stacked model-complexity bar +
+# variable-inclusion bar + interaction breakdown) is rendered per probe
+# under `_runs/{probe}/figs/forward_selection_summary.pdf`, and
+# **aggregated across all probes** under `validation/forward_selection_summary_{python,matlab}.pdf`
+# so the paper-level view is available for either side with the same layout.
+
+# %%
+from rc2_glm.compare import _render_aggregate_forward_selection  # noqa: E402
+
+if not cmp_ml.empty:
+    _render_aggregate_forward_selection(
+        cmp_py_raw, "python",
+        out_pdf=validation_dir / "forward_selection_summary_python.pdf",
+    )
+    _render_aggregate_forward_selection(
+        cmp_ml_raw, "matlab",
+        out_pdf=validation_dir / "forward_selection_summary_matlab.pdf",
+    )
+    print(f"wrote {validation_dir / 'forward_selection_summary_python.pdf'}")
+    print(f"wrote {validation_dir / 'forward_selection_summary_matlab.pdf'}")
+
+# %% [markdown]
 # ## 10. Known divergences (audit table)
 #
 # | Topic | Divergence | Resolution | See |
@@ -629,8 +676,8 @@ if not cmp_ml.empty:
 # | Null + FullInteraction β export | Python CSV only exports Selected + Additive | Minor; Selected covers the scientific result | summary §"Exported models" |
 # | Upstream speed-tuning filter | MATLAB prefilter restricts to speed-tuned clusters upstream | Python keeps all VISp (broader scope) | this notebook §3 |
 # | Forward-selection boundary | Python picks ~5 more interaction terms near Δ-bps=0.005 | Ridge + RNG; near-boundary flips | summary §"Jaccard" |
-# | FullInteraction skip rate | Python silently drops clusters with p ≥ n | Hypothesis: ReplayOnly motion mask | prompt 02.8 |
-# | Tuning-curve steady-state | Currently evaluated at t=1.5s post-onset | Trial-averaged mode planned | prompt 02.8/8.6 |
+# | FullInteraction skip rate | Resolved 2026-04-23 — 0 NaN on both sides post ridge=1e-3 | ridge stabilisation | commit 11226a8, 02.8 prompt (archived) |
+# | Tuning-curve onset convention | Pre-2026-04-23 pinned to t=1.5 s; now trial-averaged by default | See §8, `--tuning-curve-mode steady-state` for back-compat | commit c66ae4a |
 #
 # **Everything above is either benign (convention), compensated (ridge
 # stabilisation, prediction-space metric), or queued as a named
@@ -651,8 +698,11 @@ if not cmp_ml.empty:
 # - [x] Categorical coefficient-sign ≥ 0.85 — SF **0.938**, OR **1.000**
 # - [x] Tuning-curve frac(r ≥ 0.85) ≥ 0.80 — Speed **0.803**, TF **0.850**
 # - [x] Cross-probe parity figures (4-probe confusion + variable bars) present
-# - [ ] ReplayOnly motion-mask diagnostic (prompt 02.8 — queued, not gating)
-# - [ ] Trial-averaged tuning-curve mode (prompt 02.8/8.6 — queued, cosmetic)
+# - [x] Forward-selection summary aggregated across all 4 probes
+#       (`validation/forward_selection_summary_{python,matlab}.pdf`)
+# - [x] Trial-averaged tuning-curve mode is now the default (commit c66ae4a)
+# - [x] ReplayOnly motion-mask semantic verified (commit dbcaa51); no fix needed
+# - [x] Multi-probe `rc2-glm` invocation is the default (commit c66ae4a)
 #
 # Two open items remain, both documented as follow-up prompts. The
 # analysis pipeline is otherwise trustable — the divergences from MATLAB
@@ -664,17 +714,26 @@ if not cmp_ml.empty:
 # %% [markdown]
 # ## 12. Regenerate this report
 #
-# The `rc2-glm-compare` CLI regenerates the CSV + figures in one shot:
+# Two commands — one to re-run the full 4-probe pipeline, one to re-run
+# the parity check. Both assume `python/.env` is populated with
+# `RC2_FORMATTED_DATA_DIR` and `RC2_GLM_OUTPUT_DIR`.
 #
 # ```bash
+# # Full multi-probe fit with trial-averaged tuning (the default).
+# # Writes per-probe subdirs under _runs/ and concatenated top-level
+# # CSVs into $RC2_GLM_OUTPUT_DIR (usually .../glm_out_all).
+# rc2-glm
+#
+# # Parity check + figures. Reads the aggregated CSVs from --python-dir
+# # and writes validation/comparison_report.csv,
+# # classification_differences.pdf, selected_vars_differences.pdf, and
+# # the Python + MATLAB forward_selection_summary_*.pdf aggregates.
 # rc2-glm-compare \
-#   --python-dir  /Users/lauraporta/local_data/motion_clouds/figures/glm_out_all \
-#   --reference-dir "/Volumes/margrie/laura/data transfer for laura/glm_single_cluster/old" \
-#   --out /Users/lauraporta/local_data/motion_clouds/figures/glm_out_all/validation/comparison_report.csv
+#   --python-dir     "$RC2_GLM_OUTPUT_DIR" \
+#   --reference-dir  "/Volumes/margrie/laura/data transfer for laura/glm_single_cluster/old"
 # ```
 #
-# The `--python-dir` can point at any Python run — a single-probe dir, or
-# the aggregated multi-probe dir built by concatenating the per-probe
-# CSVs. Comparison rows, the classification confusion matrix, the
-# selected-vars bar chart, and the per-cluster disagreements CSV all land
-# in `{python-dir}/validation/`.
+# To render steady-state (pre-2026-04-23) tuning curves for side-by-side
+# comparison, add `--tuning-curve-mode steady-state` to the first command.
+# To run on a single probe, pass its `.mat` filename as the first positional
+# argument: ``rc2-glm CAA-1123244_rec1.mat``.
