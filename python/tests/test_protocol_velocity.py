@@ -99,6 +99,65 @@ def test_chosen_channel_motion_fraction_replay_only(passive_mat_path: Path) -> N
     )
 
 
+def test_motion_mask_reflects_condition_appropriate_signal(passive_mat_path: Path) -> None:
+    """Motion mask carries the *condition-appropriate* velocity, not the treadmill.
+
+    Laura's lab-convention anchor (2026-04-23): the MATLAB pre-computed
+    motion masks are condition-dependent. For ``T_Vstatic`` and ``VT``
+    (treadmill/stage active, visual coupled or static), motion mask
+    means "active translation". For ``V`` (visual flow only — e.g.
+    ReplayOnly trials), motion mask means "visual flow active"; the
+    stationary period is the analysis window **before** visual-flow
+    onset and is always present. The Python pipeline is expected to
+    match this semantic via the per-protocol velocity-channel map set
+    by prompt 02.5:
+
+        StageOnly → stage              (T_Vstatic / VT)
+        ReplayOnly → multiplexer_output (V, carries visual-flow velocity)
+        Coupled / EncoderOnly → filtered_teensy (treadmill)
+
+    This test exercises the passive probe we have locally (StageOnly +
+    ReplayOnly only). It asserts:
+
+    1. StageOnly trials (T_Vstatic / VT) have >10% motion on ``stage``
+       and near-zero motion on ``multiplexer_output`` (visual off).
+    2. ReplayOnly trials (V) have >10% motion on ``multiplexer_output``
+       and near-zero motion on ``stage`` (mouse not translating).
+
+    If either assertion breaks, the per-condition motion-mask semantic
+    has regressed — either the channel map changed or the reader started
+    concatenating channels incorrectly. The GLM would then fit against
+    the wrong signal on one of the two conditions and the V-row in the
+    reconstructed tuning curves would flatten.
+    """
+    expected_channel = {
+        "T_Vstatic": "stage",               # passive translation, visual static
+        "VT":        "stage",               # passive translation + visual flow
+        "V":         "multiplexer_output",  # visual flow only, no translation
+    }
+    with FormattedDataReader(passive_mat_path) as r:
+        for ti in range(r.n_trials):
+            protocol = r.trial_protocol(ti)
+            condition = r.trial_condition(ti)
+            chosen = r.trial_velocity_channel(ti)
+            assert chosen == expected_channel[condition], (
+                f"trial {ti} ({protocol}/{condition}): chosen channel "
+                f"{chosen!r} ≠ expected {expected_channel[condition]!r}"
+            )
+            v = r.trial_velocity(ti)
+            motion_frac = float((np.abs(v) >= 1.0).mean())
+            # The chosen channel must carry the condition-appropriate motion
+            # (translation for T/VT, visual flow for V). Below ~10% would
+            # mean the GLM sees essentially stationary data and fits noise,
+            # which is what happened before prompt 02.5.
+            assert motion_frac > 0.10, (
+                f"trial {ti} ({condition} on {chosen}): motion_frac "
+                f"{motion_frac:.2%} is too low — the condition-appropriate "
+                "signal has collapsed; check the protocol→channel map in "
+                "rc2_formatted_data_reader.reader.PROTOCOL_VELOCITY_CHANNEL"
+            )
+
+
 def test_bin_cluster_returns_rows_on_passive_data(passive_mat_path: Path) -> None:
     """``bin_cluster`` must produce > 0 rows on a VISp cluster of passive data.
 

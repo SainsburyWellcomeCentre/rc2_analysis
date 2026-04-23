@@ -111,6 +111,24 @@ def _load_trial(
     config: GLMConfig,
     stimulus_lookup: StimulusLookup | None,
 ) -> TrialData:
+    """Build one TrialData record with the condition-aware motion mask.
+
+    The motion mask is applied to ``trial_velocity(trial_idx)``, which
+    returns the protocol-appropriate channel per the MATLAB ``Trial.m``
+    switch (see PROTOCOL_VELOCITY_CHANNEL in the reader). This gives a
+    **condition-appropriate motion mask**:
+
+    - T_Vstatic / VT (Coupled / EncoderOnly / StageOnly trials): motion =
+      active translation of treadmill or stage.
+    - V (ReplayOnly trials): motion = visual flow active (multiplexer_output
+      carries the replayed visual velocity; mouse does not translate).
+
+    The stationary mask is the ``analysis_mask \\ motion_mask`` complement,
+    which for V trials is the pre-stimulus analysis window (Laura's
+    2026-04-23 clarification: "the stationary period [...] is an analysis
+    window before"). Regression test:
+    ``tests/test_protocol_velocity.py::test_motion_mask_reflects_condition_appropriate_signal``.
+    """
     s, e = reader.trial_bounds(trial_idx)
     trial_id = reader.trial_id(trial_idx)
     condition = reader.trial_condition(trial_idx)
