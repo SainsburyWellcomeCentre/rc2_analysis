@@ -1090,11 +1090,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "mat", nargs="?", default=None,
         help="Formatted v7.3 .mat file (path, or bare filename inside "
-             "RC2_FORMATTED_DATA_DIR). Optional if .env provides one.",
+             "RC2_FORMATTED_DATA_DIR). Optional: if omitted, runs every "
+             "*.mat in RC2_FORMATTED_DATA_DIR (per-probe subdirs + "
+             "concatenated top-level CSVs).",
     )
     parser.add_argument(
         "out_dir", nargs="?", default=env_out,
         help="Directory for CSV outputs (default: $RC2_GLM_OUTPUT_DIR)",
+    )
+    parser.add_argument(
+        "--single-probe", action="store_true",
+        help="In multi-probe mode (no positional mat + RC2_FORMATTED_DATA_DIR), "
+             "this flag restricts the run to a single probe — resolved via "
+             "the same rules as before (RC2_FORMATTED_DATA_PATH, first *.mat). "
+             "Useful for debugging without changing the env.",
     )
     parser.add_argument(
         "--backend", choices=("irls", "nemos"), default="irls",
@@ -1141,10 +1150,20 @@ def main(argv: list[str] | None = None) -> int:
              "(joblib loky / process backend). -1 = all cores (default), "
              "1 = serial (use this to see per-cluster worker logs).",
     )
+    parser.add_argument(
+        "--tuning-curve-mode",
+        choices=("trial-averaged", "steady-state"),
+        default="trial-averaged",
+        help=(
+            "Tuning-curve rendering. 'trial-averaged' (default) marginalises "
+            "the onset kernel and unfixed covariates over each cluster's "
+            "observed per-condition motion bins. 'steady-state' pins the "
+            "onset kernel at t=1.5s (MATLAB convention), kept for back-compat."
+        ),
+    )
     parser.set_defaults(make_plots=True, prefilter=True)
     args = parser.parse_args(argv)
 
-    mat_path = _resolve_mat_path(args.mat, env_path, env_dir)
     if not args.out_dir:
         raise SystemExit(
             "rc2-glm: no output directory. Pass as second positional arg "
@@ -1155,6 +1174,7 @@ def main(argv: list[str] | None = None) -> int:
         GLMConfig(),
         apply_prefilter=args.prefilter,
         device=args.device,
+        tuning_curve_mode=args.tuning_curve_mode,
     )
 
     lookup = None
@@ -1162,6 +1182,48 @@ def main(argv: list[str] | None = None) -> int:
         from rc2_formatted_data_reader import StimulusLookup
         lookup = StimulusLookup(args.mc_sequence, args.mc_folders)
 
+    # Multi-probe default: with no positional mat argument and
+    # RC2_FORMATTED_DATA_DIR set, run every *.mat in that directory into
+    # a per-probe subdir of out_dir, then concatenate into top-level CSVs
+    # so downstream (rc2-glm-compare, the notebook) sees one consolidated
+    # run. Laura 2026-04-23: "all probes should be always the default."
+    multi_probe = (
+        args.mat is None
+        and not args.single_probe
+        and env_dir
+        and Path(env_dir).expanduser().is_dir()
+        and len(sorted(Path(env_dir).expanduser().glob("*.mat"))) > 1
+    )
+    if multi_probe:
+        mats = sorted(Path(env_dir).expanduser().glob("*.mat"))
+        out_root = Path(args.out_dir)
+        out_root.mkdir(parents=True, exist_ok=True)
+        runs_root = out_root / "_runs"
+        runs_root.mkdir(exist_ok=True)
+        total_rows = 0
+        for i, mat_path in enumerate(mats, start=1):
+            probe_dir = runs_root / mat_path.stem
+            probe_dir.mkdir(exist_ok=True)
+            print(f"rc2-glm: [{i}/{len(mats)}] running {mat_path.name} → {probe_dir}")
+            result = run_pipeline(
+                mat_path=mat_path,
+                config=config,
+                output_dir=probe_dir,
+                stimulus_lookup=lookup,
+                backend=args.backend,
+                visp_only=not args.all_clusters,
+                make_plots=args.make_plots,
+                plot_format=args.plot_format,
+                plot_clusters=args.plot_clusters,
+                n_jobs=args.n_jobs,
+            )
+            total_rows += len(result.model_comparison)
+        _aggregate_probe_runs(runs_root, out_root)
+        print(f"rc2-glm: wrote {total_rows} cluster rows across "
+              f"{len(mats)} probes to {out_root}")
+        return 0
+
+    mat_path = _resolve_mat_path(args.mat, env_path, env_dir)
     result = run_pipeline(
         mat_path=mat_path,
         config=config,
@@ -1177,6 +1239,46 @@ def main(argv: list[str] | None = None) -> int:
     # run_pipeline has already torn down its handlers; a bare print is fine.
     print(f"rc2-glm: wrote {len(result.model_comparison)} cluster rows to {args.out_dir}")
     return 0
+
+
+def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
+    """Concatenate per-probe CSVs into top-level aggregate CSVs.
+
+    The per-probe subdirs under ``runs_root`` each carry a full set of
+    pipeline outputs (glm_model_comparison.csv, glm_coefficients.csv,
+    glm_selection_history.csv, prefilter_decision_tree.csv, plus the
+    diagnostics/ subdir). We concatenate the top-level CSVs and the
+    ``diagnostics/stationary_vs_motion_fr_python.csv`` trial-level CSV
+    so ``rc2-glm-compare`` sees an aggregated run without needing a
+    separate aggregate step.
+    """
+    top_level = (
+        "glm_model_comparison.csv",
+        "glm_coefficients.csv",
+        "glm_selection_history.csv",
+        "prefilter_decision_tree.csv",
+    )
+    for basename in top_level:
+        dfs = [
+            pd.read_csv(probe / basename)
+            for probe in sorted(runs_root.iterdir())
+            if (probe / basename).is_file()
+        ]
+        if not dfs:
+            continue
+        pd.concat(dfs, ignore_index=True).to_csv(out_root / basename, index=False)
+
+    diag = out_root / "diagnostics"
+    diag.mkdir(exist_ok=True)
+    svm_dfs = [
+        pd.read_csv(probe / "diagnostics" / "stationary_vs_motion_fr_python.csv")
+        for probe in sorted(runs_root.iterdir())
+        if (probe / "diagnostics" / "stationary_vs_motion_fr_python.csv").is_file()
+    ]
+    if svm_dfs:
+        pd.concat(svm_dfs, ignore_index=True).to_csv(
+            diag / "stationary_vs_motion_fr_python.csv", index=False,
+        )
 
 
 def _find_env_file() -> str | None:

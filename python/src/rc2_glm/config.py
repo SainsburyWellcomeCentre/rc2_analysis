@@ -73,6 +73,17 @@ class GLMConfig:
     # --- Compute backend ---
     device: str = "auto"  # "auto" | "cpu" | "gpu"
 
+    # --- Tuning-curve rendering ---
+    # "trial-averaged" (default): predicted tuning at each grid point is
+    # averaged over the cluster's observed motion-bin distribution per
+    # condition (marginalises out time_since_onset and the other covariates
+    # not fixed by the MATLAB convention). This gives the trial-averaged
+    # expected rate the neuron would actually show, not a hypothetical
+    # steady-state evaluation. "steady-state": evaluate the onset kernel
+    # at t=1.5s and the other continuous variable at its per-cluster
+    # mean (the pre-2026-04-23 behaviour, kept for back-compat).
+    tuning_curve_mode: str = "trial-averaged"
+
 
 INTERACTION_PARENTS: dict[str, tuple[str, str]] = {
     "Speed_x_TF": ("Speed", "TF"),

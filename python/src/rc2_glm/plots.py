@@ -549,9 +549,20 @@ def plot_tuning_curves(
     - V: Speed=0, SF=mode, OR=mode (visual only).
     - VT: Speed=mean, TF=mean, SF=mode, OR=mode (multi-sensory).
 
-    The onset kernel is evaluated at ``steady_state_time = 1.5s`` for
-    all motion predictions (MATLAB line 3397) and at all-zeros for the
-    stationary dot (MATLAB line 3743).
+    The onset-kernel treatment depends on ``config.tuning_curve_mode``:
+
+    - ``"trial-averaged"`` (default, Laura 2026-04-23): at each sweep
+      grid point, average predicted rate across the cluster's observed
+      ``time_since_onset`` values *within the condition's motion bins*.
+      This marginalises out the onset basis in a way that reflects the
+      trial-time distribution the neuron actually experienced, rather
+      than pinning onset to an arbitrary steady-state time.
+    - ``"steady-state"``: evaluate the onset kernel at ``t=1.5s``
+      (MATLAB line 3397) — the pre-2026-04-23 behaviour, kept for
+      back-compat and side-by-side comparisons.
+
+    The stationary dot is computed from observed stationary bins in
+    both modes (SF/OR at observed values, onset=0).
 
     Observed row: per-trial aggregation matching MATLAB (lines
     2873, 2958, 3031, 3108, 3210). For each bin/level, rows within that
@@ -609,6 +620,17 @@ def plot_tuning_curves(
     )  # shape (1, n_onset)
     B_onset_stat = np.zeros((1, config.n_onset_bases))
 
+    # Trial-averaged mode needs the condition-specific observed onset
+    # distributions. Collect them now so each model row reuses the same
+    # bin sets. ``None`` when the condition has no motion bins — the
+    # row-plotting code falls back to the mean/steady-state scalar.
+    cond_bins: dict[str, pd.DataFrame] = {}
+    if config.tuning_curve_mode == "trial-averaged":
+        motion_cluster = cluster_df[cluster_df["condition"] != "stationary"]
+        for cond in ("T_Vstatic", "V", "VT"):
+            sub = motion_cluster[motion_cluster["condition"] == cond]
+            cond_bins[cond] = sub if not sub.empty else None
+
     _plot_observed_row(
         axes[0, :], cluster_df, config,
         sf_plot=sf_plot, or_plot=or_plot,
@@ -641,6 +663,7 @@ def plot_tuning_curves(
             mean_speed=mean_speed, mean_tf=mean_tf_motion,
             mode_sf=mode_sf, mode_or=mode_or,
             spd_centres=spd_centres, tf_centres=tf_centres,
+            cond_bins=cond_bins,
         )
 
     for col in range(4):
@@ -670,7 +693,8 @@ def plot_tuning_curves(
     sel_vars = _vars_from_names(sel_names)
     fig.suptitle(
         f"Reconstructed tuning curves — {probe_id} cluster {cluster_id}"
-        f"    selected: {'+'.join(sel_vars) if sel_vars else 'Null'}",
+        f"    selected: {'+'.join(sel_vars) if sel_vars else 'Null'}"
+        f"    [{config.tuning_curve_mode}]",
         fontsize=12,
     )
     return fig
@@ -1766,10 +1790,27 @@ def _predict_model_row(
     mode_or: float,
     spd_centres: np.ndarray,
     tf_centres: np.ndarray,
+    cond_bins: dict | None = None,
 ) -> None:
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
     n_spd = spd_centres.size
     n_tf = tf_centres.size
+
+    # Trial-averaged path: run a dedicated helper per panel and return.
+    # Keeps the code simpler than threading mode branches through every
+    # low-level helper, at the cost of one duplicated per-panel block.
+    if config.tuning_curve_mode == "trial-averaged" and cond_bins:
+        _predict_model_row_trial_averaged(
+            row_axes, beta, train_names, selected_vars, config,
+            B_onset_stat=B_onset_stat,
+            sf_ref=sf_ref, or_ref=or_ref,
+            sf_plot=sf_plot, or_plot=or_plot,
+            mean_speed=mean_speed, mean_tf=mean_tf,
+            mode_sf=mode_sf, mode_or=mode_or,
+            spd_centres=spd_centres, tf_centres=tf_centres,
+            cond_bins=cond_bins,
+        )
+        return
 
     B_onset_spd = np.broadcast_to(B_onset_steady, (n_spd, B_onset_steady.shape[1])).copy()
     B_onset_tf = np.broadcast_to(B_onset_steady, (n_tf, B_onset_steady.shape[1])).copy()
@@ -1862,6 +1903,237 @@ def _predict_model_row(
         onset_row=B_onset_steady[0],
         color=COND_COLORS["VT"],
     )
+    ax_or.set_xticks(np.arange(or_plot.size))
+    ax_or.set_xticklabels([_format_radians(v) for v in or_plot], fontsize=7)
+
+
+def _marginal_curve(
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    cond_df: pd.DataFrame,
+    *,
+    sweep_var: str,          # "Speed" | "TF"
+    grid: np.ndarray,
+    fix_speed: float | None = None,
+    fix_tf: float | None = None,
+    fix_sf: float | None = None,
+    fix_or: float | None = None,
+) -> np.ndarray:
+    """E_observed[μ | sweep_var=g] across the given condition's motion bins.
+
+    At each grid point ``g``, build a design matrix of length ``n_bins``
+    (the condition's observed motion rows) with:
+
+    - ``sweep_var`` set to ``g`` (broadcast)
+    - each other variable either pinned to its ``fix_*`` value (if provided)
+      or drawn from the condition's observed per-bin value. ``time_since_onset``
+      is always drawn from observed (that's the point — option B).
+
+    The predicted rate is ``exp(X_aligned @ β)`` per bin; we return the
+    mean across bins. A grid point whose design matrix is rank-deficient
+    (``_predict_rate`` returns None) yields NaN.
+    """
+    n_bins = len(cond_df)
+    if n_bins == 0:
+        return np.full(len(grid), np.nan)
+    obs_speed = cond_df["speed"].to_numpy(dtype=np.float64)
+    obs_tf = cond_df["tf"].to_numpy(dtype=np.float64)
+    obs_sf = cond_df["sf"].to_numpy(dtype=np.float64)
+    obs_or = cond_df["orientation"].to_numpy(dtype=np.float64)
+    onset_t = cond_df["time_since_onset"].to_numpy(dtype=np.float64)
+    # Clip observed onset into the basis support; values ≤0 evaluate to 0
+    # (the stationary pre-onset window) by construction in onset_kernel_basis.
+    B_onset = onset_kernel_basis(onset_t, config.n_onset_bases, config.onset_range[1])
+
+    rates = np.empty(len(grid))
+    for i, g in enumerate(grid):
+        if sweep_var == "Speed":
+            speed = np.full(n_bins, g)
+            tf = np.full(n_bins, fix_tf) if fix_tf is not None else obs_tf
+        elif sweep_var == "TF":
+            speed = np.full(n_bins, fix_speed) if fix_speed is not None else obs_speed
+            tf = np.full(n_bins, g)
+        else:
+            raise ValueError(f"unsupported sweep_var {sweep_var!r}")
+        sf = np.full(n_bins, fix_sf) if fix_sf is not None else obs_sf
+        orientation = np.full(n_bins, fix_or) if fix_or is not None else obs_or
+        mu = _predict_rate(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            speed, tf, B_onset, sf, orientation,
+        )
+        rates[i] = np.nan if mu is None else float(np.nanmean(mu))
+    return rates
+
+
+def _marginal_levels(
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    cond_df: pd.DataFrame,
+    *,
+    level_kind: str,         # "SF" | "OR"
+    levels: np.ndarray,
+    fix_speed: float | None,
+    fix_tf: float | None,
+    fix_sf: float | None = None,
+    fix_or: float | None = None,
+) -> np.ndarray:
+    """Trial-averaged version of _plot_levels — one rate per categorical level.
+
+    At each level ``L``, the swept variable is pinned to ``L`` while
+    Speed / TF / the other categorical can be fixed or marginalised over
+    observed bins. Onset always uses the condition's observed distribution.
+    """
+    n_bins = len(cond_df)
+    if n_bins == 0:
+        return np.full(len(levels), np.nan)
+    obs_speed = cond_df["speed"].to_numpy(dtype=np.float64)
+    obs_tf = cond_df["tf"].to_numpy(dtype=np.float64)
+    obs_sf = cond_df["sf"].to_numpy(dtype=np.float64)
+    obs_or = cond_df["orientation"].to_numpy(dtype=np.float64)
+    onset_t = cond_df["time_since_onset"].to_numpy(dtype=np.float64)
+    B_onset = onset_kernel_basis(onset_t, config.n_onset_bases, config.onset_range[1])
+
+    rates = np.empty(len(levels))
+    for i, L in enumerate(levels):
+        speed = np.full(n_bins, fix_speed) if fix_speed is not None else obs_speed
+        tf = np.full(n_bins, fix_tf) if fix_tf is not None else obs_tf
+        if level_kind == "SF":
+            sf = np.full(n_bins, L)
+            orientation = np.full(n_bins, fix_or) if fix_or is not None else obs_or
+        else:
+            sf = np.full(n_bins, fix_sf) if fix_sf is not None else obs_sf
+            orientation = np.full(n_bins, L)
+        mu = _predict_rate(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            speed, tf, B_onset, sf, orientation,
+        )
+        rates[i] = np.nan if mu is None else float(np.nanmean(mu))
+    return rates
+
+
+def _predict_model_row_trial_averaged(
+    row_axes,
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    *,
+    B_onset_stat: np.ndarray,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    sf_plot: np.ndarray,
+    or_plot: np.ndarray,
+    mean_speed: float,
+    mean_tf: float,
+    mode_sf: float,
+    mode_or: float,
+    spd_centres: np.ndarray,
+    tf_centres: np.ndarray,
+    cond_bins: dict,
+) -> None:
+    """Trial-averaged analogue of ``_predict_model_row``.
+
+    Condition semantics (same as the steady-state path, with the onset
+    kernel marginalised over each condition's observed ``time_since_onset``
+    distribution — Laura 2026-04-23 option B):
+
+    - T_Vstatic Speed sweep: fix tf=0 (visual static), marginalise rest.
+    - VT Speed sweep: marginalise everything over the VT condition's bins.
+    - V TF sweep: fix speed=0 (mouse not translating), marginalise rest.
+    - VT TF sweep: marginalise everything over the VT condition's bins.
+    - SF / OR levels: marginalise within V and VT conditions, respectively.
+
+    The stationary dot uses observed stationary bins (onset=0 by construction).
+    """
+    ax_spd, ax_tf, ax_sf, ax_or = row_axes
+
+    # --- Speed sweep ---
+    t_bins = cond_bins.get("T_Vstatic")
+    if t_bins is not None:
+        rates = _marginal_curve(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            t_bins, sweep_var="Speed", grid=spd_centres, fix_tf=0.0,
+        )
+        ax_spd.plot(spd_centres, rates, "o-",
+                    color=COND_COLORS["T_Vstatic"], markersize=4, linewidth=1.2)
+    vt_bins = cond_bins.get("VT")
+    if vt_bins is not None:
+        rates = _marginal_curve(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            vt_bins, sweep_var="Speed", grid=spd_centres,
+        )
+        ax_spd.plot(spd_centres, rates, "o-",
+                    color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
+    # Stationary dot at speed=0 — compute from observed stationary bins.
+    _plot_point(
+        ax_spd, beta, train_names, selected_vars, config, sf_ref, or_ref,
+        speed=0.0, tf=0.0, onset_row=B_onset_stat[0],
+        sf=np.nan, orientation=np.nan,
+        color=COND_COLORS["stationary"], x=0.0,
+    )
+
+    # --- TF sweep ---
+    v_bins = cond_bins.get("V")
+    if v_bins is not None:
+        rates = _marginal_curve(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            v_bins, sweep_var="TF", grid=tf_centres, fix_speed=0.0,
+        )
+        ax_tf.plot(tf_centres, rates, "o-",
+                   color=COND_COLORS["V"], markersize=4, linewidth=1.2)
+    if vt_bins is not None:
+        rates = _marginal_curve(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            vt_bins, sweep_var="TF", grid=tf_centres,
+        )
+        ax_tf.plot(tf_centres, rates, "o-",
+                   color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
+
+    # --- SF levels (V and VT) ---
+    if v_bins is not None:
+        rates = _marginal_levels(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            v_bins, level_kind="SF", levels=sf_plot,
+            fix_speed=0.0, fix_tf=None, fix_or=mode_or,
+        )
+        ax_sf.plot(np.arange(sf_plot.size), rates, "o-",
+                   color=COND_COLORS["V"], markersize=5, linewidth=1.2)
+    if vt_bins is not None:
+        rates = _marginal_levels(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            vt_bins, level_kind="SF", levels=sf_plot,
+            fix_speed=None, fix_tf=None, fix_or=mode_or,
+        )
+        ax_sf.plot(np.arange(sf_plot.size), rates, "o-",
+                   color=COND_COLORS["VT"], markersize=5, linewidth=1.2)
+    ax_sf.set_xticks(np.arange(sf_plot.size))
+    ax_sf.set_xticklabels([f"{v:.3f}" for v in sf_plot], fontsize=7)
+
+    # --- OR levels (V and VT) ---
+    if v_bins is not None:
+        rates = _marginal_levels(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            v_bins, level_kind="OR", levels=or_plot,
+            fix_speed=0.0, fix_tf=None, fix_sf=mode_sf,
+        )
+        ax_or.plot(np.arange(or_plot.size), rates, "o-",
+                   color=COND_COLORS["V"], markersize=5, linewidth=1.2)
+    if vt_bins is not None:
+        rates = _marginal_levels(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            vt_bins, level_kind="OR", levels=or_plot,
+            fix_speed=None, fix_tf=None, fix_sf=mode_sf,
+        )
+        ax_or.plot(np.arange(or_plot.size), rates, "o-",
+                   color=COND_COLORS["VT"], markersize=5, linewidth=1.2)
     ax_or.set_xticks(np.arange(or_plot.size))
     ax_or.set_xticklabels([_format_radians(v) for v in or_plot], fontsize=7)
 
