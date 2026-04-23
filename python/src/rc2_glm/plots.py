@@ -631,6 +631,34 @@ def plot_tuning_curves(
             sub = motion_cluster[motion_cluster["condition"] == cond]
             cond_bins[cond] = sub if not sub.empty else None
 
+    # Per-condition Speed/TF grids, matching the bin_centres used in the
+    # Observed row. Using the SAME grid on both rows is essential: a
+    # model line plotted on a uniform linspace beside an observed line
+    # plotted at 5%-quantile centres gives a figure where x-positions
+    # are not comparable, which was Laura's 2026-04-23 finding. Falls
+    # back to a linspace if the MATLAB precomputed-edges cache is
+    # unavailable — same behaviour as the observed row. (The fallback
+    # has 10 bins to match _plot_observed_row's fallback_spd_edges.)
+    fallback_spd = np.linspace(*config.speed_range, 11)
+    fallback_tf = np.linspace(*config.tf_range, 11)
+    spd_centres_by_cond: dict[str, np.ndarray] = {}
+    tf_centres_by_cond: dict[str, np.ndarray] = {}
+    for cond in ("T_Vstatic", "V", "VT"):
+        spd_edges = (
+            precomputed_bins.speed_edges(cond)
+            if precomputed_bins is not None else None
+        )
+        if spd_edges is None:
+            spd_edges = fallback_spd
+        spd_centres_by_cond[cond] = 0.5 * (spd_edges[:-1] + spd_edges[1:])
+        tf_edges = (
+            precomputed_bins.tf_edges(cond)
+            if precomputed_bins is not None else None
+        )
+        if tf_edges is None:
+            tf_edges = fallback_tf
+        tf_centres_by_cond[cond] = 0.5 * (tf_edges[:-1] + tf_edges[1:])
+
     _plot_observed_row(
         axes[0, :], cluster_df, config,
         sf_plot=sf_plot, or_plot=or_plot,
@@ -664,6 +692,8 @@ def plot_tuning_curves(
             mode_sf=mode_sf, mode_or=mode_or,
             spd_centres=spd_centres, tf_centres=tf_centres,
             cond_bins=cond_bins,
+            spd_centres_by_cond=spd_centres_by_cond,
+            tf_centres_by_cond=tf_centres_by_cond,
         )
 
     for col in range(4):
@@ -1791,10 +1821,10 @@ def _predict_model_row(
     spd_centres: np.ndarray,
     tf_centres: np.ndarray,
     cond_bins: dict | None = None,
+    spd_centres_by_cond: dict[str, np.ndarray] | None = None,
+    tf_centres_by_cond: dict[str, np.ndarray] | None = None,
 ) -> None:
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
-    n_spd = spd_centres.size
-    n_tf = tf_centres.size
 
     # Trial-averaged path: run a dedicated helper per panel and return.
     # Keeps the code simpler than threading mode branches through every
@@ -1807,34 +1837,61 @@ def _predict_model_row(
             sf_plot=sf_plot, or_plot=or_plot,
             mean_speed=mean_speed, mean_tf=mean_tf,
             mode_sf=mode_sf, mode_or=mode_or,
-            spd_centres=spd_centres, tf_centres=tf_centres,
+            spd_centres_by_cond=spd_centres_by_cond,
+            tf_centres_by_cond=tf_centres_by_cond,
             cond_bins=cond_bins,
         )
         return
 
-    B_onset_spd = np.broadcast_to(B_onset_steady, (n_spd, B_onset_steady.shape[1])).copy()
-    B_onset_tf = np.broadcast_to(B_onset_steady, (n_tf, B_onset_steady.shape[1])).copy()
+    # Steady-state path: evaluate each condition's line at that
+    # condition's Speed/TF bin centres (same as the Observed row above)
+    # rather than a uniform linspace, so the x-axis aligns between
+    # observed and predicted. Default centres for conditions without
+    # their own cached edges: the old uniform spd_centres / tf_centres.
+    spd_by_cond = spd_centres_by_cond or {}
+    tf_by_cond = tf_centres_by_cond or {}
+    spd_t = spd_by_cond.get("T_Vstatic", spd_centres)
+    spd_vt = spd_by_cond.get("VT", spd_centres)
+    tf_v = tf_by_cond.get("V", tf_centres)
+    tf_vt = tf_by_cond.get("VT", tf_centres)
+    n_spd_t = spd_t.size
+    n_spd_vt = spd_vt.size
+    n_tf_v = tf_v.size
+    n_tf_vt = tf_vt.size
+
+    B_onset_spd_t = np.broadcast_to(
+        B_onset_steady, (n_spd_t, B_onset_steady.shape[1]),
+    ).copy()
+    B_onset_spd_vt = np.broadcast_to(
+        B_onset_steady, (n_spd_vt, B_onset_steady.shape[1]),
+    ).copy()
+    B_onset_tf_v = np.broadcast_to(
+        B_onset_steady, (n_tf_v, B_onset_steady.shape[1]),
+    ).copy()
+    B_onset_tf_vt = np.broadcast_to(
+        B_onset_steady, (n_tf_vt, B_onset_steady.shape[1]),
+    ).copy()
 
     # --- Speed sweep ---
     _plot_sweep(
         ax_spd, beta, train_names, selected_vars, config, sf_ref, or_ref,
-        speed_vec=spd_centres,
-        tf_vec=np.zeros(n_spd),
-        onset_mat=B_onset_spd,
-        sf_vec=np.full(n_spd, np.nan),
-        or_vec=np.full(n_spd, np.nan),
+        speed_vec=spd_t,
+        tf_vec=np.zeros(n_spd_t),
+        onset_mat=B_onset_spd_t,
+        sf_vec=np.full(n_spd_t, np.nan),
+        or_vec=np.full(n_spd_t, np.nan),
         color=COND_COLORS["T_Vstatic"],
-        xs=spd_centres,
+        xs=spd_t,
     )
     _plot_sweep(
         ax_spd, beta, train_names, selected_vars, config, sf_ref, or_ref,
-        speed_vec=spd_centres,
-        tf_vec=np.full(n_spd, mean_tf),
-        onset_mat=B_onset_spd,
-        sf_vec=np.full(n_spd, mode_sf),
-        or_vec=np.full(n_spd, mode_or),
+        speed_vec=spd_vt,
+        tf_vec=np.full(n_spd_vt, mean_tf),
+        onset_mat=B_onset_spd_vt,
+        sf_vec=np.full(n_spd_vt, mode_sf),
+        or_vec=np.full(n_spd_vt, mode_or),
         color=COND_COLORS["VT"],
-        xs=spd_centres,
+        xs=spd_vt,
     )
     _plot_point(
         ax_spd, beta, train_names, selected_vars, config, sf_ref, or_ref,
@@ -1847,23 +1904,23 @@ def _predict_model_row(
     # --- TF sweep ---
     _plot_sweep(
         ax_tf, beta, train_names, selected_vars, config, sf_ref, or_ref,
-        speed_vec=np.zeros(n_tf),
-        tf_vec=tf_centres,
-        onset_mat=B_onset_tf,
-        sf_vec=np.full(n_tf, mode_sf),
-        or_vec=np.full(n_tf, mode_or),
+        speed_vec=np.zeros(n_tf_v),
+        tf_vec=tf_v,
+        onset_mat=B_onset_tf_v,
+        sf_vec=np.full(n_tf_v, mode_sf),
+        or_vec=np.full(n_tf_v, mode_or),
         color=COND_COLORS["V"],
-        xs=tf_centres,
+        xs=tf_v,
     )
     _plot_sweep(
         ax_tf, beta, train_names, selected_vars, config, sf_ref, or_ref,
-        speed_vec=np.full(n_tf, mean_speed),
-        tf_vec=tf_centres,
-        onset_mat=B_onset_tf,
-        sf_vec=np.full(n_tf, mode_sf),
-        or_vec=np.full(n_tf, mode_or),
+        speed_vec=np.full(n_tf_vt, mean_speed),
+        tf_vec=tf_vt,
+        onset_mat=B_onset_tf_vt,
+        sf_vec=np.full(n_tf_vt, mode_sf),
+        or_vec=np.full(n_tf_vt, mode_or),
         color=COND_COLORS["VT"],
-        xs=tf_centres,
+        xs=tf_vt,
     )
 
     # --- SF levels ---
@@ -2035,9 +2092,9 @@ def _predict_model_row_trial_averaged(
     mean_tf: float,
     mode_sf: float,
     mode_or: float,
-    spd_centres: np.ndarray,
-    tf_centres: np.ndarray,
     cond_bins: dict,
+    spd_centres_by_cond: dict[str, np.ndarray] | None = None,
+    tf_centres_by_cond: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Trial-averaged analogue of ``_predict_model_row``.
 
@@ -2052,25 +2109,32 @@ def _predict_model_row_trial_averaged(
     - SF / OR levels: marginalise within V and VT conditions, respectively.
 
     The stationary dot uses observed stationary bins (onset=0 by construction).
+    Each condition line is evaluated at the same per-condition Speed/TF
+    bin centres the Observed row uses (MATLAB 5%-quantile edges cached
+    in ``csvs/{tuning,tf_tuning}_curves``) so x-axis alignment is exact.
     """
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
+    spd_by_cond = spd_centres_by_cond or {}
+    tf_by_cond = tf_centres_by_cond or {}
 
     # --- Speed sweep ---
     t_bins = cond_bins.get("T_Vstatic")
-    if t_bins is not None:
+    spd_t = spd_by_cond.get("T_Vstatic")
+    if t_bins is not None and spd_t is not None:
         rates = _marginal_curve(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
-            t_bins, sweep_var="Speed", grid=spd_centres, fix_tf=0.0,
+            t_bins, sweep_var="Speed", grid=spd_t, fix_tf=0.0,
         )
-        ax_spd.plot(spd_centres, rates, "o-",
+        ax_spd.plot(spd_t, rates, "o-",
                     color=COND_COLORS["T_Vstatic"], markersize=4, linewidth=1.2)
     vt_bins = cond_bins.get("VT")
-    if vt_bins is not None:
+    spd_vt = spd_by_cond.get("VT")
+    if vt_bins is not None and spd_vt is not None:
         rates = _marginal_curve(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
-            vt_bins, sweep_var="Speed", grid=spd_centres,
+            vt_bins, sweep_var="Speed", grid=spd_vt,
         )
-        ax_spd.plot(spd_centres, rates, "o-",
+        ax_spd.plot(spd_vt, rates, "o-",
                     color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
     # Stationary dot at speed=0 — compute from observed stationary bins.
     _plot_point(
@@ -2082,19 +2146,21 @@ def _predict_model_row_trial_averaged(
 
     # --- TF sweep ---
     v_bins = cond_bins.get("V")
-    if v_bins is not None:
+    tf_v = tf_by_cond.get("V")
+    if v_bins is not None and tf_v is not None:
         rates = _marginal_curve(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
-            v_bins, sweep_var="TF", grid=tf_centres, fix_speed=0.0,
+            v_bins, sweep_var="TF", grid=tf_v, fix_speed=0.0,
         )
-        ax_tf.plot(tf_centres, rates, "o-",
+        ax_tf.plot(tf_v, rates, "o-",
                    color=COND_COLORS["V"], markersize=4, linewidth=1.2)
-    if vt_bins is not None:
+    tf_vt = tf_by_cond.get("VT")
+    if vt_bins is not None and tf_vt is not None:
         rates = _marginal_curve(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
-            vt_bins, sweep_var="TF", grid=tf_centres,
+            vt_bins, sweep_var="TF", grid=tf_vt,
         )
-        ax_tf.plot(tf_centres, rates, "o-",
+        ax_tf.plot(tf_vt, rates, "o-",
                    color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
 
     # --- SF levels (V and VT) ---
