@@ -51,6 +51,13 @@ class GLMConfig:
     # --- Cross-validation ---
     n_folds: int = 5
     cv_seed: int = 0
+    # "condition-stratified" (default, MATLAB sp_fold parity) stratifies
+    # trial-level k-fold over unique (trial_id, condition) pairs.
+    # "speed-profile" uses 2 folds keyed on ``TrialData.profile_id`` —
+    # train on one reproduced velocity trajectory, test on the other.
+    # Mirrors MATLAB glm_single_cluster_analysis.m:2291-2293 and lets
+    # us quantify how well the GLM generalises across speed profiles.
+    cv_strategy: str = "condition-stratified"
 
     # --- Forward selection ---
     main_effects: tuple[str, ...] = ("Speed", "TF", "SF", "OR")

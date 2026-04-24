@@ -36,14 +36,56 @@ def make_trial_folds(
     n_folds: int = 5,
     seed: int = 0,
     condition_labels_per_bin: np.ndarray | None = None,
+    strategy: str = "condition-stratified",
+    profile_ids_per_bin: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Assign each row to a fold based on trial and, optionally, condition.
+    """Assign each row to a fold.
 
-    When ``condition_labels_per_bin`` is provided, folds are assigned over
-    unique ``(trial_id, condition)`` pairs and stratified independently by
-    condition, matching the MATLAB GLM pipeline.
+    ``strategy="condition-stratified"`` (default): k-fold assignment over
+    unique ``(trial_id, condition)`` pairs, stratified independently by
+    condition — matches MATLAB's ``trial_fold`` loop in
+    ``glm_single_cluster_analysis.m:1479-1484``.
+
+    ``strategy="speed-profile"``: **2-fold** assignment where fold id =
+    ``profile_id - 1`` regardless of ``n_folds`` — every bin belonging
+    to trials of profile 1 goes to fold 0, profile 2 goes to fold 1.
+    Train-on-one-profile / test-on-the-other generalisation check,
+    mirroring MATLAB's ``sp_fold`` in
+    ``glm_single_cluster_analysis.m:2291-2293``. Requires
+    ``profile_ids_per_bin``.
     """
     trial_ids_per_bin = np.asarray(trial_ids_per_bin)
+
+    if strategy == "speed-profile":
+        if profile_ids_per_bin is None:
+            raise ValueError(
+                "strategy='speed-profile' requires profile_ids_per_bin; "
+                "ensure rc2-glm is run with a StimulusLookup so TrialData.profile_id "
+                "is populated and time_binning threads it through."
+            )
+        profile_ids = np.asarray(profile_ids_per_bin, dtype=np.int64).ravel()
+        if profile_ids.shape[0] != trial_ids_per_bin.shape[0]:
+            raise ValueError(
+                "profile_ids_per_bin must match trial_ids_per_bin length"
+            )
+        # Per-trial consistency check: every bin of one trial must carry
+        # the same profile_id. If profile_id varies within a trial, the
+        # upstream plumbing has a bug.
+        for tid in np.unique(trial_ids_per_bin):
+            uniq = np.unique(profile_ids[trial_ids_per_bin == tid])
+            if uniq.size != 1:
+                raise ValueError(
+                    f"trial_id={int(tid)} has inconsistent profile_ids "
+                    f"{uniq.tolist()} — check time_binning output."
+                )
+        return (profile_ids - 1).astype(np.int64)
+
+    if strategy != "condition-stratified":
+        raise ValueError(
+            f"unknown strategy {strategy!r}; "
+            "valid: 'condition-stratified', 'speed-profile'"
+        )
+
     rng = np.random.default_rng(seed)
 
     if condition_labels_per_bin is None:

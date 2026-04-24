@@ -19,6 +19,48 @@ def test_make_trial_folds_partitions_trials_round_robin():
     assert set(folds.tolist()) == {0, 1, 2, 3, 4}
 
 
+def test_speed_profile_strategy_splits_by_profile_id():
+    """``strategy='speed-profile'`` yields exactly 2 folds keyed on profile_id.
+
+    The speed-profile CV scheme trains on one reproduced velocity
+    trajectory and tests on the other. Fold assignment is therefore
+    deterministic (not seeded) and maps profile_id → fold id directly:
+    profile 1 → fold 0, profile 2 → fold 1. Pins the contract so a
+    future refactor of ``make_trial_folds`` can't silently reorder
+    the fold ids — downstream ``cross_validate_glm`` assumes unique
+    fold ids in ``np.unique()`` order and would flip train/test on a
+    re-ordering.
+    """
+    # 10 bins across 4 trials; trials 1,2 on profile 1, trials 3,4 on profile 2.
+    trial_ids = np.array([1, 1, 2, 2, 2, 3, 3, 3, 4, 4])
+    profile_ids = np.array([1, 1, 1, 1, 1, 2, 2, 2, 2, 2])
+
+    folds = make_trial_folds(
+        trial_ids,
+        strategy="speed-profile",
+        profile_ids_per_bin=profile_ids,
+    )
+    # Deterministic: profile 1 → fold 0, profile 2 → fold 1.
+    assert folds.tolist() == [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+    assert set(folds.tolist()) == {0, 1}
+    # Per-trial consistency: each trial lives in exactly one fold.
+    for tid in np.unique(trial_ids):
+        assert len(set(folds[trial_ids == tid].tolist())) == 1
+
+
+def test_speed_profile_strategy_rejects_within_trial_profile_inconsistency():
+    """A trial whose bins carry mixed profile_ids is a plumbing bug — fail loud."""
+    trial_ids = np.array([1, 1, 1, 2, 2])
+    bad_profiles = np.array([1, 2, 1, 2, 2])  # trial 1 has both profile 1 and 2
+    import pytest
+    with pytest.raises(ValueError, match="inconsistent profile_ids"):
+        make_trial_folds(
+            trial_ids,
+            strategy="speed-profile",
+            profile_ids_per_bin=bad_profiles,
+        )
+
+
 def test_make_trial_folds_stratifies_by_condition_when_provided():
     trial_ids = np.array([1, 1, 2, 2, 3, 3, 4, 4])
     conditions = np.array([

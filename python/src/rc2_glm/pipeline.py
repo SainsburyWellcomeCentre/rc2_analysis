@@ -335,6 +335,10 @@ def _fit_one_cluster(
     y = df["spike_count"].to_numpy(dtype=np.float64)
     trial_ids = df["trial_id"].to_numpy(dtype=np.int64)
     condition_labels = df["condition"].to_numpy(dtype=object)
+    profile_ids = (
+        df["profile_id"].to_numpy(dtype=np.int64)
+        if "profile_id" in df.columns else None
+    )
 
     B_speed = raised_cosine_basis(
         speed, config.n_speed_bases, *config.speed_range
@@ -352,6 +356,8 @@ def _fit_one_cluster(
         config.n_folds,
         config.cv_seed,
         condition_labels_per_bin=condition_labels,
+        strategy=config.cv_strategy,
+        profile_ids_per_bin=profile_ids,
     )
 
     sf_valid = sf_vals[(sf_vals != 0.0) & ~np.isnan(sf_vals)]
@@ -1161,6 +1167,18 @@ def main(argv: list[str] | None = None) -> int:
             "onset kernel at t=1.5s (MATLAB convention), kept for back-compat."
         ),
     )
+    parser.add_argument(
+        "--cv-strategy",
+        choices=("condition-stratified", "speed-profile"),
+        default="condition-stratified",
+        help=(
+            "CV fold-assignment strategy. 'condition-stratified' (default) "
+            "= k-fold over (trial_id, condition) pairs, MATLAB parity. "
+            "'speed-profile' = 2-fold train-on-profile-1 / test-on-profile-2 "
+            "(generalisation across the two reproduced velocity trajectories, "
+            "MATLAB glm_single_cluster_analysis.m:2291-2293)."
+        ),
+    )
     parser.set_defaults(make_plots=True, prefilter=True)
     args = parser.parse_args(argv)
 
@@ -1175,6 +1193,7 @@ def main(argv: list[str] | None = None) -> int:
         apply_prefilter=args.prefilter,
         device=args.device,
         tuning_curve_mode=args.tuning_curve_mode,
+        cv_strategy=args.cv_strategy,
     )
 
     lookup = None
