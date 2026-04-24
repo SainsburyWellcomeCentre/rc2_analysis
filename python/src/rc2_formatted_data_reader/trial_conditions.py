@@ -120,6 +120,24 @@ class StimulusLookup:
             return None
         return self._cloud_names[idx - 1]
 
+    def trial_profile_id(self, trial_id: int) -> int:
+        """Speed-profile identifier (1 or 2) for the given trial.
+
+        The rc2 motion-clouds stimulus presents the same set of clouds
+        twice, once under each of two canonical speed profiles (the
+        two reproduced velocity trajectories Laura refers to). The
+        ``presentation_sequence`` array is assembled such that trial
+        IDs in the first half correspond to profile 1, and the second
+        half to profile 2. Mirrors the MATLAB convention in
+        ``scripts/glm_single_cluster_analysis.m:2255-2293``
+        (``sp_midpoint = floor(n_total_seq / 2);
+        sp_fold(trial_id > sp_midpoint) = 2``).
+
+        ``trial_id`` is 1-based.
+        """
+        mid = len(self._presentation) // 2
+        return 1 if int(trial_id) <= mid else 2
+
     def stimulus_params(self, trial_id: int) -> dict[str, Any]:
         name = self.cloud_name(trial_id)
         if name is None:

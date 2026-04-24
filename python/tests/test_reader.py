@@ -230,3 +230,36 @@ def test_stimulus_lookup_aligns_with_reader_trials(
         for ti in [0, r.n_trials // 2, r.n_trials - 1]:
             tid = r.trial_id(ti)
             assert 1 <= tid <= lookup.n_trials
+
+
+def test_trial_profile_id_splits_mc_sequence_at_midpoint(
+    mc_sequence_path, mc_folders_path,
+):
+    """profile_id is 1 for trials in the first half of presentation_sequence
+    and 2 for the second half.
+
+    Mirrors MATLAB's sp_fold convention in glm_single_cluster_analysis.m:
+        sp_midpoint = floor(n_total_seq / 2);
+        sp_fold(trial_id > sp_midpoint) = 2;
+
+    The split is load-bearing: the speed-profile cross-validation strategy
+    trains on one profile and tests on the other, so if the midpoint moves
+    the train/test split stops matching the experiment's two reproduced
+    velocity trajectories. Pin the semantic here so a future refactor of
+    StimulusLookup cannot silently change it.
+    """
+    lookup = StimulusLookup(mc_sequence_path, mc_folders_path)
+    n = lookup.n_trials
+    mid = n // 2
+    # Boundary cases: the last profile-1 trial and the first profile-2 trial.
+    assert lookup.trial_profile_id(mid) == 1
+    assert lookup.trial_profile_id(mid + 1) == 2
+    # First and last trials regardless of n.
+    assert lookup.trial_profile_id(1) == 1
+    assert lookup.trial_profile_id(n) == 2
+    # All trials collectively: exactly two groups, each at least half the
+    # sequence (floor/ceil depending on parity).
+    ids = [lookup.trial_profile_id(t) for t in range(1, n + 1)]
+    assert set(ids) == {1, 2}
+    assert ids.count(1) == mid
+    assert ids.count(2) == n - mid

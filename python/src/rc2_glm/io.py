@@ -33,6 +33,13 @@ class TrialData:
     orientation: float = float("nan")
     batch_gain: float = float("nan")
     excluded: bool = False
+    # Speed-profile id (1 or 2) — which of the two reproduced velocity
+    # trajectories this trial belongs to. Mirrors MATLAB
+    # ``sp_fold`` (glm_single_cluster_analysis.m:2291-2293). Populated
+    # from StimulusLookup.trial_profile_id when a lookup is provided;
+    # 0 means "unknown" (no lookup available). Consumed by the
+    # speed-profile CV strategy in rc2_glm.cross_validation.
+    profile_id: int = 0
 
 
 @dataclass
@@ -157,12 +164,14 @@ def _load_trial(
 
     sf = orient = gain = float("nan")
     excluded = False
+    profile_id = 0
     if stimulus_lookup is not None:
         params = stimulus_lookup.stimulus_params(trial_id)
         sf = float(params["sf"])
         orient = float(params["orientation"])
         gain = float(params["batch_gain"])
         excluded = bool(params["excluded"])
+        profile_id = int(stimulus_lookup.trial_profile_id(trial_id))
 
     return TrialData(
         trial_idx=trial_idx,
@@ -178,6 +187,7 @@ def _load_trial(
         orientation=orient,
         batch_gain=gain,
         excluded=excluded,
+        profile_id=profile_id,
     )
 
 

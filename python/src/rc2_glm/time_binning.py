@@ -27,7 +27,7 @@ from rc2_glm.config import GLMConfig
 from rc2_glm.io import ClusterData, ProbeData, TrialData
 
 COLUMNS: list[str] = [
-    "probe_id", "cluster_id", "trial_id", "condition",
+    "probe_id", "cluster_id", "trial_id", "profile_id", "condition",
     "speed", "tf", "sf", "orientation", "batch_gain",
     "spike_count", "time_in_trial", "time_since_onset",
 ]
@@ -92,6 +92,7 @@ def _bin_trial_for_cluster(
     out.insert(0, "probe_id", probe.probe_id)
     out["cluster_id"] = cluster.cluster_id
     out["trial_id"] = trial.trial_id
+    out["profile_id"] = trial.profile_id
     return out[COLUMNS]
 
 
