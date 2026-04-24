@@ -1300,14 +1300,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Format for plot output (default: pdf).",
     )
     parser.add_argument(
-        "--plot-clusters", type=int, default=10,
+        "--plot-clusters", type=int, default=None,
         help=(
             "Cap per-cluster plots to the first N retained clusters "
-            "(default: 10). CSV outputs always cover every cluster; this "
-            "only caps the per-cluster overview / tuning / trial-level PDFs "
-            "to avoid 100+ figure runs. Pass 0 to skip per-cluster plots "
-            "entirely (aggregate figures still render). Pass a large number "
-            "(e.g. --plot-clusters 200) to plot every cluster."
+            "(default: no cap, plot every retained cluster). The retained "
+            "set is controlled by the prefilter + --cluster-filter-csv; "
+            "those are the right knobs to limit figure volume. Use "
+            "--plot-clusters 0 to skip per-cluster plots entirely "
+            "(aggregate figures still render)."
         ),
     )
     parser.add_argument(
