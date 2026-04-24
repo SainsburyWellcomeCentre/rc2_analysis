@@ -80,6 +80,12 @@ class ClusterFit:
     # ``p>=n`` can fire for the CV but not the refit.
     cv_status: dict[str, str]        # keys: "Additive", "FullInteraction"
     refit_status: dict[str, str]     # keys: "Null", "Selected", "Additive", "FullInteraction"
+    # Post-hoc speed-profile CV (MATLAB glm_single_cluster_analysis.m:2246-2367).
+    # Populated only when config.profile_cv_diagnostic is True; otherwise
+    # every entry is NaN. Keys: "Null", "Selected", "NoSpeed". "NoSpeed"
+    # is the Selected model re-fit with Speed dropped, for the speed-unique
+    # contribution diagnostic — NaN if Speed wasn't in the Selected set.
+    profile_cv_bps: dict[str, float]
 
 
 @dataclass
@@ -395,6 +401,19 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
     )
 
+    profile_cv_bps = _profile_cv_diagnostic(
+        config=config,
+        selection=selection,
+        trial_ids=trial_ids,
+        profile_ids=profile_ids,
+        standard_fold_ids=fold_ids,
+        B_speed=B_speed, B_tf=B_tf, B_onset=B_onset,
+        sf_vals=sf_vals, or_vals=or_vals,
+        y=y, offset=offset, backend=backend,
+        cluster_id=cluster_id,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+    )
+
     return ClusterFit(
         cluster_id=cluster_id,
         selection=selection,
@@ -409,7 +428,101 @@ def _fit_one_cluster(
         model_predictions=preds,
         cv_status={"Additive": additive_status, "FullInteraction": full_int_status},
         refit_status=refit_status,
+        profile_cv_bps=profile_cv_bps,
     )
+
+
+def _profile_cv_diagnostic(
+    *,
+    config: GLMConfig,
+    selection: SelectionResult,
+    trial_ids: np.ndarray,
+    profile_ids: np.ndarray | None,
+    standard_fold_ids: np.ndarray,
+    B_speed: np.ndarray, B_tf: np.ndarray, B_onset: np.ndarray,
+    sf_vals: np.ndarray, or_vals: np.ndarray,
+    y: np.ndarray, offset: float, backend: str,
+    cluster_id: int,
+    sf_ref_levels: list[float] | None,
+    or_ref_levels: list[float] | None,
+) -> dict[str, float]:
+    """Post-hoc speed-profile CV on Null / Selected / Selected-without-Speed.
+
+    When ``config.profile_cv_diagnostic`` is False (or no profile_ids
+    are available), returns all-NaN so downstream serialisation is
+    uniform. Otherwise mirrors MATLAB glm_single_cluster_analysis.m:2289-2362:
+    - Null = no variables (intercept + onset kernel only).
+    - Selected = the vars the condition-stratified forward selection picked.
+    - NoSpeed = Selected minus Speed (if Speed was selected).
+
+    MATLAB runs each model under BOTH fold schemes so the paired Δ-bps
+    plot in panel 2 (speed unique contribution under standard vs profile
+    CV) has paired numbers. We mirror that: keys with suffix ``_standard``
+    are under the condition-stratified fold (the primary fit's fold_ids),
+    keys without suffix are under the profile-fold scheme. CV is skipped
+    (NaN) when either profile group has < 5 bins or the design is
+    rank-deficient — matches MATLAB's viability gate.
+    """
+    nan_keys = (
+        "Null", "Selected", "NoSpeed",
+        "Null_standard", "Selected_standard", "NoSpeed_standard",
+    )
+    nan_result = {k: float("nan") for k in nan_keys}
+    if not config.profile_cv_diagnostic:
+        return nan_result
+    if profile_ids is None:
+        logger.info(
+            "cluster %d: profile-CV diagnostic skipped — no profile_ids "
+            "(run rc2-glm with --mc-sequence + --mc-folders so "
+            "StimulusLookup populates TrialData.profile_id)",
+            cluster_id,
+        )
+        return nan_result
+
+    # Profile folds (deterministic). Fails loud if inconsistent.
+    try:
+        profile_fold_ids = make_trial_folds(
+            trial_ids,
+            strategy="speed-profile",
+            profile_ids_per_bin=profile_ids,
+        )
+    except ValueError as exc:
+        logger.warning("cluster %d: profile-CV diagnostic skipped — %s",
+                       cluster_id, exc)
+        return nan_result
+
+    # Viability: at least 5 bins in each profile.
+    for pid in (1, 2):
+        if int((profile_ids == pid).sum()) < 5:
+            return nan_result
+
+    out = dict(nan_result)
+
+    def _cv_with_vars(vars_: list[str], fold_ids: np.ndarray) -> float:
+        X, _ = assemble_design_matrix_selected(
+            B_speed, B_tf, B_onset, sf_vals, or_vals, vars_,
+            sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        )
+        if X.shape[1] == 0 or X.shape[1] >= y.size:
+            return float("nan")
+        cv = cross_validate_glm(
+            X, y, offset, fold_ids,
+            lambda_ridge=config.lambda_ridge, backend=backend,
+        )
+        return float(cv.cv_bits_per_spike)
+
+    selected_list = list(selection.selected_vars)
+    no_speed = [v for v in selected_list if "Speed" not in v]
+    has_speed = "Speed" in selected_list
+
+    out["Null"] = _cv_with_vars([], profile_fold_ids)
+    out["Selected"] = _cv_with_vars(selected_list, profile_fold_ids)
+    out["Null_standard"] = _cv_with_vars([], standard_fold_ids)
+    out["Selected_standard"] = _cv_with_vars(selected_list, standard_fold_ids)
+    if has_speed:
+        out["NoSpeed"] = _cv_with_vars(no_speed, profile_fold_ids)
+        out["NoSpeed_standard"] = _cv_with_vars(no_speed, standard_fold_ids)
+    return out
 
 
 def _cv_for_label(
@@ -590,6 +703,16 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_has_tf_x_sf": "TF_x_SF" in selected_set,
         f"{GLM_TYPE}_has_tf_x_or": "TF_x_OR" in selected_set,
         f"{GLM_TYPE}_has_sf_x_or": "SF_x_OR" in selected_set,
+        # Post-hoc speed-profile CV (MATLAB glm_single_cluster_analysis.m:2246-2367).
+        # Both fold schemes so panel 2 of the comparison plot can compute
+        # Selected − NoSpeed under each. NaN when the diagnostic is
+        # disabled; NoSpeed* additionally NaN when Speed wasn't selected.
+        f"{GLM_TYPE}_profile_cv_bps_Null": fit.profile_cv_bps.get("Null", float("nan")),
+        f"{GLM_TYPE}_profile_cv_bps_Selected": fit.profile_cv_bps.get("Selected", float("nan")),
+        f"{GLM_TYPE}_profile_cv_bps_NoSpeed": fit.profile_cv_bps.get("NoSpeed", float("nan")),
+        f"{GLM_TYPE}_profile_cv_bps_Null_standard": fit.profile_cv_bps.get("Null_standard", float("nan")),
+        f"{GLM_TYPE}_profile_cv_bps_Selected_standard": fit.profile_cv_bps.get("Selected_standard", float("nan")),
+        f"{GLM_TYPE}_profile_cv_bps_NoSpeed_standard": fit.profile_cv_bps.get("NoSpeed_standard", float("nan")),
     }
 
 
@@ -962,6 +1085,18 @@ def _write_all_plots(
     ):
         logger.info("wrote %s", path.relative_to(figs_dir.parent))
 
+    # Speed-profile CV comparison: only populated when the pipeline ran
+    # with --profile-cv-diagnostic. The plot function renders an
+    # explanatory stub when columns are all-NaN, so this call is safe
+    # to make unconditionally.
+    if config.profile_cv_diagnostic:
+        for path in plots.save_figure(
+            plots.plot_speed_profile_cv_comparison(comparison_df),
+            figs_dir / "speed_profile_cv_comparison",
+            fmt=plot_format,
+        ):
+            logger.info("wrote %s", path.relative_to(figs_dir.parent))
+
     fits_to_plot = (
         cluster_fits if plot_clusters is None else cluster_fits[:plot_clusters]
     )
@@ -1179,7 +1314,21 @@ def main(argv: list[str] | None = None) -> int:
             "MATLAB glm_single_cluster_analysis.m:2291-2293)."
         ),
     )
-    parser.set_defaults(make_plots=True, prefilter=True)
+    parser.add_argument(
+        "--profile-cv-diagnostic", dest="profile_cv_diagnostic",
+        action="store_true",
+        help=(
+            "Also run a post-hoc 2-fold speed-profile CV on each cluster's "
+            "Null, Selected, and Selected-without-Speed model. Keeps the "
+            "primary condition-stratified forward selection unchanged; "
+            "adds 3 extra profile_cv_bps_* columns to glm_model_comparison.csv "
+            "and renders figs/speed_profile_cv_comparison.pdf. Mirrors "
+            "MATLAB glm_single_cluster_analysis.m:2246-2367."
+        ),
+    )
+    parser.set_defaults(
+        make_plots=True, prefilter=True, profile_cv_diagnostic=False,
+    )
     args = parser.parse_args(argv)
 
     if not args.out_dir:
@@ -1194,6 +1343,7 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         tuning_curve_mode=args.tuning_curve_mode,
         cv_strategy=args.cv_strategy,
+        profile_cv_diagnostic=args.profile_cv_diagnostic,
     )
 
     lookup = None

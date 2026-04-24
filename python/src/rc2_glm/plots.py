@@ -399,6 +399,214 @@ def plot_forward_selection_summary(
 # --------------------------------------------------------------------------- #
 
 
+def plot_speed_profile_cv_comparison(comparison_df: pd.DataFrame) -> Figure:
+    """Standard vs speed-profile CV, per-cluster paired comparison.
+
+    Reproduces MATLAB ``speed_profile_cross_validation.png``
+    (``glm_single_cluster_analysis.m:2467-2627``). Three panels:
+
+    1. Δ-bps = CV(Selected) − CV(Null), standard vs profile CV, per cluster.
+    2. Speed unique contribution = CV(Selected) − CV(Selected-without-Speed),
+       standard vs profile CV, per cluster, speed-tuned only.
+    3. Stacked bar: median per-cluster ratio retained (profile / standard)
+       vs profile-specific (1 − retained), for total Δ-bps and for speed
+       contribution.
+
+    The figure is only meaningful when the pipeline ran with
+    ``--profile-cv-diagnostic`` — otherwise the profile_cv_bps_* columns
+    are NaN and the function returns a short explanatory stub.
+    """
+    from scipy.stats import wilcoxon
+
+    # Discover the two sets of cv-bps columns regardless of the ``time_``
+    # prefix convention used by the caller's CSV load.
+    def _col(*candidates: str) -> str | None:
+        for c in candidates:
+            if c in comparison_df.columns:
+                return c
+        return None
+
+    col_null = _col("time_Null_cv_bps", "Null_cv_bps")
+    col_sel = _col("time_Selected_cv_bps", "Selected_cv_bps")
+    col_pnull = _col("time_profile_cv_bps_Null", "profile_cv_bps_Null")
+    col_psel = _col("time_profile_cv_bps_Selected", "profile_cv_bps_Selected")
+    col_pnospd = _col("time_profile_cv_bps_NoSpeed", "profile_cv_bps_NoSpeed")
+
+    fig, axes = plt.subplots(
+        1, 3, figsize=(14.0, 5.5), constrained_layout=True,
+    )
+
+    missing_required = any(c is None for c in
+                           (col_null, col_sel, col_pnull, col_psel))
+    if missing_required or comparison_df[col_pnull].isna().all():
+        fig.suptitle(
+            "Speed-profile CV comparison — no data "
+            "(run with --profile-cv-diagnostic to populate)",
+            fontsize=11,
+        )
+        for ax in axes:
+            ax.set_axis_off()
+        return fig
+
+    # ---- Per-cluster paired deltas ----
+    d_std = (comparison_df[col_sel] - comparison_df[col_null]).to_numpy(dtype=np.float64)
+    d_spr = (comparison_df[col_psel] - comparison_df[col_pnull]).to_numpy(dtype=np.float64)
+    has_pair = np.isfinite(d_std) & np.isfinite(d_spr)
+    d_std_p = d_std[has_pair]
+    d_spr_p = d_spr[has_pair]
+    n_pair = int(has_pair.sum())
+    ylim = (-0.5, 0.5)
+    n_clipped = int(
+        ((d_std_p < ylim[0]) | (d_std_p > ylim[1])
+         | (d_spr_p < ylim[0]) | (d_spr_p > ylim[1])).sum()
+    )
+
+    col_std = (0.55, 0.55, 0.55)
+    col_pro = (0.25, 0.45, 0.75)
+
+    ax1 = axes[0]
+    for i in range(n_pair):
+        ax1.plot([1, 2], [d_std_p[i], d_spr_p[i]],
+                 color=(0.75, 0.75, 0.75, 0.35), linewidth=0.7)
+    ax1.scatter(np.ones(n_pair), d_std_p, s=28, color=col_std, alpha=0.65)
+    ax1.scatter(np.full(n_pair, 2), d_spr_p, s=28, color=col_pro, alpha=0.65)
+    med_std = float(np.median(d_std_p)) if n_pair else float("nan")
+    med_spr = float(np.median(d_spr_p)) if n_pair else float("nan")
+    ax1.plot([1, 2], [med_std, med_spr], "k-", linewidth=2.5)
+    ax1.plot(1, med_std, "ko", markerfacecolor=col_std, markersize=9)
+    ax1.plot(2, med_spr, "ko", markerfacecolor=col_pro, markersize=9)
+    ax1.axhline(0.0, color=(0.4, 0.4, 0.4), linestyle="--", linewidth=0.8)
+    ax1.set_xlim(0.5, 2.5)
+    ax1.set_ylim(*ylim)
+    ax1.set_xticks([1, 2])
+    ax1.set_xticklabels(["Standard CV", "Speed-Profile CV"])
+    ax1.set_ylabel("Δ bps = CV(Selected) − CV(Null)\nbits / spike", fontsize=9)
+    ax1.set_title(
+        f"Total model information gain  (n={n_pair}, {n_clipped} clipped)",
+        fontsize=10,
+    )
+    for sp in ("top", "right"):
+        ax1.spines[sp].set_visible(False)
+    # Wilcoxon one-tailed: H1 = standard CV > profile CV.
+    if n_pair >= 1:
+        try:
+            p_t = float(wilcoxon(d_std_p, d_spr_p, alternative="greater").pvalue)
+        except ValueError:
+            p_t = float("nan")
+    else:
+        p_t = float("nan")
+    ax1.text(1.5, ylim[1] * 0.88,
+             f"Wilcoxon: p {'< 0.001' if p_t < 0.001 else f'= {p_t:.3f}'}",
+             ha="center", fontsize=9, color=(0.2, 0.2, 0.2))
+
+    # ---- Panel 2: speed unique contribution ----
+    # MATLAB computes this under BOTH fold schemes: the standard-CV
+    # Selected vs Selected-without-Speed numbers come from
+    # profile_cv_bps_*_standard columns (populated by
+    # _profile_cv_diagnostic when --profile-cv-diagnostic is set).
+    col_psel_std = _col("time_profile_cv_bps_Selected_standard",
+                        "profile_cv_bps_Selected_standard")
+    col_pnospd_std = _col("time_profile_cv_bps_NoSpeed_standard",
+                          "profile_cv_bps_NoSpeed_standard")
+    ax2 = axes[1]
+    if col_pnospd is not None and col_psel_std is not None and col_pnospd_std is not None:
+        s_std = (comparison_df[col_psel_std] - comparison_df[col_pnospd_std]).to_numpy(
+            dtype=np.float64,
+        )
+        s_spr = (comparison_df[col_psel] - comparison_df[col_pnospd]).to_numpy(dtype=np.float64)
+        pair_s = np.isfinite(s_std) & np.isfinite(s_spr)
+        s_std_p = s_std[pair_s]
+        s_spr_p = s_spr[pair_s]
+        n_pair_s = int(pair_s.sum())
+    else:
+        n_pair_s = 0
+    if n_pair_s > 0:
+        col_pro_s = (0.15, 0.58, 0.15)
+        for i in range(n_pair_s):
+            ax2.plot([1, 2], [s_std_p[i], s_spr_p[i]],
+                     color=(0.75, 0.75, 0.75, 0.35), linewidth=0.7)
+        ax2.scatter(np.ones(n_pair_s), s_std_p, s=28, color=col_std, alpha=0.65)
+        ax2.scatter(np.full(n_pair_s, 2), s_spr_p, s=28, color=col_pro_s, alpha=0.65)
+        med_s_std = float(np.median(s_std_p))
+        med_s_spr = float(np.median(s_spr_p))
+        ax2.plot([1, 2], [med_s_std, med_s_spr], "k-", linewidth=2.5)
+        ax2.plot(1, med_s_std, "ko", markerfacecolor=col_std, markersize=9)
+        ax2.plot(2, med_s_spr, "ko", markerfacecolor=col_pro_s, markersize=9)
+        ax2.axhline(0.0, color=(0.4, 0.4, 0.4), linestyle="--", linewidth=0.8)
+        ax2.set_xlim(0.5, 2.5)
+        ax2.set_ylim(*ylim)
+        ax2.set_xticks([1, 2])
+        ax2.set_xticklabels(["Standard CV", "Speed-Profile CV"])
+        ax2.set_ylabel("Δ bps = CV(Sel) − CV(Sel − Speed)\nbits / spike", fontsize=9)
+        ax2.set_title(
+            f"Speed unique contribution  (n={n_pair_s} speed-tuned)",
+            fontsize=10,
+        )
+        for sp in ("top", "right"):
+            ax2.spines[sp].set_visible(False)
+        try:
+            p_s = float(wilcoxon(s_std_p, s_spr_p, alternative="greater").pvalue)
+        except ValueError:
+            p_s = float("nan")
+        ax2.text(1.5, ylim[1] * 0.88,
+                 f"Wilcoxon: p {'< 0.001' if p_s < 0.001 else f'= {p_s:.3f}'}",
+                 ha="center", fontsize=9, color=(0.2, 0.2, 0.2))
+    else:
+        ax2.text(0.5, 0.5, "no speed-tuned clusters\nwith paired profile/standard Δ",
+                 ha="center", va="center", transform=ax2.transAxes,
+                 fontsize=9, color="#888")
+        ax2.set_axis_off()
+
+    # ---- Panel 3: retained vs profile-specific stacked bar ----
+    ax3 = axes[2]
+    pos_t = d_std_p > 0
+    ret_t = (
+        min(100 * float(np.median(d_spr_p[pos_t] / d_std_p[pos_t])), 100)
+        if pos_t.any() else float("nan")
+    )
+    if n_pair_s > 0:
+        pos_s = s_std_p > 0
+        ret_s = (
+            min(100 * float(np.median(s_spr_p[pos_s] / s_std_p[pos_s])), 100)
+            if pos_s.any() else float("nan")
+        )
+    else:
+        ret_s = float("nan")
+    bar_x = np.array([1.0, 2.0])
+    retained = np.array([ret_t, ret_s])
+    not_ret = 100 - retained
+    retained_safe = np.where(np.isfinite(retained), retained, 0)
+    not_ret_safe = np.where(np.isfinite(not_ret), not_ret, 0)
+    ax3.bar(bar_x, retained_safe, width=0.55, color=[col_pro, (0.15, 0.58, 0.15)],
+            edgecolor="none", label="Generalises")
+    ax3.bar(bar_x, not_ret_safe, width=0.55, bottom=retained_safe,
+            color=(0.88, 0.88, 0.88), edgecolor="none", label="Profile-specific")
+    for bi in range(2):
+        if np.isfinite(retained[bi]):
+            ax3.text(bar_x[bi], retained[bi] / 2, f"{retained[bi]:.0f}%",
+                     ha="center", va="center", fontsize=11, fontweight="bold",
+                     color="white")
+            ax3.text(bar_x[bi], retained[bi] + not_ret[bi] / 2,
+                     f"{not_ret[bi]:.0f}%",
+                     ha="center", va="center", fontsize=11, fontweight="bold",
+                     color=(0.4, 0.4, 0.4))
+    ax3.set_xticks(bar_x)
+    ax3.set_xticklabels(["Total model", "Speed"])
+    ax3.set_ylim(0, 100)
+    ax3.set_ylabel("Median per-cluster ratio: profile / standard (% retained)",
+                   fontsize=9)
+    ax3.set_title("Generalisation across speed profiles", fontsize=10)
+    ax3.legend(loc="upper right", fontsize=8, frameon=False)
+    for sp in ("top", "right"):
+        ax3.spines[sp].set_visible(False)
+
+    fig.suptitle(
+        "Speed-Profile Cross-Validation: generalisation across speed profiles",
+        fontsize=11, fontweight="bold",
+    )
+    return fig
+
+
 def plot_cv_bps_deltas(comparison_df: pd.DataFrame) -> Figure:
     """Per-cluster Δ CV-bps distributions across model comparisons.
 

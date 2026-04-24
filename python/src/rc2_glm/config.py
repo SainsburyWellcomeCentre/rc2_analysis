@@ -58,6 +58,14 @@ class GLMConfig:
     # Mirrors MATLAB glm_single_cluster_analysis.m:2291-2293 and lets
     # us quantify how well the GLM generalises across speed profiles.
     cv_strategy: str = "condition-stratified"
+    # When True, run a post-hoc speed-profile CV diagnostic on top of the
+    # normal forward selection (which keeps condition-stratified folds):
+    # for each cluster re-compute CV-bps on Null, Selected, and
+    # Selected-without-Speed under profile folds, emit comparison CSV
+    # columns + the MATLAB-parity PDF figure. Does NOT change the
+    # primary fit — only adds the extra diagnostic pass. Mirrors MATLAB
+    # glm_single_cluster_analysis.m:2246-2367.
+    profile_cv_diagnostic: bool = False
 
     # --- Forward selection ---
     main_effects: tuple[str, ...] = ("Speed", "TF", "SF", "OR")
