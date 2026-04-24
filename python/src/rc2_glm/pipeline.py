@@ -1326,6 +1326,26 @@ def main(argv: list[str] | None = None) -> int:
             "MATLAB glm_single_cluster_analysis.m:2246-2367."
         ),
     )
+    parser.add_argument(
+        "--bin-width", type=float, default=None,
+        help=(
+            "Time-bin width in seconds (overrides config.time_bin_width, "
+            "default 0.1 = 100 ms). Exploration knob for the Phase-B bin-"
+            "width sweep. Absolute cv_bps values scale with log(bin_width); "
+            "Spearman / classification / tuning-shape comparisons are "
+            "invariant. 0.02 matches the MATLAB reference."
+        ),
+    )
+    parser.add_argument(
+        "--cv-seed", type=int, default=None,
+        help=(
+            "Seed for the condition-stratified fold assignment (overrides "
+            "config.cv_seed, default 0). Exploration knob for the Phase-C "
+            "pseudo-random-stability sweep: re-running with different seeds "
+            "quantifies how much the fits depend on a specific trial-to-fold "
+            "permutation vs. being stable under re-shuffling."
+        ),
+    )
     parser.set_defaults(
         make_plots=True, prefilter=True, profile_cv_diagnostic=False,
     )
@@ -1337,14 +1357,21 @@ def main(argv: list[str] | None = None) -> int:
             "or set RC2_GLM_OUTPUT_DIR in python/.env."
         )
 
-    config = replace(
-        GLMConfig(),
-        apply_prefilter=args.prefilter,
-        device=args.device,
-        tuning_curve_mode=args.tuning_curve_mode,
-        cv_strategy=args.cv_strategy,
-        profile_cv_diagnostic=args.profile_cv_diagnostic,
-    )
+    # Build config via replace() so None overrides fall through to the
+    # GLMConfig defaults unchanged. Both --bin-width and --cv-seed are
+    # exploration knobs; passing them None is a no-op.
+    config_overrides: dict[str, object] = {
+        "apply_prefilter": args.prefilter,
+        "device": args.device,
+        "tuning_curve_mode": args.tuning_curve_mode,
+        "cv_strategy": args.cv_strategy,
+        "profile_cv_diagnostic": args.profile_cv_diagnostic,
+    }
+    if args.bin_width is not None:
+        config_overrides["time_bin_width"] = float(args.bin_width)
+    if args.cv_seed is not None:
+        config_overrides["cv_seed"] = int(args.cv_seed)
+    config = replace(GLMConfig(), **config_overrides)
 
     lookup = None
     if args.mc_sequence and args.mc_folders:
