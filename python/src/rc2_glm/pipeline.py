@@ -1187,8 +1187,11 @@ def main(argv: list[str] | None = None) -> int:
     # a per-probe subdir of out_dir, then concatenate into top-level CSVs
     # so downstream (rc2-glm-compare, the notebook) sees one consolidated
     # run. Laura 2026-04-23: "all probes should be always the default."
+    # Empty string is also treated as "no mat argument" so users can
+    # override out_dir positionally (``rc2-glm "" /path/to/out``).
+    no_mat = args.mat is None or args.mat == ""
     multi_probe = (
-        args.mat is None
+        no_mat
         and not args.single_probe
         and env_dir
         and Path(env_dir).expanduser().is_dir()
