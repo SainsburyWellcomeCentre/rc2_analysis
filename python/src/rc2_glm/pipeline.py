@@ -108,6 +108,7 @@ def run_pipeline(
     plot_format: str = "pdf",
     plot_clusters: int | None = None,
     n_jobs: int = -1,
+    cluster_filter: set[int] | None = None,
 ) -> PipelineResult:
     """Load a probe .mat, fit GLMs cluster-by-cluster, write CSVs + plots.
 
@@ -137,6 +138,7 @@ def run_pipeline(
             make_plots=make_plots,
             plot_format=plot_format,
             plot_clusters=plot_clusters,
+            cluster_filter=cluster_filter,
             n_jobs=n_jobs,
         )
     finally:
@@ -156,6 +158,7 @@ def _run_pipeline_inner(
     plot_format: str,
     plot_clusters: int | None,
     n_jobs: int,
+    cluster_filter: set[int] | None = None,
 ) -> PipelineResult:
     _banner("Loading data")
     logger.info("mat file: %s", mat_path)
@@ -173,6 +176,21 @@ def _run_pipeline_inner(
         stimulus_lookup=stimulus_lookup,
         visp_only=visp_only,
     )
+    if cluster_filter is not None:
+        # Upstream cluster allow-list. Restrict the probe's cluster set
+        # to ids that appear in ``cluster_filter`` (typically loaded from
+        # MATLAB's prefilter_decision_tree.csv so Python fits the same
+        # ~100 clusters MATLAB does instead of all VISp). Clusters absent
+        # from the filter are dropped here — the prefilter + GLM loop
+        # never see them.
+        before = len(probe.clusters)
+        kept = [c for c in probe.clusters if c.cluster_id in cluster_filter]
+        probe.clusters = kept
+        logger.info(
+            "cluster_filter applied: %d → %d clusters "
+            "(dropped %d absent from the filter list)",
+            before, len(kept), before - len(kept),
+        )
     logger.info("probe_id=%s | n_trials=%d | n_clusters=%d",
                 probe.probe_id, len(probe.trials), len(probe.clusters))
 
@@ -1282,8 +1300,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Format for plot output (default: pdf).",
     )
     parser.add_argument(
-        "--plot-clusters", type=int, default=None,
-        help="Cap per-cluster plots to the first N retained clusters (debug).",
+        "--plot-clusters", type=int, default=10,
+        help=(
+            "Cap per-cluster plots to the first N retained clusters "
+            "(default: 10). CSV outputs always cover every cluster; this "
+            "only caps the per-cluster overview / tuning / trial-level PDFs "
+            "to avoid 100+ figure runs. Pass 0 to skip per-cluster plots "
+            "entirely (aggregate figures still render). Pass a large number "
+            "(e.g. --plot-clusters 200) to plot every cluster."
+        ),
     )
     parser.add_argument(
         "--n-jobs", type=int, default=-1,
@@ -1346,6 +1371,18 @@ def main(argv: list[str] | None = None) -> int:
             "permutation vs. being stable under re-shuffling."
         ),
     )
+    parser.add_argument(
+        "--cluster-filter-csv", type=str, default=None,
+        help=(
+            "Restrict the pipeline to the (probe_id, cluster_id) pairs in "
+            "this CSV (must have those two columns). Typical use: point at "
+            "MATLAB's upstream-filtered prefilter_decision_tree.csv so "
+            "Python processes the same ~100 clusters MATLAB did instead of "
+            "all VISp. Clusters absent from the CSV are silently skipped "
+            "at load time; prefilter + GLM never see them. See "
+            "results/motion-clouds/findings-so-far.md for context."
+        ),
+    )
     parser.set_defaults(
         make_plots=True, prefilter=True, profile_cv_diagnostic=False,
     )
@@ -1378,6 +1415,26 @@ def main(argv: list[str] | None = None) -> int:
         from rc2_formatted_data_reader import StimulusLookup
         lookup = StimulusLookup(args.mc_sequence, args.mc_folders)
 
+    # Parse the cluster-filter CSV once; look up per-probe cluster sets
+    # inside the multi-probe / single-probe paths below. CSV must have
+    # ``probe_id`` and ``cluster_id`` columns; other columns are ignored.
+    cluster_filter_by_probe: dict[str, set[int]] | None = None
+    if args.cluster_filter_csv:
+        cf_df = pd.read_csv(args.cluster_filter_csv)
+        if "cluster_id" not in cf_df.columns or "probe_id" not in cf_df.columns:
+            raise SystemExit(
+                f"rc2-glm: --cluster-filter-csv {args.cluster_filter_csv!r} "
+                "must have 'probe_id' and 'cluster_id' columns"
+            )
+        cluster_filter_by_probe = {
+            str(pid): {int(c) for c in grp["cluster_id"].dropna()}
+            for pid, grp in cf_df.groupby("probe_id")
+        }
+        print(f"rc2-glm: cluster_filter active — "
+              f"{sum(len(v) for v in cluster_filter_by_probe.values())} clusters "
+              f"across {len(cluster_filter_by_probe)} probes from "
+              f"{args.cluster_filter_csv}")
+
     # Multi-probe default: with no positional mat argument and
     # RC2_FORMATTED_DATA_DIR set, run every *.mat in that directory into
     # a per-probe subdir of out_dir, then concatenate into top-level CSVs
@@ -1404,6 +1461,10 @@ def main(argv: list[str] | None = None) -> int:
             probe_dir = runs_root / mat_path.stem
             probe_dir.mkdir(exist_ok=True)
             print(f"rc2-glm: [{i}/{len(mats)}] running {mat_path.name} → {probe_dir}")
+            per_probe_filter = (
+                cluster_filter_by_probe.get(mat_path.stem)
+                if cluster_filter_by_probe is not None else None
+            )
             result = run_pipeline(
                 mat_path=mat_path,
                 config=config,
@@ -1415,6 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
                 plot_format=args.plot_format,
                 plot_clusters=args.plot_clusters,
                 n_jobs=args.n_jobs,
+                cluster_filter=per_probe_filter,
             )
             total_rows += len(result.model_comparison)
         _aggregate_probe_runs(runs_root, out_root)
@@ -1423,6 +1485,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     mat_path = _resolve_mat_path(args.mat, env_path, env_dir)
+    per_probe_filter = (
+        cluster_filter_by_probe.get(mat_path.stem)
+        if cluster_filter_by_probe is not None else None
+    )
     result = run_pipeline(
         mat_path=mat_path,
         config=config,
@@ -1434,6 +1500,7 @@ def main(argv: list[str] | None = None) -> int:
         plot_format=args.plot_format,
         plot_clusters=args.plot_clusters,
         n_jobs=args.n_jobs,
+        cluster_filter=per_probe_filter,
     )
     # run_pipeline has already torn down its handlers; a bare print is fine.
     print(f"rc2-glm: wrote {len(result.model_comparison)} cluster rows to {args.out_dir}")
