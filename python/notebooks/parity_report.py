@@ -737,3 +737,10 @@ if not cmp_ml.empty:
 # comparison, add `--tuning-curve-mode steady-state` to the first command.
 # To run on a single probe, pass its `.mat` filename as the first positional
 # argument: ``rc2-glm CAA-1123244_rec1.mat``.
+#
+# **Related exploration notebook.** ``python/notebooks/cv_strategy_exploration.py``
+# answers the follow-up question "how sensitive is the Python pipeline to
+# its own design choices?" — speed-profile CV (MATLAB-parity 2-fold
+# generalisation), bin-width sweep (100 / 50 / 20 ms), and seed stability.
+# Runs on a single probe subset; complements the multi-probe trust-baseline
+# established in this document.
