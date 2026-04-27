@@ -287,6 +287,20 @@ def _run_pipeline_inner(
                 probe.probe_id, cluster_fits, config,
                 output_dir / "diagnostics",
             )
+            from rc2_glm.precomputed_bins import load_precomputed_bin_edges
+            try:
+                pre_bins = load_precomputed_bin_edges(probe.mat_path)
+            except Exception as e:  # noqa: BLE001 — best-effort cache, fallback OK
+                logger.info(
+                    "precomputed bin edges unavailable (%s); per-trial "
+                    "uncertainty CSV will use fallback grids", e,
+                )
+                pre_bins = None
+            _emit_tuning_curves_uncertainty(
+                probe.probe_id, cluster_fits, config,
+                output_dir / "diagnostics",
+                precomputed_bins=pre_bins,
+            )
         if not prefilter_df.empty:
             prefilter_df.to_csv(output_dir / "prefilter_decision_tree.csv", index=False)
             logger.info("wrote prefilter_decision_tree.csv (%d rows)", len(prefilter_df))
@@ -891,6 +905,177 @@ def _emit_tuning_curves(
     logger.info("wrote %s (%d rows)", path.name, len(df))
 
 
+# Variable → list of (condition, sweep_kwargs) pairs. Mirrors the
+# layout in ``plots._predict_model_row_trial_averaged`` so the CSV is a
+# faithful textual mirror of the plotted curves.
+_PER_TRIAL_PANELS: dict[str, list[tuple[str, str, dict]]] = {
+    "Speed": [
+        ("T_Vstatic", "Speed", {"fix_tf": 0.0}),
+        ("VT", "Speed", {}),
+    ],
+    "TF": [
+        ("V", "TF", {"fix_speed": 0.0}),
+        ("VT", "TF", {}),
+    ],
+    "SF": [
+        ("V", "SF", {"fix_speed": 0.0, "fix_tf": None}),
+        ("VT", "SF", {"fix_speed": None, "fix_tf": None}),
+    ],
+    "OR": [
+        ("V", "OR", {"fix_speed": 0.0, "fix_tf": None}),
+        ("VT", "OR", {"fix_speed": None, "fix_tf": None}),
+    ],
+}
+
+
+def _emit_tuning_curves_uncertainty(
+    probe_id: str,
+    cluster_fits: list[tuple[ClusterFit, pd.DataFrame]],
+    config: GLMConfig,
+    out_dir: Path,
+    *,
+    precomputed_bins: "PrecomputedBinEdges | None" = None,
+) -> None:
+    """Write ``<out_dir>/tuning_curves_uncertainty.csv``.
+
+    One row per (probe, cluster, model, variable, condition, grid_x).
+    Columns: gain_mean (== plot line value), gain_q05/q25/q75/q95,
+    gain_std, n_trials_in_bin. Sibling to ``tuning_curves.csv`` (which
+    carries the theoretical, condition-agnostic marginal curve used for
+    parity); this file is the per-condition trial-averaged curve with
+    spread that the plot bands are read off.
+
+    Only emitted when ``config.tuning_curve_mode == "trial-averaged"``;
+    steady-state mode evaluates one prediction per condition with no
+    per-trial axis to summarise.
+    """
+    if config.tuning_curve_mode != "trial-averaged":
+        return
+    # Lazy import to avoid a circular at module load.
+    from rc2_glm.plots import (
+        _marginal_curve_with_spread,
+        _marginal_levels_with_spread,
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sf_ref = np.asarray(config.sf_levels, dtype=np.float64)
+    or_ref = np.asarray(config.or_levels, dtype=np.float64)
+    sf_plot = sf_ref.copy()
+    or_plot = or_ref.copy()
+
+    fallback_spd = np.linspace(*config.speed_range, 11)
+    fallback_tf = np.linspace(*config.tf_range, 11)
+
+    def _spd_centres(cond: str) -> np.ndarray:
+        edges = (
+            precomputed_bins.speed_edges(cond)
+            if precomputed_bins is not None else None
+        )
+        if edges is None:
+            edges = fallback_spd
+        return 0.5 * (edges[:-1] + edges[1:])
+
+    def _tf_centres(cond: str) -> np.ndarray:
+        edges = (
+            precomputed_bins.tf_edges(cond)
+            if precomputed_bins is not None else None
+        )
+        if edges is None:
+            edges = fallback_tf
+        return 0.5 * (edges[:-1] + edges[1:])
+
+    rows: list[dict] = []
+    for fit, df in cluster_fits:
+        motion = df[df["condition"] != "stationary"]
+        if motion.empty:
+            continue
+        cond_bins: dict[str, pd.DataFrame] = {}
+        for cond in ("T_Vstatic", "V", "VT"):
+            sub = motion[motion["condition"] == cond]
+            cond_bins[cond] = sub if not sub.empty else None
+
+        for model_label, beta in fit.model_betas.items():
+            train_names = fit.model_col_names.get(model_label)
+            if beta is None or train_names is None:
+                continue
+            sel_vars = _vars_from_names_for_model(model_label, train_names)
+            for variable, panels in _PER_TRIAL_PANELS.items():
+                for cond, _kind, kwargs in panels:
+                    cd = cond_bins.get(cond)
+                    if cd is None:
+                        continue
+                    if variable in ("Speed", "TF"):
+                        grid = (
+                            _spd_centres(cond) if variable == "Speed"
+                            else _tf_centres(cond)
+                        )
+                        summary = _marginal_curve_with_spread(
+                            beta, train_names, sel_vars, config, sf_ref, or_ref,
+                            cd, sweep_var=variable, grid=grid, **kwargs,
+                        )
+                    else:
+                        levels = sf_plot if variable == "SF" else or_plot
+                        # SF/OR panels need fix_or / fix_sf for the held-
+                        # constant categorical. Use the same convention as
+                        # _predict_model_row_trial_averaged.
+                        held = (
+                            {"fix_or": float(or_plot[0])}
+                            if variable == "SF"
+                            else {"fix_sf": float(sf_plot[0])}
+                        )
+                        summary = _marginal_levels_with_spread(
+                            beta, train_names, sel_vars, config, sf_ref, or_ref,
+                            cd, level_kind=variable, levels=levels,
+                            **kwargs, **held,
+                        )
+                        grid = np.arange(levels.size, dtype=np.float64)
+                    n_grid = grid.size
+                    for j in range(n_grid):
+                        rows.append({
+                            "probe_id": probe_id,
+                            "cluster_id": fit.cluster_id,
+                            "glm_type": GLM_TYPE,
+                            "model": model_label,
+                            "variable": variable,
+                            "condition": cond,
+                            "grid_x": float(grid[j]),
+                            "gain_mean": float(summary["mean"][j]),
+                            "gain_q05": float(summary["q05"][j]),
+                            "gain_q25": float(summary["q25"][j]),
+                            "gain_q75": float(summary["q75"][j]),
+                            "gain_q95": float(summary["q95"][j]),
+                            "gain_std": float(summary["std"][j]),
+                            "n_trials_in_bin": int(summary["n_trials"][j]),
+                        })
+    if not rows:
+        logger.info("no per-trial uncertainty rows to write")
+        return
+    out_df = pd.DataFrame(rows)
+    path = out_dir / "tuning_curves_uncertainty.csv"
+    out_df.to_csv(path, index=False)
+    sparse = int((out_df["n_trials_in_bin"] < 3).sum())
+    logger.info(
+        "wrote %s (%d rows; %d grid-points have <3 trials and will plot no band)",
+        path.name, len(out_df), sparse,
+    )
+
+
+def _vars_from_names_for_model(
+    model_label: str, train_names: list[str]
+) -> list[str]:
+    """Variables present on the design columns of ``train_names``.
+
+    Mirrors ``plots._vars_from_names`` and ``plots`` model_vars dict but
+    avoids importing those private helpers here.
+    """
+    vars_present: list[str] = []
+    for prefix in ("Speed", "TF", "SF", "OR",
+                   "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
+                   "TF_x_SF", "TF_x_OR", "SF_x_OR"):
+        if any(n.startswith(prefix + "_") or n == prefix for n in train_names):
+            vars_present.append(prefix)
+    return vars_present
+
+
 # --------------------------------------------------------------------------- #
 # Logging
 # --------------------------------------------------------------------------- #
@@ -1328,6 +1513,22 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--tuning-curve-uncertainty",
+        choices=("none", "iqr", "wide-quantile", "std"),
+        default="iqr",
+        help=(
+            "Per-trial uncertainty band on the model rows of the "
+            "tuning-curve panels (cluster_<id>_tuning.pdf). At each "
+            "grid point, predict per-bin then collapse to per-trial "
+            "means; the band shows their spread. 'iqr' (default) = "
+            "q25/q75; 'wide-quantile' = q05/q95; 'std' = mean ± std; "
+            "'none' = line only (pre-prompt-12 behaviour). Only applies "
+            "when --tuning-curve-mode is 'trial-averaged'; in steady-"
+            "state mode there is no per-trial spread to compute. "
+            "Sparse-bin guard: bins with <3 trial means are skipped."
+        ),
+    )
+    parser.add_argument(
         "--cv-strategy",
         choices=("condition-stratified", "speed-profile"),
         default="condition-stratified",
@@ -1401,6 +1602,7 @@ def main(argv: list[str] | None = None) -> int:
         "apply_prefilter": args.prefilter,
         "device": args.device,
         "tuning_curve_mode": args.tuning_curve_mode,
+        "tuning_curve_uncertainty": args.tuning_curve_uncertainty,
         "cv_strategy": args.cv_strategy,
         "profile_cv_diagnostic": args.profile_cv_diagnostic,
     }

@@ -99,6 +99,24 @@ class GLMConfig:
     # mean (the pre-2026-04-23 behaviour, kept for back-compat).
     tuning_curve_mode: str = "trial-averaged"
 
+    # Per-trial uncertainty band drawn around each model-row line on the
+    # cluster_<id>_tuning.pdf panels. Computed only when tuning_curve_mode
+    # is "trial-averaged" (steady-state evaluates one point per condition;
+    # there is no per-trial spread to summarise). One of:
+    #   "none"           — no band; reproduces the pre-prompt-12 line-only output.
+    #   "iqr" (default)  — fill between q25 and q75 of per-trial predicted rates.
+    #   "wide-quantile"  — fill between q05 and q95.
+    #   "std"            — fill mean ± std of per-trial predicted rates.
+    # Sparse-bin guard: grid points with < MIN_TRIALS_FOR_BAND per-trial
+    # contributions are skipped (no fake bands at single-trial bins).
+    tuning_curve_uncertainty: str = "iqr"
+
+
+# Minimum number of trials at a tuning-curve grid point for the
+# uncertainty band to be drawn there. Below this, the band is skipped at
+# that grid point and a one-line warning is logged.
+MIN_TRIALS_FOR_BAND: int = 3
+
 
 INTERACTION_PARENTS: dict[str, tuple[str, str]] = {
     "Speed_x_TF": ("Speed", "TF"),

@@ -24,7 +24,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
-from rc2_glm.config import GLMConfig
+from rc2_glm.config import GLMConfig, MIN_TRIALS_FOR_BAND
 from rc2_glm.design_matrix import assemble_design_matrix_selected
 from rc2_glm.precomputed_bins import PrecomputedBinEdges
 
@@ -2172,6 +2172,41 @@ def _predict_model_row(
     ax_or.set_xticklabels([_format_radians(v) for v in or_plot], fontsize=7)
 
 
+def _per_trial_summary(
+    mu: np.ndarray, trial_ids: np.ndarray,
+) -> dict[str, float | int]:
+    """Collapse per-bin predicted rates ``mu`` to per-trial means and summarise.
+
+    Used by ``_marginal_curve_with_spread`` and ``_marginal_levels_with_spread``
+    to build the per-grid-point uncertainty band. The line value (bin-mean)
+    stays the existing ``nanmean(mu)``; the band is computed on per-trial
+    means so it reflects between-trial heterogeneity in non-target
+    covariates rather than within-trial bin noise.
+    """
+    if mu is None:
+        nan = float("nan")
+        return {"q05": nan, "q25": nan, "q75": nan, "q95": nan,
+                "std": nan, "n_trials": 0}
+    # Per-trial mean; drop NaN trials (a trial whose bins all NaN'd in the
+    # rate eval contributes nothing).
+    series = pd.Series(np.asarray(mu, dtype=np.float64))
+    per_trial = series.groupby(np.asarray(trial_ids)).mean().to_numpy()
+    per_trial = per_trial[np.isfinite(per_trial)]
+    n = int(per_trial.size)
+    if n == 0:
+        nan = float("nan")
+        return {"q05": nan, "q25": nan, "q75": nan, "q95": nan,
+                "std": nan, "n_trials": 0}
+    return {
+        "q05": float(np.percentile(per_trial, 5)),
+        "q25": float(np.percentile(per_trial, 25)),
+        "q75": float(np.percentile(per_trial, 75)),
+        "q95": float(np.percentile(per_trial, 95)),
+        "std": float(np.std(per_trial)),
+        "n_trials": n,
+    }
+
+
 def _marginal_curve(
     beta: np.ndarray,
     train_names: list[str],
@@ -2234,6 +2269,87 @@ def _marginal_curve(
     return rates
 
 
+def _marginal_curve_with_spread(
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    cond_df: pd.DataFrame,
+    *,
+    sweep_var: str,
+    grid: np.ndarray,
+    fix_speed: float | None = None,
+    fix_tf: float | None = None,
+    fix_sf: float | None = None,
+    fix_or: float | None = None,
+) -> dict[str, np.ndarray]:
+    """As ``_marginal_curve`` but also returns per-trial spread per grid point.
+
+    Returns a dict with keys ``mean`` (matches ``_marginal_curve``'s return),
+    ``q05`` / ``q25`` / ``q75`` / ``q95`` / ``std`` (per-trial), and
+    ``n_trials``. The line on the plot stays at ``mean``; the band is
+    drawn from the quantile arrays. ``mean`` is the bin-weighted mean (as
+    before) for backwards compatibility; the per-trial mean is implicitly
+    encoded in the spread arrays.
+    """
+    n_grid = len(grid)
+    nan_arr = np.full(n_grid, np.nan)
+    n_bins = len(cond_df)
+    if n_bins == 0:
+        return {
+            "mean": nan_arr.copy(),
+            "q05": nan_arr.copy(),
+            "q25": nan_arr.copy(),
+            "q75": nan_arr.copy(),
+            "q95": nan_arr.copy(),
+            "std": nan_arr.copy(),
+            "n_trials": np.zeros(n_grid, dtype=int),
+        }
+    trial_ids = cond_df["trial_id"].to_numpy()
+    obs_speed = cond_df["speed"].to_numpy(dtype=np.float64)
+    obs_tf = cond_df["tf"].to_numpy(dtype=np.float64)
+    obs_sf = cond_df["sf"].to_numpy(dtype=np.float64)
+    obs_or = cond_df["orientation"].to_numpy(dtype=np.float64)
+    onset_t = cond_df["time_since_onset"].to_numpy(dtype=np.float64)
+    B_onset = onset_kernel_basis(onset_t, config.n_onset_bases, config.onset_range[1])
+
+    out = {
+        "mean": np.empty(n_grid),
+        "q05": np.empty(n_grid),
+        "q25": np.empty(n_grid),
+        "q75": np.empty(n_grid),
+        "q95": np.empty(n_grid),
+        "std": np.empty(n_grid),
+        "n_trials": np.zeros(n_grid, dtype=int),
+    }
+    for i, g in enumerate(grid):
+        if sweep_var == "Speed":
+            speed = np.full(n_bins, g)
+            tf = np.full(n_bins, fix_tf) if fix_tf is not None else obs_tf
+        elif sweep_var == "TF":
+            speed = np.full(n_bins, fix_speed) if fix_speed is not None else obs_speed
+            tf = np.full(n_bins, g)
+        else:
+            raise ValueError(f"unsupported sweep_var {sweep_var!r}")
+        sf = np.full(n_bins, fix_sf) if fix_sf is not None else obs_sf
+        orientation = np.full(n_bins, fix_or) if fix_or is not None else obs_or
+        mu = _predict_rate(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            speed, tf, B_onset, sf, orientation,
+        )
+        out["mean"][i] = np.nan if mu is None else float(np.nanmean(mu))
+        s = _per_trial_summary(mu, trial_ids)
+        out["q05"][i] = s["q05"]
+        out["q25"][i] = s["q25"]
+        out["q75"][i] = s["q75"]
+        out["q95"][i] = s["q95"]
+        out["std"][i] = s["std"]
+        out["n_trials"][i] = s["n_trials"]
+    return out
+
+
 def _marginal_levels(
     beta: np.ndarray,
     train_names: list[str],
@@ -2284,6 +2400,120 @@ def _marginal_levels(
     return rates
 
 
+def _marginal_levels_with_spread(
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    cond_df: pd.DataFrame,
+    *,
+    level_kind: str,
+    levels: np.ndarray,
+    fix_speed: float | None,
+    fix_tf: float | None,
+    fix_sf: float | None = None,
+    fix_or: float | None = None,
+) -> dict[str, np.ndarray]:
+    """Trial-spread analogue of ``_marginal_levels``."""
+    n_levels = len(levels)
+    nan_arr = np.full(n_levels, np.nan)
+    n_bins = len(cond_df)
+    if n_bins == 0:
+        return {
+            "mean": nan_arr.copy(),
+            "q05": nan_arr.copy(),
+            "q25": nan_arr.copy(),
+            "q75": nan_arr.copy(),
+            "q95": nan_arr.copy(),
+            "std": nan_arr.copy(),
+            "n_trials": np.zeros(n_levels, dtype=int),
+        }
+    trial_ids = cond_df["trial_id"].to_numpy()
+    obs_speed = cond_df["speed"].to_numpy(dtype=np.float64)
+    obs_tf = cond_df["tf"].to_numpy(dtype=np.float64)
+    obs_sf = cond_df["sf"].to_numpy(dtype=np.float64)
+    obs_or = cond_df["orientation"].to_numpy(dtype=np.float64)
+    onset_t = cond_df["time_since_onset"].to_numpy(dtype=np.float64)
+    B_onset = onset_kernel_basis(onset_t, config.n_onset_bases, config.onset_range[1])
+
+    out = {
+        "mean": np.empty(n_levels),
+        "q05": np.empty(n_levels),
+        "q25": np.empty(n_levels),
+        "q75": np.empty(n_levels),
+        "q95": np.empty(n_levels),
+        "std": np.empty(n_levels),
+        "n_trials": np.zeros(n_levels, dtype=int),
+    }
+    for i, L in enumerate(levels):
+        speed = np.full(n_bins, fix_speed) if fix_speed is not None else obs_speed
+        tf = np.full(n_bins, fix_tf) if fix_tf is not None else obs_tf
+        if level_kind == "SF":
+            sf = np.full(n_bins, L)
+            orientation = np.full(n_bins, fix_or) if fix_or is not None else obs_or
+        else:
+            sf = np.full(n_bins, fix_sf) if fix_sf is not None else obs_sf
+            orientation = np.full(n_bins, L)
+        mu = _predict_rate(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            speed, tf, B_onset, sf, orientation,
+        )
+        out["mean"][i] = np.nan if mu is None else float(np.nanmean(mu))
+        s = _per_trial_summary(mu, trial_ids)
+        out["q05"][i] = s["q05"]
+        out["q25"][i] = s["q25"]
+        out["q75"][i] = s["q75"]
+        out["q95"][i] = s["q95"]
+        out["std"][i] = s["std"]
+        out["n_trials"][i] = s["n_trials"]
+    return out
+
+
+def _band_edges(
+    summary: dict[str, np.ndarray], mode: str,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Resolve (lo, hi) band edges from the per-trial summary dict.
+
+    ``mode`` ∈ {"none", "iqr", "wide-quantile", "std"}. Returns ``None``
+    when no band should be drawn. NaN-padded grid points where
+    ``n_trials < MIN_TRIALS_FOR_BAND`` are masked with NaN so
+    ``fill_between`` skips them silently.
+    """
+    if mode == "none":
+        return None
+    n = summary.get("n_trials")
+    sparse = None if n is None else (n < MIN_TRIALS_FOR_BAND)
+    if mode == "iqr":
+        lo = summary["q25"].copy()
+        hi = summary["q75"].copy()
+    elif mode == "wide-quantile":
+        lo = summary["q05"].copy()
+        hi = summary["q95"].copy()
+    elif mode == "std":
+        mean = summary["mean"]
+        std = summary["std"]
+        lo = mean - std
+        hi = mean + std
+    else:
+        raise ValueError(f"unknown tuning_curve_uncertainty mode: {mode!r}")
+    if sparse is not None and np.any(sparse):
+        lo = lo.copy(); hi = hi.copy()
+        lo[sparse] = np.nan
+        hi[sparse] = np.nan
+    return lo, hi
+
+
+def _draw_band(ax, x: np.ndarray, summary: dict[str, np.ndarray],
+               color, mode: str, *, alpha: float = 0.18) -> None:
+    edges = _band_edges(summary, mode)
+    if edges is None:
+        return
+    lo, hi = edges
+    ax.fill_between(x, lo, hi, color=color, alpha=alpha, linewidth=0)
+
+
 def _predict_model_row_trial_averaged(
     row_axes,
     beta: np.ndarray,
@@ -2324,25 +2554,28 @@ def _predict_model_row_trial_averaged(
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
     spd_by_cond = spd_centres_by_cond or {}
     tf_by_cond = tf_centres_by_cond or {}
+    band_mode = getattr(config, "tuning_curve_uncertainty", "none")
 
     # --- Speed sweep ---
     t_bins = cond_bins.get("T_Vstatic")
     spd_t = spd_by_cond.get("T_Vstatic")
     if t_bins is not None and spd_t is not None:
-        rates = _marginal_curve(
+        summary = _marginal_curve_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             t_bins, sweep_var="Speed", grid=spd_t, fix_tf=0.0,
         )
-        ax_spd.plot(spd_t, rates, "o-",
+        _draw_band(ax_spd, spd_t, summary, COND_COLORS["T_Vstatic"], band_mode)
+        ax_spd.plot(spd_t, summary["mean"], "o-",
                     color=COND_COLORS["T_Vstatic"], markersize=4, linewidth=1.2)
     vt_bins = cond_bins.get("VT")
     spd_vt = spd_by_cond.get("VT")
     if vt_bins is not None and spd_vt is not None:
-        rates = _marginal_curve(
+        summary = _marginal_curve_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             vt_bins, sweep_var="Speed", grid=spd_vt,
         )
-        ax_spd.plot(spd_vt, rates, "o-",
+        _draw_band(ax_spd, spd_vt, summary, COND_COLORS["VT"], band_mode)
+        ax_spd.plot(spd_vt, summary["mean"], "o-",
                     color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
     # Stationary dot at speed=0 — compute from observed stationary bins.
     _plot_point(
@@ -2356,59 +2589,67 @@ def _predict_model_row_trial_averaged(
     v_bins = cond_bins.get("V")
     tf_v = tf_by_cond.get("V")
     if v_bins is not None and tf_v is not None:
-        rates = _marginal_curve(
+        summary = _marginal_curve_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             v_bins, sweep_var="TF", grid=tf_v, fix_speed=0.0,
         )
-        ax_tf.plot(tf_v, rates, "o-",
+        _draw_band(ax_tf, tf_v, summary, COND_COLORS["V"], band_mode)
+        ax_tf.plot(tf_v, summary["mean"], "o-",
                    color=COND_COLORS["V"], markersize=4, linewidth=1.2)
     tf_vt = tf_by_cond.get("VT")
     if vt_bins is not None and tf_vt is not None:
-        rates = _marginal_curve(
+        summary = _marginal_curve_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             vt_bins, sweep_var="TF", grid=tf_vt,
         )
-        ax_tf.plot(tf_vt, rates, "o-",
+        _draw_band(ax_tf, tf_vt, summary, COND_COLORS["VT"], band_mode)
+        ax_tf.plot(tf_vt, summary["mean"], "o-",
                    color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
 
     # --- SF levels (V and VT) ---
+    sf_x = np.arange(sf_plot.size)
     if v_bins is not None:
-        rates = _marginal_levels(
+        summary = _marginal_levels_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             v_bins, level_kind="SF", levels=sf_plot,
             fix_speed=0.0, fix_tf=None, fix_or=mode_or,
         )
-        ax_sf.plot(np.arange(sf_plot.size), rates, "o-",
+        _draw_band(ax_sf, sf_x, summary, COND_COLORS["V"], band_mode)
+        ax_sf.plot(sf_x, summary["mean"], "o-",
                    color=COND_COLORS["V"], markersize=5, linewidth=1.2)
     if vt_bins is not None:
-        rates = _marginal_levels(
+        summary = _marginal_levels_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             vt_bins, level_kind="SF", levels=sf_plot,
             fix_speed=None, fix_tf=None, fix_or=mode_or,
         )
-        ax_sf.plot(np.arange(sf_plot.size), rates, "o-",
+        _draw_band(ax_sf, sf_x, summary, COND_COLORS["VT"], band_mode)
+        ax_sf.plot(sf_x, summary["mean"], "o-",
                    color=COND_COLORS["VT"], markersize=5, linewidth=1.2)
-    ax_sf.set_xticks(np.arange(sf_plot.size))
+    ax_sf.set_xticks(sf_x)
     ax_sf.set_xticklabels([f"{v:.3f}" for v in sf_plot], fontsize=7)
 
     # --- OR levels (V and VT) ---
+    or_x = np.arange(or_plot.size)
     if v_bins is not None:
-        rates = _marginal_levels(
+        summary = _marginal_levels_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             v_bins, level_kind="OR", levels=or_plot,
             fix_speed=0.0, fix_tf=None, fix_sf=mode_sf,
         )
-        ax_or.plot(np.arange(or_plot.size), rates, "o-",
+        _draw_band(ax_or, or_x, summary, COND_COLORS["V"], band_mode)
+        ax_or.plot(or_x, summary["mean"], "o-",
                    color=COND_COLORS["V"], markersize=5, linewidth=1.2)
     if vt_bins is not None:
-        rates = _marginal_levels(
+        summary = _marginal_levels_with_spread(
             beta, train_names, selected_vars, config, sf_ref, or_ref,
             vt_bins, level_kind="OR", levels=or_plot,
             fix_speed=None, fix_tf=None, fix_sf=mode_sf,
         )
-        ax_or.plot(np.arange(or_plot.size), rates, "o-",
+        _draw_band(ax_or, or_x, summary, COND_COLORS["VT"], band_mode)
+        ax_or.plot(or_x, summary["mean"], "o-",
                    color=COND_COLORS["VT"], markersize=5, linewidth=1.2)
-    ax_or.set_xticks(np.arange(or_plot.size))
+    ax_or.set_xticks(or_x)
     ax_or.set_xticklabels([_format_radians(v) for v in or_plot], fontsize=7)
 
 
