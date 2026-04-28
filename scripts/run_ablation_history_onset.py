@@ -49,7 +49,7 @@ log = logging.getLogger("ablation")
 ROOT = Path("/Users/lauraporta/local_data/motion_clouds")
 FORMATTED_DIR = ROOT / "formatted_data"
 CLUSTER_FILTER = ROOT / "figures" / "glm_single_cluster" / "prefilter_decision_tree.csv"
-OUT_ROOT = ROOT / "figures" / "ablation_history_onset"
+OUT_ROOT = ROOT / "figures" / "glm" / "exploration" / "history_ablation"
 PROBES = (
     "CAA-1123243_rec1",
     "CAA-1123244_rec1",
@@ -75,10 +75,13 @@ def run_variant(variant_name: str, flags: dict[str, bool]) -> Path:
         return out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     cli_args = []
-    if flags["include_history"]:
-        cli_args.append("--include-history")
-    if not flags["include_onset_kernel"]:
-        cli_args.append("--no-onset-kernel")
+    # Defaults flipped 2026-04-29: history is now ON, onset is now OFF.
+    # Use the affirmative-opt-out / opt-in flags to override the new
+    # defaults explicitly.
+    if not flags["include_history"]:
+        cli_args.append("--no-history")
+    if flags["include_onset_kernel"]:
+        cli_args.append("--with-onset-kernel")
 
     cmd = [
         PYTHON, "-m", "rc2_glm.pipeline",

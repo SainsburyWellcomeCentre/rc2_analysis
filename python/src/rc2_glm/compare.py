@@ -1248,11 +1248,34 @@ def run_compare(
     return df, zero_clusters
 
 
+_DEPRECATION_BANNER = (
+    "============================================================\n"
+    "rc2-glm-compare: NOT THE PRODUCTION TRUST SIGNAL ANY MORE\n"
+    "============================================================\n"
+    "MATLAB parity was retired on 2026-04-29 with the onset-kernel\n"
+    "removal + history-by-default. Several gates here will now fail\n"
+    "by construction (Null cv-bps differs, Selected-vs-Null sign\n"
+    "agreement may shift, coefficient sign agreement on Onset basis is\n"
+    "vacuous). Tool kept for one-off historical comparisons; for the\n"
+    "production trust signal use the python-internal regression test\n"
+    "in python/tests/test_pipeline_regression.py.\n"
+    "============================================================\n"
+)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Entry point wired to ``rc2-glm-compare`` in pyproject.toml."""
+    """Entry point wired to ``rc2-glm-compare`` in pyproject.toml.
+
+    DEPRECATED 2026-04-29: this tool is no longer the production
+    trust signal — it remains for one-off historical comparisons
+    against the MATLAB pre-onset-removal reference. See the
+    deprecation banner printed to stderr at run time.
+    """
+    sys.stderr.write(_DEPRECATION_BANNER)
     parser = argparse.ArgumentParser(
         prog="rc2-glm-compare",
-        description="Diff Python GLM outputs against a MATLAB reference directory.",
+        description="Diff Python GLM outputs against a MATLAB reference directory. "
+                    "DEPRECATED 2026-04-29 — see deprecation banner.",
     )
     parser.add_argument(
         "--python-dir", type=Path, required=True,

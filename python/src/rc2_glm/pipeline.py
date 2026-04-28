@@ -1540,26 +1540,36 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--include-history", dest="include_history", action="store_true",
+        "--no-history", dest="include_history", action="store_false",
         help=(
-            "Add spike history as a Phase-1 forward-selection candidate "
-            "(prompt 03, 2026-04-28). 10 log-spaced raised-cosine bases "
-            "over a 200ms post-spike window, convolved trial-aware "
-            "(zero-padded at trial starts; lag 0 excluded for causality). "
-            "Default OFF — production parity-protected runs continue "
-            "without history."
+            "Disable the spike-history term (default ON since 2026-04-29). "
+            "Without history, the model is intercept + onset (if enabled) "
+            "+ forward-selected stimulus terms — i.e. the legacy MATLAB-"
+            "equivalent model. Use for one-off comparisons or legacy reruns."
         ),
+    )
+    # Deprecated alias — kept for back-compat with scripts/notebooks that
+    # still pass --include-history. No-op since the new default is True.
+    parser.add_argument(
+        "--include-history", dest="include_history", action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--no-onset-kernel", dest="include_onset_kernel", action="store_false",
+        "--with-onset-kernel", dest="include_onset_kernel", action="store_true",
         help=(
-            "Ablation flag (prompt 03 §Ablation). Omit the onset kernel "
-            "from every model. Used by the four-variant ablation script. "
-            "Default ON — omitting breaks MATLAB parity (Null model "
-            "shifts), so use only for ablation runs."
+            "Re-enable the onset kernel (default OFF since 2026-04-29). "
+            "The prompt-03 ablation showed onset adds ~0 CV-bps once "
+            "spike history is in; default flipped to False. Use this flag "
+            "for legacy MATLAB-parity reruns or ablation experiments."
         ),
     )
-    parser.set_defaults(include_history=False, include_onset_kernel=True)
+    # Deprecated alias — kept for back-compat with scripts that pass
+    # --no-onset-kernel. No-op since the new default is False.
+    parser.add_argument(
+        "--no-onset-kernel", dest="include_onset_kernel", action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(include_history=True, include_onset_kernel=False)
     parser.add_argument(
         "--tuning-curve-uncertainty",
         choices=("none", "simulated", "covariate-spread", "wide-quantile",
