@@ -1514,18 +1514,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--tuning-curve-uncertainty",
-        choices=("none", "iqr", "wide-quantile", "std"),
-        default="iqr",
+        choices=("none", "simulated", "covariate-spread", "wide-quantile",
+                 "std", "iqr"),
+        default="simulated",
         help=(
             "Per-trial uncertainty band on the model rows of the "
-            "tuning-curve panels (cluster_<id>_tuning.pdf). At each "
-            "grid point, predict per-bin then collapse to per-trial "
-            "means; the band shows their spread. 'iqr' (default) = "
-            "q25/q75; 'wide-quantile' = q05/q95; 'std' = mean ± std; "
-            "'none' = line only (pre-prompt-12 behaviour). Only applies "
-            "when --tuning-curve-mode is 'trial-averaged'; in steady-"
-            "state mode there is no per-trial spread to compute. "
-            "Sparse-bin guard: bins with <3 trial means are skipped."
+            "tuning-curve panels (cluster_<id>_tuning.pdf). Modes: "
+            "'simulated' (default, since 2026-04-28) = parametric "
+            "bootstrap — predict λ at the 100 ms training granularity, "
+            "draw y_sim ~ Poisson(λ·Δt), collapse simulated rates to the "
+            "cache's display bins, band = IQR across trials per display "
+            "bin (mean across MC iterations). Directly comparable to the "
+            "Observed row's whiskers. "
+            "'covariate-spread' = previous default — IQR across trials "
+            "of the predicted rate at fixed sweep-x given each trial's "
+            "actual non-target covariates (model-structural sensitivity). "
+            "'wide-quantile' / 'std' / 'none' as before. 'iqr' is a "
+            "deprecated alias for 'covariate-spread'. Only applies in "
+            "trial-averaged mode."
         ),
     )
     parser.add_argument(

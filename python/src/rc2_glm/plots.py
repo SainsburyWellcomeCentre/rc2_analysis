@@ -1874,6 +1874,20 @@ def _trial_stats_by_level(
 # --------------------------------------------------------------------------- #
 
 
+def _per_bin_median_iqr(tuning: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-bin median + Q1 + Q3 across trials, NaN-tolerant.
+
+    ``tuning`` shape (n_trials, n_bins). Returns three (n_bins,) arrays.
+    Bins where all trials are NaN return (NaN, NaN, NaN).
+    """
+    if tuning.size == 0:
+        return (np.full(0, np.nan),) * 3
+    median = np.nanmedian(tuning, axis=0)
+    q1 = np.nanquantile(tuning, 0.25, axis=0)
+    q3 = np.nanquantile(tuning, 0.75, axis=0)
+    return median, q1, q3
+
+
 def _plot_observed_row(
     row_axes,
     cluster_df: pd.DataFrame,
@@ -1885,20 +1899,28 @@ def _plot_observed_row(
 ) -> None:
     """Observed rates per condition, aggregated trial-first (matches MATLAB).
 
-    Rates for each bin/level are computed by first grouping within-condition
-    rows by ``trial_id`` and taking the mean ``spike_count / bin_width`` per
-    trial within that bin, then taking the median + IQR across trials.
-    Single-trial cells render as a dot with no error bar; empty cells are
-    skipped.
+    For Speed and TF panels: when ``precomputed_bins`` is provided AND it
+    carries the per-cluster firing-rate cache (Laura's call 2026-04-27), the
+    plot reads the MATLAB-cached per-trial-per-bin firing rates directly —
+    same numbers MATLAB plots from. This guarantees pixel-level parity with
+    the ceph TF tuning PDFs and avoids the Python-side recomputation that
+    historically diverged from MATLAB by small amounts (different motion-
+    window definition, different per-bin spike-counting convention).
 
-    When ``precomputed_bins`` is provided, Speed and TF panels use the
-    MATLAB-cached 5%-quantile edges per trial group (so each bin holds ~5%
-    of motion-masked samples). Otherwise they fall back to a uniform
-    linspace spanning the config range — bins at high speeds/TFs will then
-    contain very few samples.
+    For SF and OR panels: no MATLAB cache exists for these (they're
+    categorical, with handfuls of levels), so per-trial means are computed
+    from ``cluster_df`` directly — same as before.
+
+    Fallback: when ``precomputed_bins`` is None (e.g. the cache is missing
+    or the cluster isn't in it), Speed and TF fall back to the original
+    recompute path. Logged once per cluster.
     """
     bw = config.time_bin_width
     ax_spd, ax_tf, ax_sf, ax_or = row_axes
+    cluster_id = (
+        int(cluster_df["cluster_id"].iloc[0])
+        if not cluster_df.empty else None
+    )
 
     fallback_spd_edges = np.linspace(
         config.speed_range[0], config.speed_range[1], 11,
@@ -1907,8 +1929,23 @@ def _plot_observed_row(
         config.tf_range[0], config.tf_range[1], 11,
     )
 
-    # Speed: T_Vstatic + VT (MATLAB skips V for speed since its speed=0)
+    # ---- Speed panel: T_Vstatic + VT (MATLAB skips V for speed since its speed=0) ----
     for cond in ("T_Vstatic", "VT"):
+        cached_tuning = (
+            None if precomputed_bins is None or cluster_id is None
+            else precomputed_bins.speed_tuning(cond, cluster_id)
+        )
+        if cached_tuning is not None:
+            centres = precomputed_bins.speed_centres(cond)
+            median, q1, q3 = _per_bin_median_iqr(cached_tuning)
+            good = ~np.isnan(median)
+            if good.any():
+                yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+                ax_spd.errorbar(centres[good], median[good], yerr=yerr,
+                                fmt="o-", color=COND_COLORS[cond],
+                                markersize=4, linewidth=1, capsize=3)
+            continue
+        # Fallback: recompute from cluster_df
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
@@ -1929,28 +1966,57 @@ def _plot_observed_row(
                             fmt="o-", color=COND_COLORS[cond],
                             markersize=4, linewidth=1, capsize=3)
 
-    # Stationary dot at speed=0 — per-trial median + IQR
-    stat = cluster_df[cluster_df["condition"] == "stationary"]
-    if not stat.empty:
-        per_trial = (
-            stat.groupby("trial_id")["spike_count"]
-            .mean() / bw
-        ).to_numpy(dtype=np.float64)
-        per_trial = per_trial[~np.isnan(per_trial)]
-        if per_trial.size >= 1:
-            med_stat = float(np.median(per_trial))
-            if per_trial.size >= 2:
-                q1_stat = float(np.quantile(per_trial, 0.25))
-                q3_stat = float(np.quantile(per_trial, 0.75))
-            else:
-                q1_stat = q3_stat = med_stat
-            yerr_stat = np.array([[med_stat - q1_stat], [q3_stat - med_stat]])
-            ax_spd.errorbar(0.0, med_stat, yerr=yerr_stat,
-                            fmt="o", color=COND_COLORS["stationary"],
-                            markersize=6, capsize=4)
+    # ---- Stationary dot at speed=0: prefer cache stationary_fr if available ----
+    cached_stat_fr = None
+    if precomputed_bins is not None and cluster_id is not None:
+        # Cache stationary FR is recorded per (variable cache, condition);
+        # any of them works since stationary is condition-independent for
+        # the cluster — pick speed/VT or first available.
+        for store_var, cond in (("speed", "VT"), ("speed", "T_Vstatic"), ("tf", "V")):
+            arr = precomputed_bins.stationary_fr(store_var, cond, cluster_id)
+            if arr is not None and arr.size > 0:
+                cached_stat_fr = arr
+                break
+    if cached_stat_fr is not None:
+        per_trial = cached_stat_fr[~np.isnan(cached_stat_fr)]
+    else:
+        stat = cluster_df[cluster_df["condition"] == "stationary"]
+        if stat.empty:
+            per_trial = np.array([], dtype=np.float64)
+        else:
+            per_trial = (
+                stat.groupby("trial_id")["spike_count"].mean() / bw
+            ).to_numpy(dtype=np.float64)
+            per_trial = per_trial[~np.isnan(per_trial)]
+    if per_trial.size >= 1:
+        med_stat = float(np.median(per_trial))
+        if per_trial.size >= 2:
+            q1_stat = float(np.quantile(per_trial, 0.25))
+            q3_stat = float(np.quantile(per_trial, 0.75))
+        else:
+            q1_stat = q3_stat = med_stat
+        yerr_stat = np.array([[med_stat - q1_stat], [q3_stat - med_stat]])
+        ax_spd.errorbar(0.0, med_stat, yerr=yerr_stat,
+                        fmt="o", color=COND_COLORS["stationary"],
+                        markersize=6, capsize=4)
 
-    # TF: V + VT (skip T_Vstatic since TF=0)
+    # ---- TF panel: V + VT (skip T_Vstatic since TF=0) ----
     for cond in ("V", "VT"):
+        cached_tuning = (
+            None if precomputed_bins is None or cluster_id is None
+            else precomputed_bins.tf_tuning(cond, cluster_id)
+        )
+        if cached_tuning is not None:
+            centres = precomputed_bins.tf_centres(cond)
+            median, q1, q3 = _per_bin_median_iqr(cached_tuning)
+            good = ~np.isnan(median)
+            if good.any():
+                yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+                ax_tf.errorbar(centres[good], median[good], yerr=yerr,
+                               fmt="o-", color=COND_COLORS[cond],
+                               markersize=4, linewidth=1, capsize=3)
+            continue
+        # Fallback: recompute
         sub = cluster_df[cluster_df["condition"] == cond]
         if sub.empty:
             continue
@@ -2350,6 +2416,155 @@ def _marginal_curve_with_spread(
     return out
 
 
+def _simulated_curve_with_spread(
+    beta: np.ndarray,
+    train_names: list[str],
+    selected_vars: list[str],
+    config: GLMConfig,
+    sf_ref: np.ndarray,
+    or_ref: np.ndarray,
+    cond_df: pd.DataFrame,
+    *,
+    sweep_var: str,                # "Speed" | "TF"
+    bin_edges: np.ndarray,         # display bin edges (cache's 5%-quantile)
+    bin_centres: np.ndarray,       # display bin centres
+    n_iterations: int = 100,
+    rng_seed: int = 0,
+) -> dict[str, np.ndarray]:
+    """Parametric-bootstrap reconstruction of the tuning curve.
+
+    Algorithm (matches Laura's spec, 2026-04-28):
+
+    1. Predict ``λ_pred[t]`` per 100 ms time-bin using each trial's
+       *actual* covariates (no forcing of the sweep variable). This is the
+       training granularity — same as the GLM was fit on.
+    2. Draw simulated spike counts ``y_sim[t] ~ Poisson(λ_pred[t] · Δt)``
+       per 100 ms bin.
+    3. Convert to firing rate ``fr_sim[t] = y_sim[t] / Δt``.
+    4. Group those simulated per-bin firing rates by ``cond_df[sweep_var]``
+       falling into the cache's display bins; per (trial × display-bin),
+       compute the mean simulated firing rate.
+    5. Per display bin: median + IQR ACROSS TRIALS (not across iterations).
+    6. Average the per-display-bin median / IQR across ``n_iterations``
+       iterations to dampen MC sampling noise.
+
+    Returns a dict with the same shape as ``_marginal_curve_with_spread``
+    so the existing ``_band_edges`` / ``_draw_band`` plumbing reuses
+    untouched.
+    """
+    n_grid = bin_centres.size
+    nan_arr = np.full(n_grid, np.nan)
+    out_empty = {
+        "mean": nan_arr.copy(),
+        "q05": nan_arr.copy(),
+        "q25": nan_arr.copy(),
+        "q75": nan_arr.copy(),
+        "q95": nan_arr.copy(),
+        "std": nan_arr.copy(),
+        "n_trials": np.zeros(n_grid, dtype=int),
+    }
+
+    n_bins = len(cond_df)
+    if n_bins == 0:
+        return out_empty
+
+    bw = config.time_bin_width  # seconds per training bin (default 0.1)
+    trial_ids = cond_df["trial_id"].to_numpy()
+    obs_speed = cond_df["speed"].to_numpy(dtype=np.float64)
+    obs_tf = cond_df["tf"].to_numpy(dtype=np.float64)
+    obs_sf = cond_df["sf"].to_numpy(dtype=np.float64)
+    obs_or = cond_df["orientation"].to_numpy(dtype=np.float64)
+    onset_t = cond_df["time_since_onset"].to_numpy(dtype=np.float64)
+    B_onset = onset_kernel_basis(onset_t, config.n_onset_bases, config.onset_range[1])
+
+    # 1. Predict λ at each trial's actual covariates — one λ per 100 ms bin.
+    mu = _predict_rate(
+        beta, train_names, selected_vars, config, sf_ref, or_ref,
+        obs_speed, obs_tf, B_onset, obs_sf, obs_or,
+    )
+    if mu is None:
+        return out_empty
+    mu = np.asarray(mu, dtype=np.float64)
+
+    # Display-bin assignment of each 100ms bin based on its sweep_var value.
+    sweep_vals = obs_speed if sweep_var == "Speed" else obs_tf
+    # `np.digitize` returns 1..n_bins for in-range values; clamp anything
+    # outside to (-1) so it gets dropped.
+    digitised = np.digitize(sweep_vals, bin_edges) - 1
+    valid_mask = (digitised >= 0) & (digitised < n_grid)
+
+    # Per (trial, display-bin) we want the mean simulated FR. Set up
+    # accumulators and a stable trial index ordering.
+    unique_trials = np.unique(trial_ids)
+    n_trials_total = unique_trials.size
+    trial_to_idx = {int(t): i for i, t in enumerate(unique_trials)}
+    bin_indices = np.array([trial_to_idx[int(t)] for t in trial_ids])
+
+    # Pre-build (trial_idx, display_bin) flat indexer for valid bins.
+    valid_idx = np.where(valid_mask)[0]
+    flat_idx = bin_indices[valid_idx] * n_grid + digitised[valid_idx]
+    n_cells = n_trials_total * n_grid
+
+    rng = np.random.default_rng(rng_seed)
+
+    # Accumulators: per-iteration per-display-bin median/quantiles, averaged
+    # across iterations to reduce MC sampling noise.
+    median_acc = np.zeros(n_grid)
+    q05_acc = np.zeros(n_grid)
+    q25_acc = np.zeros(n_grid)
+    q75_acc = np.zeros(n_grid)
+    q95_acc = np.zeros(n_grid)
+    std_acc = np.zeros(n_grid)
+    n_obs_acc = np.zeros(n_grid, dtype=np.int64)
+    n_eff_iters = np.zeros(n_grid, dtype=np.int64)
+
+    for _ in range(n_iterations):
+        # Step 2: Poisson draws per 100ms bin.
+        y_sim = rng.poisson(mu * bw)
+        fr_sim = y_sim.astype(np.float64) / bw
+
+        # Step 4: per (trial, display-bin) mean simulated FR. Use bincount
+        # for vectorised aggregation.
+        valid_fr = fr_sim[valid_idx]
+        sums = np.bincount(flat_idx, weights=valid_fr, minlength=n_cells)
+        counts = np.bincount(flat_idx, minlength=n_cells)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            per_cell_mean = np.where(counts > 0, sums / counts, np.nan)
+        per_cell_mean = per_cell_mean.reshape(n_trials_total, n_grid)
+
+        # Step 5: per display bin, summarise across trials (NaN-tolerant).
+        for j in range(n_grid):
+            col = per_cell_mean[:, j]
+            col = col[~np.isnan(col)]
+            if col.size == 0:
+                continue
+            n_eff_iters[j] += 1
+            n_obs_acc[j] += col.size
+            median_acc[j] += np.median(col)
+            q05_acc[j] += np.percentile(col, 5)
+            q25_acc[j] += np.percentile(col, 25)
+            q75_acc[j] += np.percentile(col, 75)
+            q95_acc[j] += np.percentile(col, 95)
+            std_acc[j] += np.std(col)
+
+    # Step 6: average across iterations.
+    out = {
+        "mean":     np.where(n_eff_iters > 0, median_acc / np.maximum(n_eff_iters, 1), np.nan),
+        "q05":      np.where(n_eff_iters > 0, q05_acc / np.maximum(n_eff_iters, 1), np.nan),
+        "q25":      np.where(n_eff_iters > 0, q25_acc / np.maximum(n_eff_iters, 1), np.nan),
+        "q75":      np.where(n_eff_iters > 0, q75_acc / np.maximum(n_eff_iters, 1), np.nan),
+        "q95":      np.where(n_eff_iters > 0, q95_acc / np.maximum(n_eff_iters, 1), np.nan),
+        "std":      np.where(n_eff_iters > 0, std_acc / np.maximum(n_eff_iters, 1), np.nan),
+        # n_trials = average per-bin trial count across iterations (rounded).
+        "n_trials": np.where(
+            n_eff_iters > 0,
+            (n_obs_acc / np.maximum(n_eff_iters, 1)).astype(int),
+            0,
+        ),
+    }
+    return out
+
+
 def _marginal_levels(
     beta: np.ndarray,
     train_names: list[str],
@@ -2476,16 +2691,23 @@ def _band_edges(
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Resolve (lo, hi) band edges from the per-trial summary dict.
 
-    ``mode`` ∈ {"none", "iqr", "wide-quantile", "std"}. Returns ``None``
-    when no band should be drawn. NaN-padded grid points where
+    ``mode`` ∈ {"none", "covariate-spread", "simulated", "wide-quantile",
+    "std"}. Returns ``None`` when no band should be drawn. ``"iqr"`` is a
+    deprecated alias for ``"covariate-spread"`` (kept for back-compat with
+    pre-2026-04-28 CLI invocations). NaN-padded grid points where
     ``n_trials < MIN_TRIALS_FOR_BAND`` are masked with NaN so
     ``fill_between`` skips them silently.
     """
     if mode == "none":
         return None
+    if mode == "iqr":  # deprecated alias
+        mode = "covariate-spread"
     n = summary.get("n_trials")
     sparse = None if n is None else (n < MIN_TRIALS_FOR_BAND)
-    if mode == "iqr":
+    if mode in ("covariate-spread", "simulated"):
+        # Both modes populate q25/q75 via the same dict shape; only the
+        # underlying computation differs (per-trial covariate spread vs
+        # parametric-bootstrap trial spread).
         lo = summary["q25"].copy()
         hi = summary["q75"].copy()
     elif mode == "wide-quantile":
@@ -2555,25 +2777,58 @@ def _predict_model_row_trial_averaged(
     spd_by_cond = spd_centres_by_cond or {}
     tf_by_cond = tf_centres_by_cond or {}
     band_mode = getattr(config, "tuning_curve_uncertainty", "none")
+    if band_mode == "iqr":  # back-compat alias
+        band_mode = "covariate-spread"
+    n_iter = int(getattr(config, "n_bootstrap_iterations", 100))
+
+    def _summarise_speed(cond_df, grid, *, fix_tf=None):
+        if band_mode == "simulated":
+            edges = np.concatenate([
+                [grid[0] - (grid[1] - grid[0]) / 2.0],
+                0.5 * (grid[:-1] + grid[1:]),
+                [grid[-1] + (grid[-1] - grid[-2]) / 2.0],
+            ])
+            return _simulated_curve_with_spread(
+                beta, train_names, selected_vars, config, sf_ref, or_ref,
+                cond_df, sweep_var="Speed", bin_edges=edges, bin_centres=grid,
+                n_iterations=n_iter,
+            )
+        kwargs = {} if fix_tf is None else {"fix_tf": fix_tf}
+        return _marginal_curve_with_spread(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            cond_df, sweep_var="Speed", grid=grid, **kwargs,
+        )
+
+    def _summarise_tf(cond_df, grid, *, fix_speed=None):
+        if band_mode == "simulated":
+            edges = np.concatenate([
+                [grid[0] - (grid[1] - grid[0]) / 2.0],
+                0.5 * (grid[:-1] + grid[1:]),
+                [grid[-1] + (grid[-1] - grid[-2]) / 2.0],
+            ])
+            return _simulated_curve_with_spread(
+                beta, train_names, selected_vars, config, sf_ref, or_ref,
+                cond_df, sweep_var="TF", bin_edges=edges, bin_centres=grid,
+                n_iterations=n_iter,
+            )
+        kwargs = {} if fix_speed is None else {"fix_speed": fix_speed}
+        return _marginal_curve_with_spread(
+            beta, train_names, selected_vars, config, sf_ref, or_ref,
+            cond_df, sweep_var="TF", grid=grid, **kwargs,
+        )
 
     # --- Speed sweep ---
     t_bins = cond_bins.get("T_Vstatic")
     spd_t = spd_by_cond.get("T_Vstatic")
     if t_bins is not None and spd_t is not None:
-        summary = _marginal_curve_with_spread(
-            beta, train_names, selected_vars, config, sf_ref, or_ref,
-            t_bins, sweep_var="Speed", grid=spd_t, fix_tf=0.0,
-        )
+        summary = _summarise_speed(t_bins, spd_t, fix_tf=0.0)
         _draw_band(ax_spd, spd_t, summary, COND_COLORS["T_Vstatic"], band_mode)
         ax_spd.plot(spd_t, summary["mean"], "o-",
                     color=COND_COLORS["T_Vstatic"], markersize=4, linewidth=1.2)
     vt_bins = cond_bins.get("VT")
     spd_vt = spd_by_cond.get("VT")
     if vt_bins is not None and spd_vt is not None:
-        summary = _marginal_curve_with_spread(
-            beta, train_names, selected_vars, config, sf_ref, or_ref,
-            vt_bins, sweep_var="Speed", grid=spd_vt,
-        )
+        summary = _summarise_speed(vt_bins, spd_vt)
         _draw_band(ax_spd, spd_vt, summary, COND_COLORS["VT"], band_mode)
         ax_spd.plot(spd_vt, summary["mean"], "o-",
                     color=COND_COLORS["VT"], markersize=4, linewidth=1.2)
@@ -2589,19 +2844,13 @@ def _predict_model_row_trial_averaged(
     v_bins = cond_bins.get("V")
     tf_v = tf_by_cond.get("V")
     if v_bins is not None and tf_v is not None:
-        summary = _marginal_curve_with_spread(
-            beta, train_names, selected_vars, config, sf_ref, or_ref,
-            v_bins, sweep_var="TF", grid=tf_v, fix_speed=0.0,
-        )
+        summary = _summarise_tf(v_bins, tf_v, fix_speed=0.0)
         _draw_band(ax_tf, tf_v, summary, COND_COLORS["V"], band_mode)
         ax_tf.plot(tf_v, summary["mean"], "o-",
                    color=COND_COLORS["V"], markersize=4, linewidth=1.2)
     tf_vt = tf_by_cond.get("VT")
     if vt_bins is not None and tf_vt is not None:
-        summary = _marginal_curve_with_spread(
-            beta, train_names, selected_vars, config, sf_ref, or_ref,
-            vt_bins, sweep_var="TF", grid=tf_vt,
-        )
+        summary = _summarise_tf(vt_bins, tf_vt)
         _draw_band(ax_tf, tf_vt, summary, COND_COLORS["VT"], band_mode)
         ax_tf.plot(tf_vt, summary["mean"], "o-",
                    color=COND_COLORS["VT"], markersize=4, linewidth=1.2)

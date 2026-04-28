@@ -101,20 +101,37 @@ class GLMConfig:
 
     # Per-trial uncertainty band drawn around each model-row line on the
     # cluster_<id>_tuning.pdf panels. Computed only when tuning_curve_mode
-    # is "trial-averaged" (steady-state evaluates one point per condition;
-    # there is no per-trial spread to summarise). One of:
-    #   "none"           — no band; reproduces the pre-prompt-12 line-only output.
-    #   "iqr" (default)  — fill between q25 and q75 of per-trial predicted rates.
-    #   "wide-quantile"  — fill between q05 and q95.
-    #   "std"            — fill mean ± std of per-trial predicted rates.
-    # Sparse-bin guard: grid points with < MIN_TRIALS_FOR_BAND per-trial
-    # contributions are skipped (no fake bands at single-trial bins).
-    tuning_curve_uncertainty: str = "iqr"
+    # is "trial-averaged". One of:
+    #   "none"             — no band; reproduces pre-prompt-12 line-only output.
+    #   "covariate-spread" — IQR across trials of the predicted rate at
+    #                        fixed sweep-x given each trial's actual non-
+    #                        target covariates. Reflects model-structural
+    #                        sensitivity to TF/SF/OR heterogeneity.
+    #                        (Was called "iqr" pre-2026-04-28.)
+    #   "simulated" (default) — parametric bootstrap: predict λ at the
+    #                        training granularity (100 ms bins) using each
+    #                        trial's actual covariates; draw y_sim ~
+    #                        Poisson(λ · Δt); collapse simulated rates to
+    #                        the cache's display bins; band = IQR across
+    #                        trials per display bin (mean across MC iterations).
+    #                        Directly comparable to the Observed row's
+    #                        whiskers — same reconstruction procedure,
+    #                        simulated vs real spike counts.
+    # Aliases:
+    #   "iqr"  → maps to "covariate-spread" (deprecated alias for back-compat).
+    # Sparse-bin guard: bins with < MIN_TRIALS_FOR_BAND contributions are
+    # skipped (no fake bands at single-trial bins).
+    tuning_curve_uncertainty: str = "simulated"
+
+    # Number of Monte Carlo iterations for the parametric-bootstrap
+    # ("simulated") band. 100 is the standard floor for IQR stability;
+    # drop to 50 if compute is tight.
+    n_bootstrap_iterations: int = 100
 
 
-# Minimum number of trials at a tuning-curve grid point for the
-# uncertainty band to be drawn there. Below this, the band is skipped at
-# that grid point and a one-line warning is logged.
+# Minimum number of trials at a display-bin for the uncertainty band to
+# be drawn there. Below this, the band is skipped and a one-line warning
+# is logged.
 MIN_TRIALS_FOR_BAND: int = 3
 
 
