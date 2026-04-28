@@ -31,25 +31,26 @@ GLM_CURRENT_DIR = LOCAL_DATA_ROOT / "figures" / "glm" / "current"
 TOLERANCE_BPS = 0.01
 
 # Twelve regression clusters: 3 per probe spanning low / median / high
-# spike-count regimes. Picked from the prompt-12 boundary-venn analysis
-# so the regression test exercises the full activity range.
+# CV-bps in the legacy with-onset 4-probe run. Picked so the regression
+# test exercises the full performance range, not just the well-fitted
+# top of the distribution.
 REGRESSION_CLUSTERS: tuple[tuple[str, int], ...] = (
-    # CAA-1123243_rec1
-    ("CAA-1123243_rec1", 116),  # ~17k spikes, "Speed+SF" historically
-    ("CAA-1123243_rec1", 339),  # 35 spikes — the canonical fragile cluster
-    ("CAA-1123243_rec1", 137),  # ~21k spikes, Speed-only historically
-    # CAA-1123244_rec1
-    ("CAA-1123244_rec1", 184),  # ~9k spikes, Speed+TF historically
-    ("CAA-1123244_rec1", 217),  # ~4k spikes, with interaction
-    ("CAA-1123244_rec1", 244),  # placeholder — will be regenerated from probe data
-    # CAA-1123466_rec1
-    ("CAA-1123466_rec1", 164),  # ~16k spikes, TF historically
-    ("CAA-1123466_rec1", 246),  # ~8k spikes, multi-var
-    ("CAA-1123466_rec1", 336),  # ~10k spikes, Speed+TF interaction
-    # CAA-1123467_rec1
-    ("CAA-1123467_rec1", 548),  # placeholder — will be regenerated from probe data
-    ("CAA-1123467_rec1", 565),  # Speed historically
-    ("CAA-1123467_rec1", 744),  # TF historically (less common)
+    # CAA-1123243_rec1 (n=33 GLM-fit clusters; legacy cv_bps range [-11.8, -1.1])
+    ("CAA-1123243_rec1", 116),  # mid: Speed+SF historically (the canonical example cluster)
+    ("CAA-1123243_rec1", 339),  # low: -11.79 bps; the canonical fragile cluster
+    ("CAA-1123243_rec1", 118),  # high: -1.10 bps; Speed-only
+    # CAA-1123244_rec1 (n=13; range [-3.57, -1.25])
+    ("CAA-1123244_rec1", 146),  # low: -3.57 bps; Speed
+    ("CAA-1123244_rec1", 80),   # mid: -2.45 bps; Speed+TF
+    ("CAA-1123244_rec1", 162),  # high: -1.25 bps; Speed
+    # CAA-1123466_rec1 (n=32; range [-7.84, -1.34])
+    ("CAA-1123466_rec1", 14),   # low: -7.84 bps; Speed
+    ("CAA-1123466_rec1", 162),  # mid: -2.69 bps; Speed (note: same id as CAA-1123244 c162; different probe)
+    ("CAA-1123466_rec1", 70),   # high: -1.34 bps; Speed
+    # CAA-1123467_rec1 (n=10; range [-4.63, -1.59])
+    ("CAA-1123467_rec1", 409),  # low: -4.63 bps; Speed+TF
+    ("CAA-1123467_rec1", 517),  # mid: -2.20 bps; Null (no stimulus terms selected — sanity case)
+    ("CAA-1123467_rec1", 564),  # high: -1.59 bps; Speed
 )
 
 
