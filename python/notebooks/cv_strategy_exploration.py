@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-EXPLORATION_ROOT = Path("/Users/lauraporta/local_data/motion_clouds/figures/cv_exploration")
+EXPLORATION_ROOT = Path("/Users/lauraporta/local_data/motion_clouds/figures/glm/exploration/cv_strategy")
 PROBE_MAT = Path("/Users/lauraporta/local_data/motion_clouds/formatted_data/CAA-1123243_rec1.mat")
 MATLAB_REF_PROFILE_PNG = Path(
     "/Volumes/margrie/laura/data transfer for laura/"
@@ -85,7 +85,7 @@ def _load_comparison(run_dir: Path) -> pd.DataFrame:
 # Pipeline invocation:
 #
 # ```bash
-# rc2-glm  CAA-1123243_rec1.mat  cv_exploration/profile_cv \
+# rc2-glm  CAA-1123243_rec1.mat  glm/exploration/cv_strategy/profile_cv \
 #     --backend irls --profile-cv-diagnostic --plot-clusters 5
 # ```
 #
@@ -177,7 +177,7 @@ else:
 # ```bash
 # for bw in 0.100 0.050 0.020; do
 #     slug=$(echo $bw | tr . p)
-#     rc2-glm  CAA-1123243_rec1.mat  cv_exploration/bw_${slug} \
+#     rc2-glm  CAA-1123243_rec1.mat  glm/exploration/cv_strategy/bw_${slug} \
 #         --backend irls --bin-width $bw --plot-clusters 3
 # done
 # ```
@@ -292,7 +292,7 @@ plt.show()
 #
 # ```bash
 # for seed in 0 1 2 3 4; do
-#     rc2-glm  CAA-1123243_rec1.mat  cv_exploration/seed_${seed} \
+#     rc2-glm  CAA-1123243_rec1.mat  glm/exploration/cv_strategy/seed_${seed} \
 #         --backend irls --cv-seed $seed --no-plots
 # done
 # ```

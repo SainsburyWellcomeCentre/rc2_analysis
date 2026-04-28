@@ -1,6 +1,6 @@
 """Δ-bps selection-boundary × activity + 4-probe {Speed,TF,SF,OR} UpSet.
 
-CSV-only exploration of the 4-probe ``glm_out_all/`` run — answers two
+CSV-only exploration of the 4-probe ``glm/legacy_with_onset/`` run — answers two
 questions about the current forward-selection output without re-fitting:
 
 1. **Boundary × activity.** Is the Δ-bps = 0.005 selection threshold
@@ -13,8 +13,8 @@ questions about the current forward-selection output without re-fitting:
    and 1123467.
 
 Inputs (read-only):
-  - ``glm_out_all/glm_selection_history.csv``
-  - ``glm_out_all/glm_model_comparison.csv``
+  - ``glm/legacy_with_onset/glm_selection_history.csv``
+  - ``glm/legacy_with_onset/glm_model_comparison.csv``
 
 Outputs (written into ``OUT_DIR``):
   - ``boundary_vs_activity.pdf`` — three-panel: per-round scatter,
@@ -64,12 +64,12 @@ from scipy.stats import mannwhitneyu, spearmanr
 
 # Inputs: the current 4-probe run on glm-improvements.
 GLM_DIR = Path(
-    "/Users/lauraporta/local_data/motion_clouds/figures/glm_out_all"
+    "/Users/lauraporta/local_data/motion_clouds/figures/glm/legacy_with_onset"
 )
-# Outputs: parallel directory alongside glm_out_all/ — does not collide
+# Outputs: parallel directory alongside glm/legacy_with_onset/ — does not collide
 # with the pipeline's own validation/ subtree.
 OUT_DIR = Path(
-    "/Users/lauraporta/local_data/motion_clouds/figures/boundary_venn"
+    "/Users/lauraporta/local_data/motion_clouds/figures/glm/exploration/boundary_venn"
 )
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

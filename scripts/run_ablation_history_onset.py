@@ -26,7 +26,7 @@ Usage::
         scripts.run_ablation_history_onset
 
 Outputs land in:
-    ~/local_data/motion_clouds/figures/ablation_history_onset/
+    ~/local_data/motion_clouds/figures/glm/exploration/history_ablation/
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ log = logging.getLogger("ablation")
 # ----------------------------------------------------------------------
 ROOT = Path("/Users/lauraporta/local_data/motion_clouds")
 FORMATTED_DIR = ROOT / "formatted_data"
-CLUSTER_FILTER = ROOT / "figures" / "glm_single_cluster" / "prefilter_decision_tree.csv"
+CLUSTER_FILTER = ROOT / "figures" / "matlab_reference" / "prefilter_decision_tree.csv"
 OUT_ROOT = ROOT / "figures" / "glm" / "exploration" / "history_ablation"
 PROBES = (
     "CAA-1123243_rec1",

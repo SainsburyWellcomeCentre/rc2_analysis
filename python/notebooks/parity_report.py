@@ -1,8 +1,18 @@
 """RC2 GLM — Python vs MATLAB parity notebook.
 
+⚠️ HISTORICAL — DO NOT USE AS PRODUCTION TRUST SIGNAL.
+
+MATLAB parity was retired on 2026-04-29 with the onset-kernel removal
++ history-by-default flip. This notebook is preserved for one-off
+historical comparisons only. The new production trust signal is
+``python/tests/test_pipeline_regression.py`` against an archived
+no-onset+history baseline. Path references below have been updated
+to ``glm/legacy_with_onset/`` (the with-onset parity-passing run
+that this notebook was originally designed against).
+
 A transparent, audit-ready walk through every step the Python pipeline
 takes, with side-by-side checks against the MATLAB reference. The goal
-is explicit: be able to trust the Python GLM as the canonical analysis
+was explicit: be able to trust the Python GLM as the canonical analysis
 and stop consulting MATLAB for verification.
 
 Open this file as a notebook in VSCode / Jupyter (it uses the jupytext
@@ -30,7 +40,7 @@ Everything in this notebook is traceable to a row in that document.
 # **Scope of this notebook.** Purely diagnostic: loads the CSVs produced by
 # ``rc2-glm`` and the MATLAB reference, runs the parity checks, renders the
 # cross-probe figures. It does not re-fit — the aggregated Python run
-# lives under ``local_data/motion_clouds/figures/glm_out_all/``.
+# lives under ``local_data/motion_clouds/figures/glm/legacy_with_onset/``.
 #
 # **What "full trust" means in this document.** The pipeline is trustable
 # when every row in the per-probe ``comparison_report.csv`` either (a) passes
@@ -82,10 +92,10 @@ class ParityPaths:
 def detect_paths() -> ParityPaths:
     home = Path.home()
     if str(home).startswith("/Users/lauraporta"):
-        py_run = Path("/Users/lauraporta/local_data/motion_clouds/figures/glm_out_all")
+        py_run = Path("/Users/lauraporta/local_data/motion_clouds/figures/glm/legacy_with_onset")
         formatted = Path("/Users/lauraporta/local_data/motion_clouds/formatted_data")
     elif str(home).startswith("/Users/laura"):
-        py_run = Path("/Users/laura/local_data/motion_clouds/figures/glm_out_all")
+        py_run = Path("/Users/laura/local_data/motion_clouds/figures/glm/legacy_with_onset")
         formatted = Path("/Users/laura/local_data/motion_clouds/formatted_data")
     else:
         raise RuntimeError(f"unknown machine: home={home}")
@@ -721,7 +731,7 @@ if not cmp_ml.empty:
 # ```bash
 # # Full multi-probe fit with trial-averaged tuning (the default).
 # # Writes per-probe subdirs under _runs/ and concatenated top-level
-# # CSVs into $RC2_GLM_OUTPUT_DIR (usually .../glm_out_all).
+# # CSVs into $RC2_GLM_OUTPUT_DIR (usually .../glm/current).
 # rc2-glm
 #
 # # Parity check + figures. Reads the aggregated CSVs from --python-dir
