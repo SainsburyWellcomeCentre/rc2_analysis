@@ -56,3 +56,94 @@ def onset_kernel_basis(
         np.clip(z, -np.pi, np.pi, out=z)
         B[motion_mask] = 0.5 * (1.0 + np.cos(z))
     return B
+
+
+def history_basis(
+    n_bases: int, t_max_s: float, bin_width_s: float,
+) -> np.ndarray:
+    """Log-spaced raised-cosine bases over post-spike lags [Δt, t_max_s].
+
+    Each row of the returned array is one lag bin (1..n_lag_bins, where
+    ``n_lag_bins = round(t_max_s / bin_width_s)``); each column is one
+    basis function. The bases are evaluated on ``log(lag + 0.5)`` to give
+    Weber-style spacing — fine resolution near lag 0 (refractory), coarse
+    at long lags (slow adaptation). Pillow et al. 2008 convention.
+
+    Bases at lag 0 (the *current* bin's spike) are intentionally absent —
+    the convolution must use *past* spikes only to remain causal.
+
+    Returns array of shape (n_lag_bins, n_bases). Each column has unit
+    peak, like ``raised_cosine_basis``.
+    """
+    n_lag_bins = max(1, int(round(t_max_s / bin_width_s)))
+    # Lag indices 1..n_lag_bins (lag 0 excluded for causality — see
+    # convolve_history's Δt offset).
+    lags = np.arange(1, n_lag_bins + 1, dtype=np.float64)
+    return raised_cosine_basis(lags, n_bases, x_min=lags[0], x_max=lags[-1])
+
+
+def convolve_history(
+    spike_counts: np.ndarray,
+    trial_ids: np.ndarray,
+    basis: np.ndarray,
+) -> np.ndarray:
+    """Per-bin causal convolution of spike counts with a history basis.
+
+    For each basis column k, the output at bin t within trial T is::
+
+        h_k(t) = Σ_{τ=1..n_lag} basis[τ-1, k] · spike_counts[t - τ]
+
+    where the sum is restricted to bins within the same trial T (no
+    cross-trial leakage). Bins where the lookback would cross the trial
+    start are zero-padded — equivalent to "no spikes before the trial"
+    so the bins at the very start of each trial have small history
+    features.
+
+    Parameters
+    ----------
+    spike_counts : (n_total_bins,) int or float
+        Per-bin spike count for ONE cluster, ordered as the binned table.
+    trial_ids : (n_total_bins,) int
+        Per-bin trial identifier; convolution is reset at each trial
+        boundary (zero-padded lookback).
+    basis : (n_lag_bins, n_bases)
+        Output of ``history_basis``.
+
+    Returns
+    -------
+    (n_total_bins, n_bases) float
+    """
+    spike_counts = np.asarray(spike_counts, dtype=np.float64)
+    trial_ids = np.asarray(trial_ids)
+    n_total = spike_counts.size
+    n_lag, n_bases = basis.shape
+    if n_total == 0:
+        return np.zeros((0, n_bases), dtype=np.float64)
+    if trial_ids.shape[0] != n_total:
+        raise ValueError(
+            f"spike_counts ({n_total}) and trial_ids ({trial_ids.shape[0]}) "
+            "must have the same length"
+        )
+
+    out = np.zeros((n_total, n_bases), dtype=np.float64)
+    # Identify trial boundaries — first bin index of each trial.
+    trial_starts = np.concatenate(
+        [[0], np.where(np.diff(trial_ids) != 0)[0] + 1, [n_total]]
+    )
+    for t_start, t_end in zip(trial_starts[:-1], trial_starts[1:]):
+        # Per-trial spike counts.
+        sc = spike_counts[t_start:t_end]
+        n_t = sc.size
+        # For each lag τ in 1..n_lag, the contribution to bin i within
+        # this trial is sc[i - τ] if i - τ >= 0, else 0.
+        # Vectorise via shifted slices.
+        for k in range(n_bases):
+            for lag in range(1, n_lag + 1):
+                w = basis[lag - 1, k]
+                if w == 0.0:
+                    continue
+                # bin i within trial uses sc[i - lag]; valid for i >= lag.
+                if lag >= n_t:
+                    continue
+                out[t_start + lag : t_end, k] += w * sc[: n_t - lag]
+    return out

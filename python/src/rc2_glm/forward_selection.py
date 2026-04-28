@@ -59,13 +59,33 @@ def forward_select(
     backend: str = "irls",
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    *,
+    B_history: np.ndarray | None = None,
 ) -> SelectionResult:
-    config = config or GLMConfig()
+    """Hardcastle-style hierarchical forward selection.
 
-    # Null model: intercept + onset kernel
+    Optional ``B_history`` is the per-cluster spike-history feature
+    matrix; when provided AND ``config.include_history`` is True,
+    ``"History"`` is added as a Phase-1 candidate. The onset-kernel
+    inclusion is gated by ``config.include_onset_kernel`` (defaults
+    True; the prompt-03 ablation flips it to False).
+    """
+    config = config or GLMConfig()
+    include_onset = getattr(config, "include_onset_kernel", True)
+    include_history = (
+        getattr(config, "include_history", False) and B_history is not None
+    )
+
+    common_assembler_kwargs = dict(
+        B_history=B_history if include_history else None,
+        include_onset_kernel=include_onset,
+    )
+
+    # Null model: intercept (+ onset kernel if include_onset_kernel)
     X_null, _ = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, [],
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        **common_assembler_kwargs,
     )
     null_cv = cross_validate_glm(
         X_null, y, offset, fold_ids,
@@ -79,6 +99,8 @@ def forward_select(
 
     # ----- Phase 1: main effects -----
     remaining = list(config.main_effects)
+    if include_history:
+        remaining.append("History")
     while remaining:
         round_num += 1
         round_result = _try_candidates(
@@ -86,6 +108,7 @@ def forward_select(
             y, offset, fold_ids, current_cv.cv_bits_per_spike,
             phase=1, round_num=round_num, backend=backend, config=config,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            **common_assembler_kwargs,
         )
         history.append(round_result)
         if round_result.added and round_result.best_candidate is not None:
@@ -96,11 +119,15 @@ def forward_select(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
                 y, offset, fold_ids, backend, config=config,
                 sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                **common_assembler_kwargs,
             )
         else:
             break
 
     # ----- Phase 2: interactions (only those with both parents selected) -----
+    # History interactions are excluded by default
+    # (config.allow_history_interactions=False); interaction list only
+    # contains stimulus-variable interactions.
     eligible: list[str] = [
         name for name in config.interactions
         if all(parent in selected for parent in INTERACTION_PARENTS[name])
@@ -112,6 +139,7 @@ def forward_select(
             y, offset, fold_ids, current_cv.cv_bits_per_spike,
             phase=2, round_num=round_num, backend=backend, config=config,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            **common_assembler_kwargs,
         )
         history.append(round_result)
         if round_result.added and round_result.best_candidate is not None:
@@ -121,6 +149,7 @@ def forward_select(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
                 y, offset, fold_ids, backend, config=config,
                 sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                **common_assembler_kwargs,
             )
         else:
             break
@@ -154,6 +183,8 @@ def _try_candidates(
     config: GLMConfig,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    B_history: np.ndarray | None = None,
+    include_onset_kernel: bool = True,
 ) -> RoundResult:
     threshold = config.delta_bps_threshold
 
@@ -167,6 +198,8 @@ def _try_candidates(
         X_test, _ = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, test_vars,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            B_history=B_history,
+            include_onset_kernel=include_onset_kernel,
         )
         if X_test.shape[1] >= y.size:
             tested[cand] = -np.inf
@@ -213,10 +246,14 @@ def _cv_for_selected(
     config: GLMConfig,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    B_history: np.ndarray | None = None,
+    include_onset_kernel: bool = True,
 ) -> CVResult:
     X, _ = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, list(selected),
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
+        include_onset_kernel=include_onset_kernel,
     )
     return cross_validate_glm(
         X, y, offset, fold_ids,

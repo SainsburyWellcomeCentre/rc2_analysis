@@ -30,7 +30,21 @@ def assemble_design_matrix_selected(
     selected_vars: list[str],
     sf_ref_levels: np.ndarray | None = None,
     or_ref_levels: np.ndarray | None = None,
+    *,
+    B_history: np.ndarray | None = None,
+    include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
+    """Assemble the design matrix from selected variable names.
+
+    New keyword args (added 2026-04-28 for prompt 03):
+
+    - ``B_history``: per-cluster spike-history features ``(n_bins, n_history_bases)``.
+      When provided AND ``"History"`` is in ``selected_vars``, append the
+      history columns. ``None`` → no history term regardless of selection.
+    - ``include_onset_kernel``: when False, the Onset basis is OMITTED
+      from the design matrix entirely. Used by the prompt-03 ablation
+      experiment. Default True for parity-preserving baseline behaviour.
+    """
     n = B_speed.shape[0]
     n_speed_b = B_speed.shape[1]
     n_tf_b = B_tf.shape[1]
@@ -42,10 +56,15 @@ def assemble_design_matrix_selected(
     cols: list[np.ndarray] = [np.ones((n, 1))]
     names: list[str] = ["Intercept"]
 
-    cols.append(B_onset)
-    names += [f"Onset_{i + 1}" for i in range(B_onset.shape[1])]
+    if include_onset_kernel and B_onset is not None and B_onset.shape[1] > 0:
+        cols.append(B_onset)
+        names += [f"Onset_{i + 1}" for i in range(B_onset.shape[1])]
 
     selected = set(selected_vars)
+
+    if "History" in selected and B_history is not None and B_history.shape[1] > 0:
+        cols.append(B_history)
+        names += [f"History_{i + 1}" for i in range(B_history.shape[1])]
 
     if "Speed" in selected:
         cols.append(B_speed)
@@ -116,8 +135,20 @@ def assemble_design_matrix(
     model_label: str,
     sf_ref_levels: np.ndarray | None = None,
     or_ref_levels: np.ndarray | None = None,
+    *,
+    B_history: np.ndarray | None = None,
+    include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
-    """Build a fixed model matrix labelled by `model_label`."""
+    """Build a fixed model matrix labelled by `model_label`.
+
+    See ``assemble_design_matrix_selected`` for the History / onset-toggle
+    keyword args. ``M0`` and ``Null`` ignore History (it's a Phase-1
+    candidate, not in the always-on baseline).
+    """
+    common_kwargs = dict(
+        B_history=B_history,
+        include_onset_kernel=include_onset_kernel,
+    )
     if model_label == "M0":
         n = B_speed.shape[0]
         return np.ones((n, 1)), ["Intercept"]
@@ -125,11 +156,13 @@ def assemble_design_matrix(
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
             [], sf_ref_levels, or_ref_levels,
+            **common_kwargs,
         )
     if model_label == "Additive":
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
             ["Speed", "TF", "SF", "OR"], sf_ref_levels, or_ref_levels,
+            **common_kwargs,
         )
     if model_label == "FullInteraction":
         return assemble_design_matrix_selected(
@@ -138,6 +171,7 @@ def assemble_design_matrix(
              "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
              "TF_x_SF", "TF_x_OR", "SF_x_OR"],
             sf_ref_levels, or_ref_levels,
+            **common_kwargs,
         )
     if model_label.startswith("Additive_no_"):
         drop = model_label.removeprefix("Additive_no_")
@@ -145,6 +179,7 @@ def assemble_design_matrix(
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
             keep, sf_ref_levels, or_ref_levels,
+            **common_kwargs,
         )
     raise ValueError(f"Unknown model label: {model_label}")
 

@@ -387,6 +387,19 @@ def _fit_one_cluster(
     B_onset = onset_kernel_basis(
         onset, config.n_onset_bases, config.onset_range[1]
     )
+    # Per-cluster spike-history features (causal, trial-aware). Built
+    # only when config.include_history is True (prompt 03 opt-in);
+    # otherwise None — every downstream caller treats None as "no history".
+    if getattr(config, "include_history", False):
+        from rc2_glm.basis import history_basis, convolve_history
+        h_basis = history_basis(
+            n_bases=config.n_history_bases,
+            t_max_s=config.history_window_s,
+            bin_width_s=config.time_bin_width,
+        )
+        B_history = convolve_history(y, trial_ids, h_basis)
+    else:
+        B_history = None
 
     offset = float(np.log(config.time_bin_width))
     fold_ids = make_trial_folds(
@@ -409,6 +422,7 @@ def _fit_one_cluster(
         y, offset, fold_ids,
         config=config, backend=backend,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
     )
 
     additive_cv, additive_status = _cv_for_label(
@@ -416,12 +430,14 @@ def _fit_one_cluster(
         y, offset, fold_ids, backend, config,
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
     )
     full_int_cv, full_int_status = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
         y, offset, fold_ids, backend, config,
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
     )
 
     coef_df, betas, col_names_by_model, preds, refit_status = _fit_plot_models(
@@ -431,6 +447,7 @@ def _fit_one_cluster(
         motion_row_mask=motion_mask.to_numpy(dtype=bool),
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
     )
 
     profile_cv_bps = _profile_cv_diagnostic(
@@ -566,10 +583,15 @@ def _cv_for_label(
     cluster_id: int,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    *,
+    B_history: np.ndarray | None = None,
 ) -> tuple[float, str]:
+    include_onset = getattr(config, "include_onset_kernel", True)
     X, _ = assemble_design_matrix(
         B_speed, B_tf, B_onset, sf_vals, or_vals, label,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history,
+        include_onset_kernel=include_onset,
     )
     if X.shape[1] == 0:
         logger.warning(
@@ -611,6 +633,8 @@ def _fit_plot_models(
     cluster_id: int,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    *,
+    B_history: np.ndarray | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, np.ndarray],
@@ -635,6 +659,7 @@ def _fit_plot_models(
     preds: dict[str, np.ndarray] = {}
     refit_status: dict[str, str] = {}
 
+    include_onset = getattr(config, "include_onset_kernel", True)
     model_defs: list[tuple[str, list[str]]] = [
         ("Null", []),
         ("Selected", list(selected_vars)),
@@ -646,6 +671,8 @@ def _fit_plot_models(
         X, names = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, vars_for_label,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            B_history=B_history,
+            include_onset_kernel=include_onset,
         )
         if X.shape[1] == 0:
             logger.warning(
@@ -1513,6 +1540,27 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--include-history", dest="include_history", action="store_true",
+        help=(
+            "Add spike history as a Phase-1 forward-selection candidate "
+            "(prompt 03, 2026-04-28). 10 log-spaced raised-cosine bases "
+            "over a 200ms post-spike window, convolved trial-aware "
+            "(zero-padded at trial starts; lag 0 excluded for causality). "
+            "Default OFF — production parity-protected runs continue "
+            "without history."
+        ),
+    )
+    parser.add_argument(
+        "--no-onset-kernel", dest="include_onset_kernel", action="store_false",
+        help=(
+            "Ablation flag (prompt 03 §Ablation). Omit the onset kernel "
+            "from every model. Used by the four-variant ablation script. "
+            "Default ON — omitting breaks MATLAB parity (Null model "
+            "shifts), so use only for ablation runs."
+        ),
+    )
+    parser.set_defaults(include_history=False, include_onset_kernel=True)
+    parser.add_argument(
         "--tuning-curve-uncertainty",
         choices=("none", "simulated", "covariate-spread", "wide-quantile",
                  "std", "iqr"),
@@ -1609,6 +1657,8 @@ def main(argv: list[str] | None = None) -> int:
         "device": args.device,
         "tuning_curve_mode": args.tuning_curve_mode,
         "tuning_curve_uncertainty": args.tuning_curve_uncertainty,
+        "include_history": args.include_history,
+        "include_onset_kernel": args.include_onset_kernel,
         "cv_strategy": args.cv_strategy,
         "profile_cv_diagnostic": args.profile_cv_diagnostic,
     }

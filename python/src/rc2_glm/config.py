@@ -29,6 +29,25 @@ class GLMConfig:
     n_onset_bases: int = 6
     onset_range: tuple[float, float] = (0.0, 2.0)         # seconds
 
+    # --- Spike history (prompt 03, 2026-04-28) ---
+    # Default OFF — production parity-protected runs continue to use the
+    # MATLAB-equivalent model with no spike-history term. Flip via the
+    # `--include-history` CLI flag to add 10 log-spaced raised-cosine
+    # bases over a 200 ms post-spike window as a Phase-1 forward-selection
+    # candidate. Each cluster's history features are convolved trial-aware
+    # (zero-padded at trial starts; lag 0 excluded for causality).
+    include_history: bool = False
+    n_history_bases: int = 10
+    history_window_s: float = 0.2
+    # When False (default), History interacts with nothing in Phase 2 —
+    # interaction interpretations are rarely useful for spike history.
+    allow_history_interactions: bool = False
+    # Ablation flag (prompt 03 §Ablation, 2026-04-28). When False, the
+    # Onset kernel is OMITTED from every model. Used by the four-variant
+    # ablation script comparing baseline / +history / history-only /
+    # minus-onset. Default True keeps parity-protected baseline behaviour.
+    include_onset_kernel: bool = True
+
     # --- GLM fitting ---
     # Ridge on all non-intercept columns. Non-zero default picks a
     # specific rotation in the flat direction of the Poisson likelihood

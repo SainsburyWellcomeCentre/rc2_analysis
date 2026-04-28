@@ -27,7 +27,7 @@ from rc2_glm.plots import (
     plot_tuning_curves,
     save_figure,
 )
-from rc2_glm.precomputed_bins import PrecomputedBinEdges
+from rc2_glm.precomputed_bins import PerConditionTuning, PrecomputedBinEdges
 
 
 def test_plot_basis_functions_returns_figure():
@@ -318,17 +318,19 @@ def test_plot_tuning_curves_accepts_precomputed_bins():
     """Pipeline wiring: plot_tuning_curves must not choke on the kwarg."""
     cluster_df = _synthetic_cluster_df()
     betas, col_names, _ = _synthetic_model_dicts(cluster_df)
+    def _empty_cache(edges):
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        return PerConditionTuning(
+            bin_edges=edges, bin_centres=centres,
+            cluster_ids=np.array([], dtype=int),
+            tuning={}, trial_ids={},
+            stationary_fr={}, stationary_time={},
+        )
+    speed_edges = np.linspace(0.0, 50.0, 21)
+    tf_edges = np.linspace(0.0, 8.0, 21)
     precomputed = PrecomputedBinEdges(
-        speed_by_group={
-            "VT": np.linspace(0.0, 50.0, 21),
-            "V": np.linspace(0.0, 50.0, 21),
-            "T_Vstatic": np.linspace(0.0, 50.0, 21),
-        },
-        tf_by_group={
-            "VT": np.linspace(0.0, 8.0, 21),
-            "V": np.linspace(0.0, 8.0, 21),
-            "T_Vstatic": np.linspace(0.0, 8.0, 21),
-        },
+        speed_by_group={c: _empty_cache(speed_edges) for c in ("VT", "V", "T_Vstatic")},
+        tf_by_group={c: _empty_cache(tf_edges) for c in ("VT", "V", "T_Vstatic")},
     )
     fig = plot_tuning_curves(
         probe_id="p0", cluster_id=1, cluster_df=cluster_df,
