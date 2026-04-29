@@ -328,15 +328,26 @@ def plot_forward_selection_summary(
 
     # --- Panel 2: Variable-inclusion rates ---
     ax = axes[1]
+    # History selection isn't a column in comparison_df — derive it from
+    # the selected_vars string (which lists "History" when the spike-history
+    # term made it through forward selection).
+    history_count = int(
+        comparison_df["time_selected_vars"].astype(str)
+        .apply(lambda s: "History" in s.split("+")).sum()
+    )
     me_counts = [
         int(comparison_df["time_is_speed_tuned"].sum()),
         int(comparison_df["time_is_tf_tuned"].sum()),
         int(comparison_df["time_is_sf_tuned"].sum()),
         int(comparison_df["time_is_or_tuned"].sum()),
+        history_count,
         int(comparison_df["time_has_interaction"].sum()),
     ]
-    me_labels = ["Speed", "TF", "SF", "OR", "Any Interact."]
-    me_colors = [_COLOR_SPEED, _COLOR_TF, _COLOR_SF, _COLOR_OR, _COLOR_INT_BLUE]
+    me_labels = ["Speed", "TF", "SF", "OR", "History", "Any Interact."]
+    me_colors = [
+        _COLOR_SPEED, _COLOR_TF, _COLOR_SF, _COLOR_OR,
+        _BETA_GROUP_COLORS["History"], _COLOR_INT_BLUE,
+    ]
     y_pos = np.arange(1, len(me_counts) + 1)
     ax.barh(y_pos, me_counts, color=me_colors, edgecolor="none")
     ax.set_yticks(y_pos)
@@ -1180,8 +1191,10 @@ def plot_trial_level_predictions(
 
 # Beta-swarm group layout — matches MATLAB compute_grouped_params (line 6328).
 # Keys are MATLAB group tags; values are the palette row and tick label.
+# "History" added 2026-04-29 with the spike-history term — was previously
+# falling through to "Other" in the beta-swarm panel.
 _BETA_GROUP_ORDER: tuple[str, ...] = (
-    "Intercept", "Speed", "TF", "SF", "OR", "Time",
+    "Intercept", "Speed", "TF", "SF", "OR", "Time", "History",
     "Spd x TF", "Spd x SF", "Spd x OR",
     "TF x SF", "TF x OR", "SF x OR",
     "Other",
@@ -1193,6 +1206,7 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "SF":         (0.95, 0.85, 0.10),
     "OR":         (0.84, 0.15, 0.16),
     "Time":       (0.3, 0.8, 0.8),
+    "History":    (0.45, 0.20, 0.65),  # purple — distinct from stimuli + Time
     "Spd x TF":   (0.6, 0.35, 0.05),
     "Spd x SF":   (0.55, 0.50, 0.05),
     "Spd x OR":   (0.50, 0.10, 0.10),
@@ -1443,6 +1457,8 @@ def _beta_group_tag(col_name: str) -> str:
         return "OR"
     if col_name.startswith(("Onset_", "Time_")):
         return "Time"
+    if col_name.startswith("History_"):
+        return "History"
     return "Other"
 
 

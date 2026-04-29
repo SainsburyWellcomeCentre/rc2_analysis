@@ -1814,6 +1814,33 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
             diag / "stationary_vs_motion_fr_python.csv", index=False,
         )
 
+    # Aggregate forward-selection summary across all probes. Used to live
+    # under validation/ via rc2-glm-compare; that tool was retired with
+    # MATLAB parity (2026-04-29). Now generated here so the production
+    # output dir always carries one canonical "what fraction of clusters
+    # selected each variable" plot at the 4-probe level.
+    agg_cmp_path = out_root / "glm_model_comparison.csv"
+    if agg_cmp_path.is_file():
+        try:
+            from rc2_glm.plots import plot_forward_selection_summary
+            agg_df = pd.read_csv(agg_cmp_path)
+            figs_dir = out_root / "figs"
+            figs_dir.mkdir(exist_ok=True)
+            fig = plot_forward_selection_summary(agg_df)
+            fig.suptitle(
+                f"Forward-selection summary — {len(sorted(runs_root.iterdir()))} probes, "
+                f"{len(agg_df)} clusters",
+                fontsize=11,
+            )
+            fig.savefig(figs_dir / "forward_selection_summary.pdf")
+            fig.savefig(figs_dir / "forward_selection_summary.png", dpi=150)
+            import matplotlib.pyplot as _plt
+            _plt.close(fig)
+            logger.info("wrote aggregate %s",
+                        (figs_dir / "forward_selection_summary.pdf").relative_to(out_root))
+        except Exception as exc:
+            logger.warning("aggregate forward-selection summary failed: %s", exc)
+
 
 def _find_env_file() -> str | None:
     """Locate python/.env by walking up from the CWD, then from this file."""
