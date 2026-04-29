@@ -120,12 +120,34 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
         )
         # Lag in milliseconds (lag bin 1..N → time post-spike)
         lag_ms = np.arange(1, n_lag_bins + 1) * config.time_bin_width * 1000.0
-        for i in range(h_basis.shape[1]):
-            axes[panel_idx].plot(lag_ms, h_basis[:, i], "o-",
-                                 markersize=3, label=f"basis {i + 1}")
+        # The history bases are raised cosines on log(lag + 0.5). At
+        # production bin widths only a few lag bins are distinct
+        # (n_lag_bins = round(window / bin_width)), so plotting through
+        # the evaluated points alone makes the cosine LOOK like straight
+        # lines. To make the underlying basis shape visible, render the
+        # raised cosine on a fine grid AND mark the actual lag-bin
+        # evaluation points.
+        # Continuous evaluation grid over the lag domain (raised_cosine_basis
+        # is already imported at module top level).
+        fine_lags = np.linspace(1.0, n_lag_bins, max(400, n_lag_bins * 50))
+        h_basis_fine = raised_cosine_basis(
+            fine_lags, config.n_history_bases,
+            x_min=fine_lags[0], x_max=fine_lags[-1],
+        )
+        fine_ms = fine_lags * config.time_bin_width * 1000.0
+        for i in range(h_basis_fine.shape[1]):
+            line, = axes[panel_idx].plot(
+                fine_ms, h_basis_fine[:, i], "-", linewidth=1.4,
+                label=f"basis {i + 1}",
+            )
+            axes[panel_idx].plot(
+                lag_ms, h_basis[:, i], "o", markersize=5,
+                color=line.get_color(),
+            )
         axes[panel_idx].set_title(
-            f"History basis ({config.n_history_bases} log-spaced over "
-            f"{config.history_window_s * 1000:.0f} ms — {n_lag_bins} lag bins resolved)"
+            f"History basis ({config.n_history_bases} log-spaced raised "
+            f"cosines over {config.history_window_s * 1000:.0f} ms — "
+            f"evaluated at {n_lag_bins} lag bins, ● markers)"
         )
         axes[panel_idx].set_xlabel("lag (ms post-spike)")
         axes[panel_idx].set_ylabel("activation")
@@ -278,6 +300,35 @@ def _kernel_for_interaction(
     return speed_grid, tf_grid, kernel
 
 
+_FULL_VAR_COLS: tuple[str, ...] = (
+    "Speed", "TF", "SF", "OR", "History", "Spd × TF",
+)
+
+
+def _selected_vars_present(coef_rows: pd.DataFrame) -> list[str]:
+    """Return only the variables that have at least one non-Intercept
+    coefficient in this model's coef_rows. Used to dynamically size the
+    Selected row of plot_cluster_kernels.
+    """
+    if coef_rows.empty:
+        return []
+    present: list[str] = []
+    coef_names = coef_rows["coefficient"].tolist()
+    has_speed = any(re.match(r"^Speed_\d+$", c) for c in coef_names)
+    has_tf = any(re.match(r"^TF_\d+$", c) for c in coef_names)
+    has_sf = any(c.startswith("SF_") for c in coef_names)
+    has_or = any(c.startswith("OR_") for c in coef_names)
+    has_history = any(c.startswith("History_") for c in coef_names)
+    has_int = any(re.match(r"^Spd\d+_x_TF\d+$", c) for c in coef_names)
+    if has_speed: present.append("Speed")
+    if has_tf: present.append("TF")
+    if has_sf: present.append("SF")
+    if has_or: present.append("OR")
+    if has_history: present.append("History")
+    if has_int: present.append("Spd × TF")
+    return present
+
+
 def plot_cluster_kernels(
     probe_id: str,
     cluster_id: int,
@@ -286,106 +337,147 @@ def plot_cluster_kernels(
 ) -> Figure:
     """Per-cluster kernel shapes — what the GLM actually learned.
 
-    For each of the four models (Null / Selected / Additive /
-    FullInteraction) and each of six variables (Speed / TF / SF / OR /
-    History / Spd × TF), plots the kernel shape ``Σ_k β_k · basis_k(x)``
-    that contributes to the log firing rate. Categorical variables (SF /
-    OR) render as bar charts; the Speed × TF interaction renders as a
-    2D heatmap. Empty panels mean the variable wasn't part of that
-    model's fit.
+    Layout (four model rows):
+      - Null: 1 panel showing only the intercept (just text).
+      - Selected: ONE panel per variable actually selected (dynamic
+        width — usually 1-3 panels).
+      - Additive: full 6-column grid (all candidate variables, even if
+        their fitted β are near-zero).
+      - FullInteraction: full 6-column grid.
+
+    Categorical variables (SF / OR) render as bar charts; the Speed × TF
+    interaction renders as a 2D heatmap. Continuous variables (Speed,
+    TF, History) render as filled-area kernel curves.
 
     ``coef_df_cluster`` is the slice of ``glm_coefficients.csv`` for
     this cluster, ``glm_type == "time"`` (one row per (model,
     coefficient) pair).
     """
-    models = ("Null", "Selected", "Additive", "FullInteraction")
-    var_cols = ("Speed", "TF", "SF", "OR", "History", "Spd × TF")
+    var_cols = _FULL_VAR_COLS
 
-    fig, axes = plt.subplots(
-        len(models), len(var_cols),
-        figsize=(20, 11), constrained_layout=True,
-    )
+    sel_rows = coef_df_cluster[coef_df_cluster["model"] == "Selected"]
+    selected_present = _selected_vars_present(sel_rows)
+    selected_label = "+".join(selected_present) if selected_present else "—"
 
-    # Header banner: which model is selected for this cluster
-    sel_row = coef_df_cluster[coef_df_cluster["model"] == "Selected"]
-    selected_vars = "—"
-    if not sel_row.empty:
-        # Recover the selected_vars string from the coefficient list
-        coef_names = sel_row["coefficient"].tolist()
-        groups = sorted({_beta_group_tag(c) for c in coef_names if c != "Intercept"})
-        selected_vars = "+".join(g for g in groups if g != "Other")
+    null_rows = coef_df_cluster[coef_df_cluster["model"] == "Null"]
+    add_rows = coef_df_cluster[coef_df_cluster["model"] == "Additive"]
+    fi_rows = coef_df_cluster[coef_df_cluster["model"] == "FullInteraction"]
+
+    # GridSpec: row 0 = Null (1 wide), row 1 = Selected (n_selected wide,
+    # spanning the full width visually), rows 2-3 = Additive / FullInteraction
+    # (6 wide). Use a 6-column grid; Selected panels span their share.
+    n_full = len(var_cols)  # 6
+    fig = plt.figure(figsize=(3.4 * n_full, 11), constrained_layout=True)
+    gs = fig.add_gridspec(4, n_full)
 
     fig.suptitle(
         f"Per-cluster kernels — {probe_id} · cluster {cluster_id} · "
-        f"Selected: {selected_vars}",
+        f"Selected: {selected_label}",
         fontsize=12,
     )
 
-    for row_idx, model in enumerate(models):
-        sub = coef_df_cluster[coef_df_cluster["model"] == model]
+    # Row 0: Null — single panel spanning width, just shows intercept value.
+    ax0 = fig.add_subplot(gs[0, :])
+    intercept = null_rows.loc[null_rows["coefficient"] == "Intercept", "estimate"]
+    intercept_val = float(intercept.iloc[0]) if not intercept.empty else float("nan")
+    ax0.text(
+        0.5, 0.5,
+        f"Null model — intercept only, log λ ≈ {intercept_val:.3f}\n"
+        f"(baseline FR ≈ {np.exp(intercept_val):.2f} Hz)",
+        ha="center", va="center", transform=ax0.transAxes, fontsize=11,
+    )
+    ax0.set_axis_off()
+    ax0.text(-0.02, 0.5, "Null", rotation=90, va="center",
+             transform=ax0.transAxes, fontsize=11, fontweight="bold")
+
+    # Row 1: Selected — only the variables actually present, distributed
+    # across the full width.
+    if selected_present:
+        # Equally distribute the n_full slots among len(selected_present)
+        # axes. e.g. 2 selected → each spans 3 cols; 3 selected → 2 cols
+        # each; 4 selected → 1.5 cols (rounded to integer slots).
+        n_sel = len(selected_present)
+        # Use even integer column splits when possible.
+        slot_widths = [n_full // n_sel] * n_sel
+        for i in range(n_full % n_sel):
+            slot_widths[i] += 1
+        col_starts = np.cumsum([0] + slot_widths[:-1])
+        for i, var in enumerate(selected_present):
+            ax = fig.add_subplot(gs[1, col_starts[i]:col_starts[i] + slot_widths[i]])
+            if i == 0:
+                ax.text(-0.05, 0.5, "Selected", rotation=90, va="center",
+                        transform=ax.transAxes, fontsize=11, fontweight="bold",
+                        color="C3")
+            _render_kernel_panel(ax, sel_rows, var, config, title=var)
+    else:
+        ax = fig.add_subplot(gs[1, :])
+        ax.text(0.5, 0.5, "Selected: no variables selected",
+                ha="center", va="center", transform=ax.transAxes,
+                color=(0.5, 0.5, 0.5))
+        ax.set_axis_off()
+
+    # Rows 2/3: Additive / FullInteraction — fixed 6-wide grid
+    for row_idx, (model_label, sub) in enumerate(
+        [("Additive", add_rows), ("FullInteraction", fi_rows)], start=2
+    ):
         for col_idx, var in enumerate(var_cols):
-            ax = axes[row_idx, col_idx]
+            ax = fig.add_subplot(gs[row_idx, col_idx])
             if col_idx == 0:
-                ax.set_ylabel(f"{model}\n\nlog λ contribution",
-                              fontsize=9, rotation=90)
-            if row_idx == 0:
-                ax.set_title(var, fontsize=11, fontweight="bold")
-            if sub.empty:
-                ax.text(0.5, 0.5, "no fit",
-                        ha="center", va="center",
-                        transform=ax.transAxes,
-                        fontsize=10, color=(0.5, 0.5, 0.5))
-                ax.set_xticks([])
-                ax.set_yticks([])
-                continue
-
-            if var == "Spd × TF":
-                inter = _kernel_for_interaction(sub, config)
-                if inter is None:
-                    ax.text(0.5, 0.5, "not selected",
-                            ha="center", va="center",
-                            transform=ax.transAxes,
-                            fontsize=9, color=(0.5, 0.5, 0.5))
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    continue
-                speed_grid, tf_grid, kernel = inter
-                vmax = np.abs(kernel).max() or 1.0
-                im = ax.pcolormesh(
-                    speed_grid, tf_grid, kernel,
-                    cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto",
-                )
-                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                ax.set_xlabel("speed (cm/s)", fontsize=8)
-                if col_idx == 0:
-                    ax.set_ylabel("TF (Hz)", fontsize=8)
-                continue
-
-            kdata = _kernel_for_var(sub, var, config)
-            if kdata is None:
-                ax.text(0.5, 0.5, "not selected",
-                        ha="center", va="center",
-                        transform=ax.transAxes,
-                        fontsize=9, color=(0.5, 0.5, 0.5))
-                ax.set_xticks([])
-                ax.set_yticks([])
-                continue
-            x, kernel, xlabel = kdata
-            colour = _BETA_GROUP_COLORS.get(var, (0.2, 0.2, 0.2))
-            if var in ("SF", "OR"):
-                ax.bar(x, kernel, color=colour, edgecolor="black",
-                       linewidth=0.5, width=(x.max() - x.min()) / max(len(x), 1) * 0.4)
-                ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
-            else:
-                ax.plot(x, kernel, color=colour, linewidth=2)
-                ax.fill_between(x, 0, kernel, color=colour, alpha=0.15)
-                ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
-            ax.set_xlabel(xlabel, fontsize=8)
-            ax.tick_params(axis="both", labelsize=7)
-            for sp in ("top", "right"):
-                ax.spines[sp].set_visible(False)
+                ax.text(-0.18, 0.5, model_label, rotation=90, va="center",
+                        transform=ax.transAxes, fontsize=11, fontweight="bold")
+            _render_kernel_panel(ax, sub, var, config, title=var if row_idx == 2 else "")
 
     return fig
+
+
+def _render_kernel_panel(
+    ax, coef_rows: pd.DataFrame, var: str, config: GLMConfig, title: str = "",
+) -> None:
+    """Helper: render one (model, var) panel into ax. Used by
+    plot_cluster_kernels to keep the orchestration logic clean."""
+    if title:
+        ax.set_title(title, fontsize=10, fontweight="bold")
+    if coef_rows.empty:
+        ax.text(0.5, 0.5, "no fit", ha="center", va="center",
+                transform=ax.transAxes, fontsize=9, color=(0.5, 0.5, 0.5))
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+    if var == "Spd × TF":
+        inter = _kernel_for_interaction(coef_rows, config)
+        if inter is None:
+            ax.text(0.5, 0.5, "not selected", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=9, color=(0.5, 0.5, 0.5))
+            ax.set_xticks([]); ax.set_yticks([])
+            return
+        speed_grid, tf_grid, kernel = inter
+        vmax = np.abs(kernel).max() or 1.0
+        im = ax.pcolormesh(speed_grid, tf_grid, kernel, cmap="RdBu_r",
+                           vmin=-vmax, vmax=vmax, shading="auto")
+        ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_xlabel("speed (cm/s)", fontsize=8)
+        ax.set_ylabel("TF (Hz)", fontsize=8)
+        return
+    kdata = _kernel_for_var(coef_rows, var, config)
+    if kdata is None:
+        ax.text(0.5, 0.5, "not selected", ha="center", va="center",
+                transform=ax.transAxes, fontsize=9, color=(0.5, 0.5, 0.5))
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+    x, kernel, xlabel = kdata
+    colour = _BETA_GROUP_COLORS.get(var, (0.2, 0.2, 0.2))
+    if var in ("SF", "OR"):
+        bar_w = (x.max() - x.min()) / max(len(x), 1) * 0.4 if len(x) > 1 else 0.5
+        ax.bar(x, kernel, color=colour, edgecolor="black",
+               linewidth=0.5, width=bar_w)
+        ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
+    else:
+        ax.plot(x, kernel, color=colour, linewidth=2)
+        ax.fill_between(x, 0, kernel, color=colour, alpha=0.15)
+        ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
+    ax.set_xlabel(xlabel, fontsize=8)
+    ax.tick_params(axis="both", labelsize=7)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
 
 
 # --------------------------------------------------------------------------- #
