@@ -79,8 +79,22 @@ def save_figure(fig: Figure, path_base: Path, fmt: str = "pdf") -> list[Path]:
 
 
 def plot_basis_functions(config: GLMConfig) -> Figure:
-    """Overview of the continuous basis families used by the GLM."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
+    """Overview of the continuous basis families used by the GLM.
+
+    Always shows Speed and TF (the two stimulus bases). The third panel
+    shows whichever temporal basis the active config selects:
+      - History (default since 2026-04-29 — `include_history=True`)
+      - Onset kernel (when `include_onset_kernel=True`, opt-in)
+      - Both, side-by-side, when both are active for an ablation run.
+    """
+    show_history = config.include_history
+    show_onset = config.include_onset_kernel
+    n_panels = 2 + (1 if show_history else 0) + (1 if show_onset else 0)
+    if n_panels == 2:
+        # Edge case: someone disabled both. Still render an explanatory panel.
+        n_panels = 3
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4),
+                             constrained_layout=True)
 
     speed_grid = np.linspace(config.speed_range[0], config.speed_range[1], 400)
     B_speed = raised_cosine_basis(speed_grid, config.n_speed_bases, *config.speed_range)
@@ -98,13 +112,39 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
     axes[1].set_xlabel("TF (Hz)")
     axes[1].set_ylabel("activation")
 
-    onset_grid = np.linspace(0.0, config.onset_range[1], 400)
-    B_onset = onset_kernel_basis(onset_grid, config.n_onset_bases, config.onset_range[1])
-    for i in range(B_onset.shape[1]):
-        axes[2].plot(onset_grid, B_onset[:, i], label=f"basis {i + 1}")
-    axes[2].set_title(f"Onset kernel ({config.n_onset_bases} bases)")
-    axes[2].set_xlabel("t since onset (s)")
-    axes[2].set_ylabel("activation")
+    panel_idx = 2
+    if show_history:
+        n_lag_bins = max(1, int(round(config.history_window_s / config.time_bin_width)))
+        h_basis = history_basis(
+            config.n_history_bases, config.history_window_s, config.time_bin_width,
+        )
+        # Lag in milliseconds (lag bin 1..N → time post-spike)
+        lag_ms = np.arange(1, n_lag_bins + 1) * config.time_bin_width * 1000.0
+        for i in range(h_basis.shape[1]):
+            axes[panel_idx].plot(lag_ms, h_basis[:, i], "o-",
+                                 markersize=3, label=f"basis {i + 1}")
+        axes[panel_idx].set_title(
+            f"History basis ({config.n_history_bases} log-spaced over "
+            f"{config.history_window_s * 1000:.0f} ms — {n_lag_bins} lag bins resolved)"
+        )
+        axes[panel_idx].set_xlabel("lag (ms post-spike)")
+        axes[panel_idx].set_ylabel("activation")
+        axes[panel_idx].grid(True, alpha=0.3)
+        panel_idx += 1
+    if show_onset:
+        onset_grid = np.linspace(0.0, config.onset_range[1], 400)
+        B_onset = onset_kernel_basis(onset_grid, config.n_onset_bases, config.onset_range[1])
+        for i in range(B_onset.shape[1]):
+            axes[panel_idx].plot(onset_grid, B_onset[:, i], label=f"basis {i + 1}")
+        axes[panel_idx].set_title(f"Onset kernel ({config.n_onset_bases} bases)")
+        axes[panel_idx].set_xlabel("t since onset (s)")
+        axes[panel_idx].set_ylabel("activation")
+        panel_idx += 1
+    if not show_history and not show_onset:
+        axes[2].text(0.5, 0.5,
+                     "no temporal basis active\n(include_history=False,\ninclude_onset_kernel=False)",
+                     ha="center", va="center", transform=axes[2].transAxes)
+        axes[2].set_axis_off()
 
     fig.suptitle("GLM basis functions")
     return fig
