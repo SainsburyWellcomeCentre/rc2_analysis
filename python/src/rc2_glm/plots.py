@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
+from rc2_glm.basis import history_basis, onset_kernel_basis, raised_cosine_basis
 from rc2_glm.config import GLMConfig, MIN_TRIALS_FOR_BAND
 from rc2_glm.design_matrix import assemble_design_matrix_selected
 from rc2_glm.precomputed_bins import PrecomputedBinEdges
@@ -107,6 +107,244 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
     axes[2].set_ylabel("activation")
 
     fig.suptitle("GLM basis functions")
+    return fig
+
+
+# --------------------------------------------------------------------------- #
+# Per-cluster kernel-shape plot — basis × β contribution to log λ.
+# Sits between the per-cluster β swarm (raw coefficients) and the
+# per-cluster tuning curves (predicted firing rate marginalised over
+# covariates). Shows the SHAPE of the GLM's learned kernel for each
+# variable. Especially informative for History at the various bin widths.
+# --------------------------------------------------------------------------- #
+
+
+def _kernel_for_var(
+    coef_rows: pd.DataFrame,
+    var: str,
+    config: GLMConfig,
+) -> tuple[np.ndarray, np.ndarray, str] | None:
+    """Return (x_grid, kernel_at_grid, x_label) for one variable, or None
+    if no coefficients for that variable are present in ``coef_rows``.
+
+    ``coef_rows`` is the slice of ``glm_coefficients.csv`` for one
+    (cluster, model) pair (one row per coefficient).
+    """
+    if var == "Speed":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^Speed_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        x_grid = np.linspace(*config.speed_range, 200)
+        B = raised_cosine_basis(x_grid, config.n_speed_bases, *config.speed_range)
+        return x_grid, B @ betas, "speed (cm/s)"
+
+    if var == "TF":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^TF_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        x_grid = np.linspace(*config.tf_range, 200)
+        B = raised_cosine_basis(x_grid, config.n_tf_bases, *config.tf_range)
+        return x_grid, B @ betas, "TF (Hz)"
+
+    if var == "History":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^History_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        # Reconstruct the lag-bin grid the basis was evaluated on
+        n_lag_bins = max(int(round(config.history_window_s / config.time_bin_width)), 1)
+        n_bases = sub.shape[0]
+        h_basis = history_basis(
+            n_bases, config.history_window_s, config.time_bin_width,
+        )
+        # Lag in milliseconds (lag bin 1..N → time post-spike)
+        x_grid = np.arange(1, n_lag_bins + 1) * config.time_bin_width * 1000.0
+        return x_grid, h_basis @ betas, "lag (ms post-spike)"
+
+    if var == "Onset":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^Onset_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        x_grid = np.linspace(0.0, config.onset_range[1], 200)
+        B = onset_kernel_basis(x_grid, config.n_onset_bases, config.onset_range[1])
+        return x_grid, B @ betas, "t since onset (s)"
+
+    if var == "SF":
+        sub = coef_rows[coef_rows["coefficient"].str.startswith("SF_")]
+        if sub.empty:
+            return None
+        # Categorical levels — coefficient names look like "SF_0.0060".
+        levels = sub["coefficient"].str.replace("SF_", "").astype(float).to_numpy()
+        return levels, sub["estimate"].to_numpy(), "SF (cpd)"
+
+    if var == "OR":
+        sub = coef_rows[coef_rows["coefficient"].str.startswith("OR_")]
+        if sub.empty:
+            return None
+        levels = sub["coefficient"].str.replace("OR_", "").astype(float).to_numpy()
+        # Render in degrees for readability.
+        return np.degrees(levels), sub["estimate"].to_numpy(), "orientation (deg)"
+
+    return None
+
+
+def _kernel_for_interaction(
+    coef_rows: pd.DataFrame, config: GLMConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Speed × TF interaction kernel as a 2D surface.
+
+    Returns ``(speed_grid, tf_grid, kernel)`` with shape
+    ``(len(tf_grid), len(speed_grid))``, or None if no Spd_x_TF
+    coefficients are present.
+    """
+    sub = coef_rows[coef_rows["coefficient"].str.contains("_x_TF")]
+    sub = sub[sub["coefficient"].str.startswith("Spd")]
+    if sub.empty:
+        return None
+    coef_map: dict[tuple[int, int], float] = {}
+    for _, row in sub.iterrows():
+        # "Spd5_x_TF3" → (5, 3)
+        m = re.match(r"^Spd(\d+)_x_TF(\d+)$", row["coefficient"])
+        if not m:
+            continue
+        coef_map[(int(m.group(1)), int(m.group(2)))] = float(row["estimate"])
+    if not coef_map:
+        return None
+    n_speed = config.n_speed_bases
+    n_tf = config.n_tf_bases
+    speed_grid = np.linspace(*config.speed_range, 60)
+    tf_grid = np.linspace(*config.tf_range, 60)
+    Bs = raised_cosine_basis(speed_grid, n_speed, *config.speed_range)
+    Bt = raised_cosine_basis(tf_grid, n_tf, *config.tf_range)
+    kernel = np.zeros((tf_grid.size, speed_grid.size), dtype=np.float64)
+    for (i, j), beta in coef_map.items():
+        if 1 <= i <= n_speed and 1 <= j <= n_tf:
+            kernel += beta * np.outer(Bt[:, j - 1], Bs[:, i - 1])
+    return speed_grid, tf_grid, kernel
+
+
+def plot_cluster_kernels(
+    probe_id: str,
+    cluster_id: int,
+    coef_df_cluster: pd.DataFrame,
+    config: GLMConfig,
+) -> Figure:
+    """Per-cluster kernel shapes — what the GLM actually learned.
+
+    For each of the four models (Null / Selected / Additive /
+    FullInteraction) and each of six variables (Speed / TF / SF / OR /
+    History / Spd × TF), plots the kernel shape ``Σ_k β_k · basis_k(x)``
+    that contributes to the log firing rate. Categorical variables (SF /
+    OR) render as bar charts; the Speed × TF interaction renders as a
+    2D heatmap. Empty panels mean the variable wasn't part of that
+    model's fit.
+
+    ``coef_df_cluster`` is the slice of ``glm_coefficients.csv`` for
+    this cluster, ``glm_type == "time"`` (one row per (model,
+    coefficient) pair).
+    """
+    models = ("Null", "Selected", "Additive", "FullInteraction")
+    var_cols = ("Speed", "TF", "SF", "OR", "History", "Spd × TF")
+
+    fig, axes = plt.subplots(
+        len(models), len(var_cols),
+        figsize=(20, 11), constrained_layout=True,
+    )
+
+    # Header banner: which model is selected for this cluster
+    sel_row = coef_df_cluster[coef_df_cluster["model"] == "Selected"]
+    selected_vars = "—"
+    if not sel_row.empty:
+        # Recover the selected_vars string from the coefficient list
+        coef_names = sel_row["coefficient"].tolist()
+        groups = sorted({_beta_group_tag(c) for c in coef_names if c != "Intercept"})
+        selected_vars = "+".join(g for g in groups if g != "Other")
+
+    fig.suptitle(
+        f"Per-cluster kernels — {probe_id} · cluster {cluster_id} · "
+        f"Selected: {selected_vars}",
+        fontsize=12,
+    )
+
+    for row_idx, model in enumerate(models):
+        sub = coef_df_cluster[coef_df_cluster["model"] == model]
+        for col_idx, var in enumerate(var_cols):
+            ax = axes[row_idx, col_idx]
+            if col_idx == 0:
+                ax.set_ylabel(f"{model}\n\nlog λ contribution",
+                              fontsize=9, rotation=90)
+            if row_idx == 0:
+                ax.set_title(var, fontsize=11, fontweight="bold")
+            if sub.empty:
+                ax.text(0.5, 0.5, "no fit",
+                        ha="center", va="center",
+                        transform=ax.transAxes,
+                        fontsize=10, color=(0.5, 0.5, 0.5))
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
+
+            if var == "Spd × TF":
+                inter = _kernel_for_interaction(sub, config)
+                if inter is None:
+                    ax.text(0.5, 0.5, "not selected",
+                            ha="center", va="center",
+                            transform=ax.transAxes,
+                            fontsize=9, color=(0.5, 0.5, 0.5))
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    continue
+                speed_grid, tf_grid, kernel = inter
+                vmax = np.abs(kernel).max() or 1.0
+                im = ax.pcolormesh(
+                    speed_grid, tf_grid, kernel,
+                    cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto",
+                )
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                ax.set_xlabel("speed (cm/s)", fontsize=8)
+                if col_idx == 0:
+                    ax.set_ylabel("TF (Hz)", fontsize=8)
+                continue
+
+            kdata = _kernel_for_var(sub, var, config)
+            if kdata is None:
+                ax.text(0.5, 0.5, "not selected",
+                        ha="center", va="center",
+                        transform=ax.transAxes,
+                        fontsize=9, color=(0.5, 0.5, 0.5))
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
+            x, kernel, xlabel = kdata
+            colour = _BETA_GROUP_COLORS.get(var, (0.2, 0.2, 0.2))
+            if var in ("SF", "OR"):
+                ax.bar(x, kernel, color=colour, edgecolor="black",
+                       linewidth=0.5, width=(x.max() - x.min()) / max(len(x), 1) * 0.4)
+                ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
+            else:
+                ax.plot(x, kernel, color=colour, linewidth=2)
+                ax.fill_between(x, 0, kernel, color=colour, alpha=0.15)
+                ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
+            ax.set_xlabel(xlabel, fontsize=8)
+            ax.tick_params(axis="both", labelsize=7)
+            for sp in ("top", "right"):
+                ax.spines[sp].set_visible(False)
+
     return fig
 
 

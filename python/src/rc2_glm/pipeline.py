@@ -1332,6 +1332,20 @@ def _write_all_plots(
     )
     for fit, _ in fits_to_plot:
         cid = fit.cluster_id
+        # Build a small per-cluster coefficient DataFrame matching the
+        # `glm_coefficients.csv` schema so plot_cluster_kernels can read
+        # one cluster's worth without hitting disk.
+        kernel_rows: list[dict] = []
+        for model_name, betas in fit.model_betas.items():
+            if betas is None:
+                continue
+            for col_name, beta in zip(fit.model_col_names[model_name], betas):
+                kernel_rows.append({
+                    "cluster_id": cid, "model": model_name,
+                    "coefficient": col_name, "estimate": float(beta),
+                })
+        cluster_coef_df = pd.DataFrame(kernel_rows)
+
         for fn, name in (
             (plots.plot_cluster_model_overview(
                 probe_id=probe_id,
@@ -1352,6 +1366,12 @@ def _write_all_plots(
                 config=config,
                 precomputed_bins=precomputed_bins,
              ), f"cluster_{cid}_tuning"),
+            (plots.plot_cluster_kernels(
+                probe_id=probe_id,
+                cluster_id=cid,
+                coef_df_cluster=cluster_coef_df,
+                config=config,
+             ), f"cluster_{cid}_kernels"),
         ):
             for path in plots.save_figure(fn, figs_dir / name, fmt=plot_format):
                 logger.info("wrote %s", path.relative_to(figs_dir.parent))

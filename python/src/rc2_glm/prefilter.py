@@ -73,7 +73,19 @@ def per_trial_firing_rate(
 
     # Bin spikes back onto the per-sample timebase (cheap because
     # spikes-per-trial is small relative to samples).
-    edges = np.concatenate([t, [t[-1] + 1.0 / fs]])
+    # Defensive: when probe_t is float32 and trial spans many seconds,
+    # adjacent samples can collide after the +1/fs offset → np.histogram
+    # rejects "bins must increase monotonically". Cast to float64 +
+    # enforce monotonicity by clipping rather than crashing.
+    edges = np.concatenate([t.astype(np.float64), [float(t[-1]) + 1.0 / fs]])
+    if not np.all(np.diff(edges) > 0):
+        # Force strict monotonicity by adding ε between any non-increasing
+        # adjacent pair. Preserves total span; correct counts to within
+        # one sample of which spike-time tiebreaks where.
+        eps = (1.0 / fs) * 1e-3
+        diffs = np.diff(edges)
+        for i in np.where(diffs <= 0)[0]:
+            edges[i + 1] = edges[i] + eps
     counts, _ = np.histogram(spikes, bins=edges)
 
     stat_n = int(trial.stationary_mask.sum())
