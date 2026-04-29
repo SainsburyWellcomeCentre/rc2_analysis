@@ -42,7 +42,15 @@ class GLMConfig:
     # flag for one-off comparisons (or for legacy reruns of the
     # MATLAB-parity model).
     include_history: bool = True
-    n_history_bases: int = 10
+    # Reduced from 10 to 5 on 2026-04-29 after the basis-count sweep.
+    # At 100 ms only 2 lag bins are distinct (n_lag_bins = window/bin_width
+    # = 0.2/0.1 = 2), so 10 bases over 2 lag bins is purely a basis-rotation
+    # ambiguity — predictions are identical. 5 bases gives the same fits
+    # with half the History coefficient columns. At 20 ms with 10 lag
+    # bins the 5-basis fit also matches the 10-basis fit (kernels in
+    # lag space overlap). Verified: median Δ cv_bps = 0.000000 across
+    # 88 clusters at 100 ms; 5/10 selected_vars identical 88/88.
+    n_history_bases: int = 5
     history_window_s: float = 0.2
     # When False (default), History interacts with nothing in Phase 2 —
     # interaction interpretations are rarely useful for spike history.
