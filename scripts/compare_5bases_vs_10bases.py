@@ -113,8 +113,18 @@ def render_cv_bps_paired(df: pd.DataFrame, out: Path) -> None:
     plt.close(fig)
 
 
-def render_kernel_comparison(out: Path) -> None:
-    """6 representative clusters: history kernel shape at 5 vs 10 bases."""
+def render_kernel_comparison(out: Path, bin_width_s: float = 0.1,
+                             history_window_s: float = 0.2) -> None:
+    """6 representative clusters: history kernel SHAPE at 5 vs 10 bases.
+
+    Plotted in lag space (kernel(lag) = sum_k β_k · basis_k(lag)) rather
+    than raw β indexed by basis. The β values look different between 5
+    and 10 bases (basis-rotation ambiguity — see findings-so-far §1b),
+    but the lag-space kernel is the directly-comparable function.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python" / "src"))
+    from rc2_glm.basis import history_basis
+
     coefs_10 = pd.read_csv(DIR_10 / "glm_coefficients.csv")
     coefs_5 = pd.read_csv(DIR_5 / "glm_coefficients.csv")
     ref_clusters = [
@@ -122,24 +132,32 @@ def render_kernel_comparison(out: Path) -> None:
         ("CAA-1123244_rec1", 80),  ("CAA-1123466_rec1", 162),
         ("CAA-1123466_rec1", 70),  ("CAA-1123467_rec1", 564),
     ]
+    n_lag_bins = max(1, int(round(history_window_s / bin_width_s)))
+    lag_ms = np.arange(1, n_lag_bins + 1) * bin_width_s * 1000.0
+    B_10 = history_basis(10, history_window_s, bin_width_s)
+    B_5 = history_basis(5, history_window_s, bin_width_s)
+
     fig, axes = plt.subplots(2, 3, figsize=(14, 7), constrained_layout=True)
     for ax, (probe, cid) in zip(axes.flatten(), ref_clusters):
         b10 = _history_coefs(coefs_10, probe, cid)
         b5 = _history_coefs(coefs_5, probe, cid)
         if b10.size:
-            ax.plot(np.arange(1, len(b10) + 1), b10, "o-", color="C0",
+            kernel_10 = B_10 @ b10
+            ax.plot(lag_ms, kernel_10, "o-", color="C0",
                     linewidth=2, markersize=6, label=f"10 bases (n={len(b10)})")
         if b5.size:
-            ax.plot(np.arange(1, len(b5) + 1), b5, "s-", color="C3",
+            kernel_5 = B_5 @ b5
+            ax.plot(lag_ms, kernel_5, "s-", color="C3",
                     linewidth=2, markersize=6, label=f"5 bases (n={len(b5)})")
         ax.axhline(0, color="grey", linewidth=0.5)
         ax.set_title(f"{probe} c{cid}", fontsize=10)
-        ax.set_xlabel("History basis index")
-        ax.set_ylabel("β coefficient")
+        ax.set_xlabel("lag (ms post-spike)")
+        ax.set_ylabel("kernel(lag) — log λ contribution")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
     fig.suptitle(
-        "History-filter coefficients — 5 vs 10 bases at 100 ms",
+        f"History kernel in lag space — 5 vs 10 bases at "
+        f"{int(bin_width_s * 1000)} ms (n_lag_bins resolved = {n_lag_bins})",
         fontsize=12,
     )
     fig.savefig(out)
