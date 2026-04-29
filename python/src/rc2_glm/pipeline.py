@@ -705,6 +705,24 @@ def _fit_plot_models(
         col_names_by_model[label] = list(names)
         preds_full = np.exp(np.clip(X @ fit.beta, -20.0, 20.0))
         preds[label] = preds_full[motion_row_mask]
+        # For the Selected model, also compute the "no-history" variant —
+        # same fit, but with History_* coefficients zeroed before
+        # multiplication. This lets the post-hoc α-sweep
+        # (scripts/run_history_alpha_sweep.py) interpolate
+        # log-predictions between α=0 (no history) and α=1 (full history),
+        # quantifying the trial-level vs tuning-curve trade-off the
+        # spike-history filter induces.
+        if label == "Selected":
+            history_mask = np.array(
+                [n.startswith("History_") for n in names], dtype=bool,
+            )
+            if history_mask.any():
+                beta_no_h = fit.beta.copy()
+                beta_no_h[history_mask] = 0.0
+                preds_no_h_full = np.exp(np.clip(X @ beta_no_h, -20.0, 20.0))
+                preds["Selected_no_history"] = preds_no_h_full[motion_row_mask]
+                col_names_by_model["Selected_no_history"] = list(names)
+                betas["Selected_no_history"] = beta_no_h
         refit_status[label] = _FIT_STATUS_FITTED
         logger.info(
             "cluster %d: fit %s | %d coefs | pred FR range [%.2f, %.2f] Hz",
@@ -1008,6 +1026,50 @@ def _emit_trial_level_metrics(
     path = out_dir / "trial_level_metrics.csv"
     out.to_csv(path, index=False)
     logger.info("wrote %s (%d rows)", path.name, len(out))
+
+    # History α-sweep: for clusters with both "Selected" and
+    # "Selected_no_history" predictions, interpolate in log-prediction
+    # space (η_α = η_no_history + α·(η_full − η_no_history); λ_α = exp η_α)
+    # and compute trial-level Pearson r at each α. Quantifies the
+    # potentiate/depotentiate question: at what α does the
+    # autoregressive gain crossover the stimulus-tuning loss?
+    alpha_grid = (0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5)
+    alpha_rows: list[dict] = []
+    for fit, df in cluster_fits:
+        if "Selected" not in fit.model_predictions:
+            continue
+        if "Selected_no_history" not in fit.model_predictions:
+            continue
+        motion_mask = (df["condition"] != "stationary").to_numpy()
+        if motion_mask.sum() < 5:
+            continue
+        df_motion = df.loc[motion_mask].reset_index(drop=True)
+        observed = df_motion["spike_count"].to_numpy(dtype=np.float64)
+        pred_full = np.asarray(fit.model_predictions["Selected"], dtype=np.float64)
+        pred_no_h = np.asarray(fit.model_predictions["Selected_no_history"], dtype=np.float64)
+        if pred_full.shape != observed.shape or pred_no_h.shape != observed.shape:
+            continue
+        # log-rate space
+        log_full = np.log(np.maximum(pred_full, 1e-12))
+        log_no_h = np.log(np.maximum(pred_no_h, 1e-12))
+        for alpha in alpha_grid:
+            log_alpha = log_no_h + alpha * (log_full - log_no_h)
+            pred_alpha = np.exp(np.clip(log_alpha, -20.0, 20.0))
+            expected_alpha = pred_alpha * config.time_bin_width
+            try:
+                r, _ = pearsonr(observed, expected_alpha)
+            except (ValueError, RuntimeWarning):
+                r = float("nan")
+            alpha_rows.append({
+                "probe_id": probe_id,
+                "cluster_id": fit.cluster_id,
+                "alpha": float(alpha),
+                "pearson_r_overall": float(r) if np.isfinite(r) else float("nan"),
+            })
+    if alpha_rows:
+        alpha_path = out_dir / "history_alpha_sweep.csv"
+        pd.DataFrame(alpha_rows).to_csv(alpha_path, index=False)
+        logger.info("wrote %s (%d rows)", alpha_path.name, len(alpha_rows))
 
 
 # Variable → list of (condition, sweep_kwargs) pairs. Mirrors the
@@ -1932,6 +1994,15 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
     if tl_dfs:
         pd.concat(tl_dfs, ignore_index=True).to_csv(
             diag / "trial_level_metrics.csv", index=False,
+        )
+    alpha_dfs = [
+        pd.read_csv(probe / "diagnostics" / "history_alpha_sweep.csv")
+        for probe in sorted(runs_root.iterdir())
+        if (probe / "diagnostics" / "history_alpha_sweep.csv").is_file()
+    ]
+    if alpha_dfs:
+        pd.concat(alpha_dfs, ignore_index=True).to_csv(
+            diag / "history_alpha_sweep.csv", index=False,
         )
 
     # Aggregate forward-selection summary across all probes. Used to live
