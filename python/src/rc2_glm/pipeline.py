@@ -1808,6 +1808,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--n-history-bases", type=int, default=None,
+        help=(
+            "Number of log-spaced raised-cosine history bases (overrides "
+            "config.n_history_bases, default 10). At 100 ms only 2 lag "
+            "bins are distinct so 10 bases over-parametrise the filter; "
+            "5 may be better. At 20 ms 10 bases were data-limited per the "
+            "2026-04-29 ridge sweep — fewer may identify cleaner shapes."
+        ),
+    )
+    parser.add_argument(
         "--cluster-filter-csv", type=str, default=None,
         help=(
             "Restrict the pipeline to the (probe_id, cluster_id) pairs in "
@@ -1849,6 +1859,8 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["cv_seed"] = int(args.cv_seed)
     if args.lambda_ridge is not None:
         config_overrides["lambda_ridge"] = float(args.lambda_ridge)
+    if args.n_history_bases is not None:
+        config_overrides["n_history_bases"] = int(args.n_history_bases)
     config = replace(GLMConfig(), **config_overrides)
 
     lookup = None
