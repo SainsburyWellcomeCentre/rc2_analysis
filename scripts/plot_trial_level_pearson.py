@@ -111,22 +111,22 @@ def main() -> int:
     ax.set_title("per-model trial-level r (per-trial avg)")
     ax.grid(True, alpha=0.3)
 
-    # row 1 col 2: lift over null per cluster (Selected r - Null r)
+    # row 1 col 2: lift from history per cluster (Selected r - Selected_no_history r)
     ax = axes[1, 2]
     pivot = df.pivot_table(
         index=["probe_id", "cluster_id"],
         columns="model",
         values="pearson_r_overall",
     )
-    if "Selected" in pivot.columns and "Null" in pivot.columns:
-        delta = (pivot["Selected"] - pivot["Null"]).dropna()
+    if "Selected" in pivot.columns and "Selected_no_history" in pivot.columns:
+        delta = (pivot["Selected"] - pivot["Selected_no_history"]).dropna()
         ax.hist(delta, bins=30, color="purple", alpha=0.7, edgecolor="black")
         med = delta.median()
         ax.axvline(med, color="black", linewidth=1.5, label=f"median Δ = {med:+.3f}")
         ax.axvline(0, color="grey", linewidth=0.5)
-        ax.set_xlabel("Δ Pearson r (Selected − Null)")
+        ax.set_xlabel("Δ Pearson r (Selected − Selected_no_history)")
         ax.set_ylabel("# clusters")
-        ax.set_title("lift over Null (Selected)")
+        ax.set_title(f"lift from history (n={len(delta)})")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
