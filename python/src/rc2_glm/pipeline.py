@@ -287,6 +287,10 @@ def _run_pipeline_inner(
                 probe.probe_id, cluster_fits, config,
                 output_dir / "diagnostics",
             )
+            _emit_trial_level_metrics(
+                probe.probe_id, cluster_fits, config,
+                output_dir / "diagnostics",
+            )
             from rc2_glm.precomputed_bins import load_precomputed_bin_edges
             try:
                 pre_bins = load_precomputed_bin_edges(probe.mat_path)
@@ -930,6 +934,80 @@ def _emit_tuning_curves(
     path = out_dir / "tuning_curves.csv"
     df.to_csv(path, index=False)
     logger.info("wrote %s (%d rows)", path.name, len(df))
+
+
+def _emit_trial_level_metrics(
+    probe_id: str,
+    cluster_fits: list[tuple[ClusterFit, pd.DataFrame]],
+    config: GLMConfig,
+    out_dir: Path,
+) -> None:
+    """Per-(cluster, model) trial-level + per-trial Pearson r.
+
+    Trial-level Pearson is correlation between the cluster's full
+    sequence of motion-bin observed counts and the model's predicted
+    rate (× bin width). Per-trial Pearson is the same correlation
+    computed *within each trial* and then averaged (mean / median).
+    Together these say "does the model track within-trial firing-rate
+    fluctuations" and "across-trial-and-time, does the model's
+    prediction line up with what we observed?".
+    """
+    from scipy.stats import pearsonr
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    for fit, df in cluster_fits:
+        motion_mask = (df["condition"] != "stationary").to_numpy()
+        if motion_mask.sum() < 5:
+            continue
+        df_motion = df.loc[motion_mask].reset_index(drop=True)
+        observed = df_motion["spike_count"].to_numpy(dtype=np.float64)
+        trial_ids = df_motion["trial_id"].to_numpy()
+        for model, pred_fr in fit.model_predictions.items():
+            if pred_fr is None:
+                continue
+            # pred_fr is rates (Hz) per motion row; convert to expected
+            # counts via Δt.
+            expected = np.asarray(pred_fr, dtype=np.float64) * config.time_bin_width
+            if expected.shape != observed.shape:
+                continue
+            try:
+                r_total, _ = pearsonr(observed, expected)
+            except (ValueError, RuntimeWarning):
+                r_total = float("nan")
+            # Per-trial Pearson — drop trials with < 3 bins or zero
+            # variance in either side.
+            per_trial_r: list[float] = []
+            for tid in np.unique(trial_ids):
+                m = trial_ids == tid
+                if m.sum() < 3:
+                    continue
+                o = observed[m]; e = expected[m]
+                if np.std(o) == 0 or np.std(e) == 0:
+                    continue
+                try:
+                    r, _ = pearsonr(o, e)
+                    if np.isfinite(r):
+                        per_trial_r.append(float(r))
+                except (ValueError, RuntimeWarning):
+                    continue
+            rows.append({
+                "probe_id": probe_id,
+                "cluster_id": fit.cluster_id,
+                "model": model,
+                "n_motion_bins": int(observed.size),
+                "n_trials": int(np.unique(trial_ids).size),
+                "pearson_r_overall": float(r_total) if np.isfinite(r_total) else float("nan"),
+                "pearson_r_per_trial_mean": float(np.mean(per_trial_r)) if per_trial_r else float("nan"),
+                "pearson_r_per_trial_median": float(np.median(per_trial_r)) if per_trial_r else float("nan"),
+                "n_per_trial_used": len(per_trial_r),
+            })
+    if not rows:
+        logger.info("no trial-level metric rows to write")
+        return
+    out = pd.DataFrame(rows)
+    path = out_dir / "trial_level_metrics.csv"
+    out.to_csv(path, index=False)
+    logger.info("wrote %s (%d rows)", path.name, len(out))
 
 
 # Variable → list of (condition, sweep_kwargs) pairs. Mirrors the
@@ -1657,6 +1735,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--lambda-ridge", type=float, default=None,
+        help=(
+            "Ridge L2 penalty on non-intercept columns (overrides "
+            "config.lambda_ridge, default 1e-3). Exploration knob for "
+            "regularisation sweeps. λ=10⁻³ was tuned for 100 ms; at finer "
+            "bin widths (e.g. 20 ms = 5× more bins per cluster) a stronger "
+            "λ may be needed to suppress noise in the History-filter "
+            "coefficients. Try λ ∈ {1e-3, 1e-2, 1e-1, 1.0}."
+        ),
+    )
+    parser.add_argument(
         "--cluster-filter-csv", type=str, default=None,
         help=(
             "Restrict the pipeline to the (probe_id, cluster_id) pairs in "
@@ -1696,6 +1785,8 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["time_bin_width"] = float(args.bin_width)
     if args.cv_seed is not None:
         config_overrides["cv_seed"] = int(args.cv_seed)
+    if args.lambda_ridge is not None:
+        config_overrides["lambda_ridge"] = float(args.lambda_ridge)
     config = replace(GLMConfig(), **config_overrides)
 
     lookup = None
@@ -1832,6 +1923,15 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
     if svm_dfs:
         pd.concat(svm_dfs, ignore_index=True).to_csv(
             diag / "stationary_vs_motion_fr_python.csv", index=False,
+        )
+    tl_dfs = [
+        pd.read_csv(probe / "diagnostics" / "trial_level_metrics.csv")
+        for probe in sorted(runs_root.iterdir())
+        if (probe / "diagnostics" / "trial_level_metrics.csv").is_file()
+    ]
+    if tl_dfs:
+        pd.concat(tl_dfs, ignore_index=True).to_csv(
+            diag / "trial_level_metrics.csv", index=False,
         )
 
     # Aggregate forward-selection summary across all probes. Used to live
