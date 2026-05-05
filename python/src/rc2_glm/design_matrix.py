@@ -32,15 +32,23 @@ def assemble_design_matrix_selected(
     or_ref_levels: np.ndarray | None = None,
     *,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Assemble the design matrix from selected variable names.
 
-    New keyword args (added 2026-04-28 for prompt 03):
+    Keyword-only arguments:
 
     - ``B_history``: per-cluster spike-history features ``(n_bins, n_history_bases)``.
       When provided AND ``"History"`` is in ``selected_vars``, append the
       history columns. ``None`` → no history term regardless of selection.
+      (Added 2026-04-28 for prompt 03; default flipped off 2026-04-30.)
+    - ``B_me_face``: per-bin face motion energy basis ``(n_bins, n_me_face_bases)``.
+      Speed-style raised-cosine basis evaluated at each bin's z-scored ME
+      value. When provided AND ``"ME_face"`` is in ``selected_vars``,
+      append the ME_face columns; ``"ME_face_x_Speed"`` builds the
+      row-wise outer product with ``B_speed`` for the interaction.
+      ``None`` → no ME term. (Added 2026-04-30 for prompt 06.)
     - ``include_onset_kernel``: when False, the Onset basis is OMITTED
       from the design matrix entirely. Used by the prompt-03 ablation
       experiment. Default True for parity-preserving baseline behaviour.
@@ -80,6 +88,9 @@ def assemble_design_matrix_selected(
         for level in or_levels:
             cols.append(_dummy(or_vals, level).reshape(-1, 1))
             names.append(f"OR_{level:.3f}")
+    if "ME_face" in selected and B_me_face is not None and B_me_face.shape[1] > 0:
+        cols.append(B_me_face)
+        names += [f"ME_face_{i + 1}" for i in range(B_me_face.shape[1])]
 
     if "Speed_x_TF" in selected:
         for si in range(n_speed_b):
@@ -117,6 +128,13 @@ def assemble_design_matrix_selected(
                 d_or = _dummy(or_vals, or_level)
                 cols.append((d_sf * d_or).reshape(-1, 1))
                 names.append(f"SF{sf_level:.4f}_x_OR{or_level:.3f}")
+    if "ME_face_x_Speed" in selected and B_me_face is not None and B_me_face.shape[1] > 0:
+        # 5 ME bases × 5 Speed bases = 25 interaction columns.
+        # Same row-wise product convention as Speed_x_TF above.
+        for mi in range(B_me_face.shape[1]):
+            for si in range(n_speed_b):
+                cols.append((B_me_face[:, mi] * B_speed[:, si]).reshape(-1, 1))
+                names.append(f"MEf{mi + 1}_x_Spd{si + 1}")
 
     X = np.hstack(cols).astype(np.float64, copy=False)
 
@@ -137,16 +155,18 @@ def assemble_design_matrix(
     or_ref_levels: np.ndarray | None = None,
     *,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Build a fixed model matrix labelled by `model_label`.
 
-    See ``assemble_design_matrix_selected`` for the History / onset-toggle
-    keyword args. ``M0`` and ``Null`` ignore History (it's a Phase-1
-    candidate, not in the always-on baseline).
+    See ``assemble_design_matrix_selected`` for the History / ME_face /
+    onset-toggle keyword args. ``M0`` and ``Null`` ignore History and
+    ME_face (both are Phase-1 candidates, not in the always-on baseline).
     """
     common_kwargs = dict(
         B_history=B_history,
+        B_me_face=B_me_face,
         include_onset_kernel=include_onset_kernel,
     )
     if model_label == "M0":
@@ -165,11 +185,17 @@ def assemble_design_matrix(
             **common_kwargs,
         )
     if model_label == "FullInteraction":
+        # ME_face + ME_face_x_Speed added 2026-04-30 (prompt 06): keep
+        # FullInteraction as the true ceiling so a Selected model that
+        # picks ME_face_x_Speed can never out-cv-bps FullInteraction.
+        # Branches in assemble_design_matrix_selected guard on
+        # B_me_face is not None, so legacy callers without a B_me_face
+        # arg still produce the pre-2026-04-30 design.
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
-            ["Speed", "TF", "SF", "OR",
+            ["Speed", "TF", "SF", "OR", "ME_face",
              "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
-             "TF_x_SF", "TF_x_OR", "SF_x_OR"],
+             "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed"],
             sf_ref_levels, or_ref_levels,
             **common_kwargs,
         )

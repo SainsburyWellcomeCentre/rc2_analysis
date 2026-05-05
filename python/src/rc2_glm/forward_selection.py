@@ -61,14 +61,24 @@ def forward_select(
     or_ref_levels: list[float] | None = None,
     *,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
 ) -> SelectionResult:
     """Hardcastle-style hierarchical forward selection.
 
-    Optional ``B_history`` is the per-cluster spike-history feature
-    matrix; when provided AND ``config.include_history`` is True,
-    ``"History"`` is added as a Phase-1 candidate. The onset-kernel
-    inclusion is gated by ``config.include_onset_kernel`` (defaults
-    True; the prompt-03 ablation flips it to False).
+    Keyword-only basis arguments:
+
+    - ``B_history``: per-cluster spike-history feature matrix. When
+      provided AND ``config.include_history`` is True, ``"History"`` is
+      added as a Phase-1 candidate (NOT through ``config.main_effects``
+      — History bypasses that tuple by historical convention).
+    - ``B_me_face``: per-bin ME_face raised-cosine basis. When ``None``
+      (camera absent or ``--no-me-face``), ``"ME_face"`` is dropped from
+      the Phase-1 candidate list even if it appears in
+      ``config.main_effects``. ``"ME_face_x_Speed"`` Phase-2 eligibility
+      auto-resolves via ``INTERACTION_PARENTS`` (it requires both parents
+      to have been selected in Phase 1).
+
+    The onset-kernel inclusion is gated by ``config.include_onset_kernel``.
     """
     config = config or GLMConfig()
     include_onset = getattr(config, "include_onset_kernel", True)
@@ -78,6 +88,7 @@ def forward_select(
 
     common_assembler_kwargs = dict(
         B_history=B_history if include_history else None,
+        B_me_face=B_me_face,
         include_onset_kernel=include_onset,
     )
 
@@ -99,6 +110,13 @@ def forward_select(
 
     # ----- Phase 1: main effects -----
     remaining = list(config.main_effects)
+    if "ME_face" in remaining and B_me_face is None:
+        # Camera data absent for this probe / cluster, or --no-me-face
+        # was set at the pipeline level. Drop ME_face from the candidate
+        # list rather than testing-then-discarding (cheaper, and the
+        # selection_history reflects only candidates we actually had data
+        # for).
+        remaining.remove("ME_face")
     if include_history:
         remaining.append("History")
     while remaining:
@@ -184,6 +202,7 @@ def _try_candidates(
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> RoundResult:
     threshold = config.delta_bps_threshold
@@ -199,6 +218,7 @@ def _try_candidates(
             B_speed, B_tf, B_onset, sf_vals, or_vals, test_vars,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             B_history=B_history,
+            B_me_face=B_me_face,
             include_onset_kernel=include_onset_kernel,
         )
         if X_test.shape[1] >= y.size:
@@ -247,12 +267,14 @@ def _cv_for_selected(
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> CVResult:
     X, _ = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, list(selected),
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
         include_onset_kernel=include_onset_kernel,
     )
     return cross_validate_glm(

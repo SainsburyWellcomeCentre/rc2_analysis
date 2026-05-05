@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
+from rc2_glm.basis import (
+    onset_kernel_basis,
+    raised_cosine_basis,
+    raised_cosine_basis_linear,
+)
 from rc2_glm.design_matrix import (
     assemble_design_matrix,
     assemble_design_matrix_selected,
@@ -51,6 +55,19 @@ def test_full_interaction_model_has_interactions():
         B_speed, B_tf, B_onset, sf_vals, or_vals, "FullInteraction"
     )
     assert any("_x_" in n or "Spd" in n for n in names)
+
+
+def test_me_face_main_effect_in_selected():
+    """ME_face main-effect adds 5 raised-cosine columns when basis is supplied."""
+    B_speed, B_tf, B_onset, sf_vals, or_vals = _toy_inputs()
+    rng = np.random.default_rng(42)
+    me_z = rng.normal(0.0, 1.0, B_speed.shape[0])
+    B_me_face = raised_cosine_basis_linear(me_z, 5, -2.0, 3.0)
+    X, names = assemble_design_matrix_selected(
+        B_speed, B_tf, B_onset, sf_vals, or_vals, ["ME_face"],
+        B_me_face=B_me_face,
+    )
+    assert sum(1 for n in names if n.startswith("ME_face_")) == 5
 
 
 def test_sf_reference_coding_drops_first_level():

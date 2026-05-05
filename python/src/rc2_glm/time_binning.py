@@ -30,6 +30,12 @@ COLUMNS: list[str] = [
     "probe_id", "cluster_id", "trial_id", "profile_id", "condition",
     "speed", "tf", "sf", "orientation", "batch_gain",
     "spike_count", "time_in_trial", "time_since_onset",
+    # Face/body camera motion energy bin-mean (raw, NOT z-scored).
+    # Per prompt 06 (2026-04-30). NaN when the configured camera is
+    # absent from the session, or when a bin has no camera samples.
+    # Z-scoring happens downstream in pipeline.py over the motion-row
+    # support so stationary preludes don't dominate the std.
+    "me_face_raw",
 ]
 
 
@@ -47,11 +53,12 @@ def bin_probe(probe: ProbeData) -> pd.DataFrame:
 
 def bin_cluster(probe: ProbeData, cluster: ClusterData) -> pd.DataFrame:
     config = probe.config
+    me_signal = _resolve_me_signal(probe)
     rows: list[pd.DataFrame] = []
     for trial in probe.trials:
         if trial.excluded:
             continue
-        df = _bin_trial_for_cluster(probe, trial, cluster, config)
+        df = _bin_trial_for_cluster(probe, trial, cluster, config, me_signal=me_signal)
         if not df.empty:
             rows.append(df)
     if not rows:
@@ -59,11 +66,113 @@ def bin_cluster(probe: ProbeData, cluster: ClusterData) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True, copy=False)
 
 
+# Module-level memo so the truncation / placeholder messages print
+# once per (probe_id, cam_attr) instead of once per cluster.
+_ME_SIGNAL_CACHE: dict[tuple[str, str], tuple[np.ndarray, np.ndarray] | None] = {}
+_ME_SIGNAL_LOGGED: set[tuple[str, str]] = set()
+
+
+def _resolve_me_signal(probe: ProbeData) -> tuple[np.ndarray, np.ndarray] | None:
+    """Pick the configured camera trace (camera0 or camera1) + its timebase.
+
+    Returns None when the camera is absent from the session — downstream
+    sees NaN ``me_face_raw`` and the cluster is excluded with
+    ``excluded_reason="no_camera"`` at the pipeline level.
+
+    Defensive: truncates camera_vals and camera_t to the common length.
+    Some sessions have a few extra samples on one or the other (observed
+    on CAA-1123244_rec1 where camera_t had 377147 samples and camera0
+    had 375887 — ~1260-sample drift, likely from the MATLAB RC2Format
+    write order). Truncation aligns them; the dropped tail is unanalysed.
+    """
+    cam_attr = getattr(probe.config, "motion_energy_camera", "camera0")
+    key = (probe.probe_id, cam_attr)
+    if key in _ME_SIGNAL_CACHE:
+        return _ME_SIGNAL_CACHE[key]
+    log_once = key not in _ME_SIGNAL_LOGGED
+    _ME_SIGNAL_LOGGED.add(key)
+
+    cam_vals = getattr(probe, cam_attr, None)
+    if cam_vals is None or probe.camera_t is None:
+        _ME_SIGNAL_CACHE[key] = None
+        return None
+    cam_vals = np.asarray(cam_vals, dtype=np.float64).ravel()
+    cam_t = np.asarray(probe.camera_t, dtype=np.float64).ravel()
+
+    # Sentinel detection: some sessions write a (2,) all-zero placeholder
+    # for camera0/camera1 instead of leaving the dataset absent (observed
+    # 2026-04-30 on CAA-1123244_rec1: shape=(2,), dtype=uint64, values
+    # [0, 0]). Camera_t is still ~60Hz over the full session in those
+    # cases, so the None check above doesn't fire. Heuristic:
+    #   - cam_vals.size < 1000 (< ~17s at 60Hz) → almost certainly placeholder
+    #   - or all-zero → no real motion energy signal
+    # Either condition: treat as "camera not recorded" and bail.
+    if cam_vals.size < 1000:
+        if log_once:
+            print(
+                f"[time_binning] probe {probe.probe_id}: {cam_attr} has only "
+                f"{cam_vals.size} samples (camera_t has {cam_t.size}); "
+                f"treating as 'no camera recorded'.",
+                flush=True,
+            )
+        _ME_SIGNAL_CACHE[key] = None
+        return None
+    if np.all(cam_vals == 0.0):
+        if log_once:
+            print(
+                f"[time_binning] probe {probe.probe_id}: {cam_attr} is all-zero "
+                f"(placeholder); treating as 'no camera recorded'.",
+                flush=True,
+            )
+        _ME_SIGNAL_CACHE[key] = None
+        return None
+
+    n = min(cam_vals.size, cam_t.size)
+    if cam_vals.size != cam_t.size and log_once:
+        print(
+            f"[time_binning] probe {probe.probe_id}: {cam_attr} length "
+            f"{cam_vals.size} != camera_t length {cam_t.size}; truncating "
+            f"both to {n}. Trials beyond camera_t[{n-1}] = {cam_t[n-1]:.1f}s "
+            "will have NaN me_face_raw and be dropped from ME-related fits.",
+            flush=True,
+        )
+    out = (cam_vals[:n], cam_t[:n])
+    _ME_SIGNAL_CACHE[key] = out
+    return out
+
+
+def _bin_continuous_to_edges(
+    values: np.ndarray, sample_t: np.ndarray, bin_edges: np.ndarray
+) -> np.ndarray:
+    """Per-bin mean of a continuous signal over arbitrary bin edges.
+
+    Aggregates ``values`` (sampled at ``sample_t``) onto ``bin_edges``
+    via bin-mean: ``out[i] = mean(values[sample_t in [edges[i], edges[i+1])])``.
+    Returns NaN for bins with no contributing samples.
+    """
+    n_bins = bin_edges.size - 1
+    if n_bins <= 0:
+        return np.zeros(0, dtype=np.float64)
+    sample_bin = np.digitize(sample_t, bin_edges, right=False) - 1
+    valid = (sample_bin >= 0) & (sample_bin < n_bins)
+    bins_vec = sample_bin[valid]
+    vals_vec = values[valid]
+    n_per_bin = np.bincount(bins_vec, minlength=n_bins)
+    sum_per_bin = np.bincount(
+        bins_vec, weights=vals_vec.astype(np.float64), minlength=n_bins
+    )
+    out = np.full(n_bins, np.nan, dtype=np.float64)
+    has_data = n_per_bin > 0
+    out[has_data] = sum_per_bin[has_data] / n_per_bin[has_data]
+    return out
+
+
 def _bin_trial_for_cluster(
     probe: ProbeData,
     trial: TrialData,
     cluster: ClusterData,
     config: GLMConfig,
+    me_signal: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     motion_idx = np.flatnonzero(trial.motion_mask)
     if motion_idx.size == 0:
@@ -77,11 +186,11 @@ def _bin_trial_for_cluster(
         return pd.DataFrame(columns=COLUMNS)
 
     motion_df = _bin_motion_period(
-        trial, cluster, t_motion_start, t_motion_end, config
+        trial, cluster, t_motion_start, t_motion_end, config, me_signal=me_signal
     )
 
     stat_df = _bin_stationary_prelude(
-        trial, cluster, motion_start_idx, t_motion_start, config
+        trial, cluster, motion_start_idx, t_motion_start, config, me_signal=me_signal
     )
 
     parts = [df for df in (motion_df, stat_df) if not df.empty]
@@ -102,6 +211,7 @@ def _bin_motion_period(
     t_motion_start: float,
     t_motion_end: float,
     config: GLMConfig,
+    me_signal: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     bin_edges = np.arange(
         t_motion_start, t_motion_end + 1e-12, config.time_bin_width, dtype=np.float64
@@ -140,6 +250,11 @@ def _bin_motion_period(
     n_good = good_idx.size
     speed_v, tf_v, sf_v, or_v, gain_v = _condition_vectors(trial, mean_speed)
 
+    if me_signal is not None:
+        me_per_bin = _bin_continuous_to_edges(me_signal[0], me_signal[1], bin_edges)[good_idx]
+    else:
+        me_per_bin = np.full(n_good, np.nan)
+
     return pd.DataFrame({
         "condition": np.full(n_good, trial.condition, dtype=object),
         "speed": speed_v,
@@ -150,6 +265,7 @@ def _bin_motion_period(
         "spike_count": spike_counts,
         "time_in_trial": time_in_trial,
         "time_since_onset": time_in_trial.copy(),
+        "me_face_raw": me_per_bin,
     })
 
 
@@ -184,6 +300,7 @@ def _bin_stationary_prelude(
     motion_start_idx: int,
     t_motion_start: float,
     config: GLMConfig,
+    me_signal: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     pre = trial.stationary_mask.copy()
     pre[motion_start_idx:] = False
@@ -217,6 +334,11 @@ def _bin_stationary_prelude(
     n = counts.size
     nan = np.full(n, np.nan)
 
+    if me_signal is not None:
+        me_per_bin = _bin_continuous_to_edges(me_signal[0], me_signal[1], bin_edges)
+    else:
+        me_per_bin = nan.copy()
+
     return pd.DataFrame({
         "condition": np.full(n, "stationary", dtype=object),
         "speed": np.zeros(n),
@@ -227,4 +349,5 @@ def _bin_stationary_prelude(
         "spike_count": counts.astype(np.int64),
         "time_in_trial": np.zeros(n),
         "time_since_onset": time_since_onset,
+        "me_face_raw": me_per_bin,
     })

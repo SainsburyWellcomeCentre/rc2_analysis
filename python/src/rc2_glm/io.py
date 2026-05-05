@@ -59,6 +59,16 @@ class ProbeData:
     config: GLMConfig
     trials: list[TrialData] = field(default_factory=list)
     clusters: list[ClusterData] = field(default_factory=list)
+    # Camera motion energy (session-level, prompt 06, 2026-04-30).
+    # Pre-computed pixel-variance traces for the face (camera0) and body
+    # (camera1) cameras at camera fs. ``camera_t`` carries the camera
+    # sample times in seconds (probe-aligned). Any of the three is
+    # ``None`` for sessions where the camera was not recorded; cluster
+    # exclusion with ``excluded_reason="no_camera"`` is handled by
+    # downstream code that consumes these.
+    camera0: np.ndarray | None = None
+    camera1: np.ndarray | None = None
+    camera_t: np.ndarray | None = None
 
 
 def load_probe_data(
@@ -102,6 +112,16 @@ def load_probe_data(
             for ti in trial_indices
         ]
 
+        # Session-level camera motion-energy traces (face + body) and
+        # their shared timebase. Reader returns None when the camera
+        # group is absent from the .mat. Cheap to load whole (~30 Hz
+        # over a session ≈ 54k samples per camera, a few MB at most),
+        # so fetch both and let downstream pick via
+        # config.motion_energy_camera.
+        camera0 = reader.camera0()
+        camera1 = reader.camera1()
+        camera_t = reader.camera_t()
+
         return ProbeData(
             probe_id=reader.probe_id,
             mat_path=Path(mat_path),
@@ -109,6 +129,9 @@ def load_probe_data(
             config=config,
             trials=trials,
             clusters=clusters,
+            camera0=camera0,
+            camera1=camera1,
+            camera_t=camera_t,
         )
 
 

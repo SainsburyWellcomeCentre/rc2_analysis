@@ -33,6 +33,33 @@ def raised_cosine_basis(
     return 0.5 * (1.0 + np.cos(z))
 
 
+def raised_cosine_basis_linear(
+    x: np.ndarray, n_bases: int, x_min: float, x_max: float
+) -> np.ndarray:
+    """Linear-spaced raised cosine bases over [x_min, x_max].
+
+    Used for value-axis bases on signals that include negative values
+    (e.g. z-scored behavioural covariates like face motion energy). For
+    positive-only signals with broad dynamic range, prefer
+    ``raised_cosine_basis`` (log-shifted Weber spacing).
+
+    Centres are linearly spaced from x_min to x_max; width is 1.5×delta
+    so adjacent bases overlap and the partition-of-unity property holds
+    in the interior. Values outside [x_min, x_max] are clipped to the
+    nearest edge basis (saturating, not zero).
+
+    Returns array of shape (len(x), n_bases).
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    centers = np.linspace(x_min, x_max, n_bases)
+    delta = (x_max - x_min) / (n_bases - 1) if n_bases > 1 else (x_max - x_min)
+    width = delta * 1.5
+
+    z = (x[:, None] - centers[None, :]) / width * np.pi
+    np.clip(z, -np.pi, np.pi, out=z)
+    return 0.5 * (1.0 + np.cos(z))
+
+
 def onset_kernel_basis(
     t_since_onset: np.ndarray, n_bases: int, t_max: float
 ) -> np.ndarray:

@@ -405,6 +405,38 @@ def _fit_one_cluster(
     else:
         B_history = None
 
+    # Face motion energy basis (Speed-style raised cosines over the
+    # z-scored ME range, prompt 06, 2026-04-30). Z-scoring stats are
+    # computed on motion-condition rows of THIS cluster's df — same as
+    # any other probe-cluster of this session, since me_face_raw is a
+    # session-level signal aligned to the same per-bin grid.
+    # B_me_face is None when the camera trace is absent (all-NaN
+    # me_face_raw column from time_binning) or when fewer than 10 finite
+    # motion-row samples exist for z-score statistics — downstream
+    # forward_select / assemble_design_matrix branches treat None as
+    # "no ME term, drop ME_face from Phase-1 candidates".
+    if "me_face_raw" in df.columns and getattr(config, "include_me_face", True):
+        me_raw = df["me_face_raw"].to_numpy(dtype=np.float64)
+        motion_rows = (df["condition"] != "stationary").to_numpy()
+        me_motion_finite = np.isfinite(me_raw) & motion_rows
+        if int(me_motion_finite.sum()) >= 10:
+            me_mean = float(me_raw[me_motion_finite].mean())
+            me_std = float(me_raw[me_motion_finite].std(ddof=0))
+            if me_std <= 0.0:
+                me_std = 1.0  # degenerate session; basis = constant column
+            me_z = np.where(np.isfinite(me_raw), (me_raw - me_mean) / me_std, 0.0)
+            from rc2_glm.basis import raised_cosine_basis_linear
+            B_me_face = raised_cosine_basis_linear(
+                me_z,
+                config.n_me_face_bases,
+                config.me_face_range[0],
+                config.me_face_range[1],
+            )
+        else:
+            B_me_face = None
+    else:
+        B_me_face = None
+
     offset = float(np.log(config.time_bin_width))
     fold_ids = make_trial_folds(
         trial_ids,
@@ -427,6 +459,7 @@ def _fit_one_cluster(
         config=config, backend=backend,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
     )
 
     additive_cv, additive_status = _cv_for_label(
@@ -435,6 +468,7 @@ def _fit_one_cluster(
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
     )
     full_int_cv, full_int_status = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
@@ -442,6 +476,7 @@ def _fit_one_cluster(
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
     )
 
     coef_df, betas, col_names_by_model, preds, refit_status = _fit_plot_models(
@@ -452,6 +487,7 @@ def _fit_one_cluster(
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
     )
 
     profile_cv_bps = _profile_cv_diagnostic(
@@ -589,12 +625,14 @@ def _cv_for_label(
     or_ref_levels: list[float] | None = None,
     *,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
 ) -> tuple[float, str]:
     include_onset = getattr(config, "include_onset_kernel", True)
     X, _ = assemble_design_matrix(
         B_speed, B_tf, B_onset, sf_vals, or_vals, label,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
+        B_me_face=B_me_face,
         include_onset_kernel=include_onset,
     )
     if X.shape[1] == 0:
@@ -621,9 +659,9 @@ def _cv_for_label(
 
 _ADDITIVE_VARS = ["Speed", "TF", "SF", "OR"]
 _FULL_INTERACTION_VARS = [
-    "Speed", "TF", "SF", "OR",
+    "Speed", "TF", "SF", "OR", "ME_face",
     "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
-    "TF_x_SF", "TF_x_OR", "SF_x_OR",
+    "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed",
 ]
 
 
@@ -639,6 +677,7 @@ def _fit_plot_models(
     or_ref_levels: list[float] | None = None,
     *,
     B_history: np.ndarray | None = None,
+    B_me_face: np.ndarray | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, np.ndarray],
@@ -676,6 +715,7 @@ def _fit_plot_models(
             B_speed, B_tf, B_onset, sf_vals, or_vals, vars_for_label,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             B_history=B_history,
+            B_me_face=B_me_face,
             include_onset_kernel=include_onset,
         )
         if X.shape[1] == 0:
@@ -723,6 +763,23 @@ def _fit_plot_models(
                 preds["Selected_no_history"] = preds_no_h_full[motion_row_mask]
                 col_names_by_model["Selected_no_history"] = list(names)
                 betas["Selected_no_history"] = beta_no_h
+            # Selected_no_me_face: zero out ME_face main-effect and
+            # ME_face × Speed interaction columns at prediction time.
+            # Mirrors the Selected_no_history pattern; downstream
+            # variance partitioning (unique_ME_face_bps) uses this.
+            # ME_face main columns: "ME_face_1..5"; interaction:
+            # "MEf{i}_x_Spd{j}".
+            me_mask = np.array(
+                [n.startswith("ME_face_") or n.startswith("MEf") for n in names],
+                dtype=bool,
+            )
+            if me_mask.any():
+                beta_no_me = fit.beta.copy()
+                beta_no_me[me_mask] = 0.0
+                preds_no_me_full = np.exp(np.clip(X @ beta_no_me, -20.0, 20.0))
+                preds["Selected_no_me_face"] = preds_no_me_full[motion_row_mask]
+                col_names_by_model["Selected_no_me_face"] = list(names)
+                betas["Selected_no_me_face"] = beta_no_me
         refit_status[label] = _FIT_STATUS_FITTED
         logger.info(
             "cluster %d: fit %s | %d coefs | pred FR range [%.2f, %.2f] Hz",
@@ -777,6 +834,8 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_is_tf_tuned": "TF" in selected_set,
         f"{GLM_TYPE}_is_sf_tuned": "SF" in selected_set,
         f"{GLM_TYPE}_is_or_tuned": "OR" in selected_set,
+        f"{GLM_TYPE}_is_history_tuned": "History" in selected_set,
+        f"{GLM_TYPE}_is_me_face_tuned": "ME_face" in selected_set,
         f"{GLM_TYPE}_has_interaction": has_int,
         f"{GLM_TYPE}_has_speed_x_tf": "Speed_x_TF" in selected_set,
         f"{GLM_TYPE}_has_speed_x_sf": "Speed_x_SF" in selected_set,
@@ -784,6 +843,7 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_has_tf_x_sf": "TF_x_SF" in selected_set,
         f"{GLM_TYPE}_has_tf_x_or": "TF_x_OR" in selected_set,
         f"{GLM_TYPE}_has_sf_x_or": "SF_x_OR" in selected_set,
+        f"{GLM_TYPE}_has_me_face_x_speed": "ME_face_x_Speed" in selected_set,
         # Post-hoc speed-profile CV (MATLAB glm_single_cluster_analysis.m:2246-2367).
         # Both fold schemes so panel 2 of the comparison plot can compute
         # Selected − NoSpeed under each. NaN when the diagnostic is
@@ -1505,6 +1565,7 @@ def _write_all_plots(
                 model_col_names=fit.model_col_names,
                 config=config,
                 precomputed_bins=precomputed_bins,
+                model_predictions=fit.model_predictions,
              ), f"cluster_{cid}_tuning"),
             (plots.plot_cluster_kernels(
                 probe_id=probe_id,
@@ -1724,12 +1785,48 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     # Deprecated alias — kept for back-compat with scripts that pass
-    # --no-onset-kernel. No-op since the new default is False.
+    # --no-onset-kernel. Default flipped True/False/True on
+    # 2026-04-23 / 2026-04-29 / 2026-04-30; both flags remain valid.
     parser.add_argument(
         "--no-onset-kernel", dest="include_onset_kernel", action="store_false",
         help=argparse.SUPPRESS,
     )
-    parser.set_defaults(include_history=True, include_onset_kernel=False)
+    parser.add_argument(
+        "--no-me-face", dest="include_me_face", action="store_false",
+        help=(
+            "Disable the face motion energy term ME_face (default ON since "
+            "2026-04-30, prompt 06). Without ME_face, Phase-1 candidates "
+            "are {Speed, TF, SF, OR}; ME_face_x_Speed is automatically "
+            "ineligible in Phase 2 because its parent ME_face was never "
+            "selected. Use this flag to compare 'with ME' vs 'without ME' "
+            "runs on the same cluster set."
+        ),
+    )
+    # Deprecated alias — kept for back-compat / scripts that pass
+    # --include-me-face explicitly. No-op since the default is True.
+    parser.add_argument(
+        "--include-me-face", dest="include_me_face", action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--motion-energy-camera", choices=("camera0", "camera1"),
+        default=None,
+        help=(
+            "Which camera trace to use for ME_face / ME_body. 'camera0' "
+            "(default, face cam) is the prompt-06 v1 choice. 'camera1' "
+            "(body cam) is the alternative for ablation runs. Overrides "
+            "config.motion_energy_camera."
+        ),
+    )
+    # Defaults updated 2026-04-30 (prompt 06) to match the new GLMConfig
+    # defaults: history OFF, onset ON, ME_face ON. Ensures argparse-level
+    # defaults stay in sync with config-level defaults so a bare
+    # ``rc2-glm <probe> <out>`` call uses the new world without surprises.
+    parser.set_defaults(
+        include_history=False,
+        include_onset_kernel=True,
+        include_me_face=True,
+    )
     parser.add_argument(
         "--tuning-curve-uncertainty",
         choices=("none", "simulated", "covariate-spread", "wide-quantile",
@@ -1850,9 +1947,12 @@ def main(argv: list[str] | None = None) -> int:
         "tuning_curve_uncertainty": args.tuning_curve_uncertainty,
         "include_history": args.include_history,
         "include_onset_kernel": args.include_onset_kernel,
+        "include_me_face": args.include_me_face,
         "cv_strategy": args.cv_strategy,
         "profile_cv_diagnostic": args.profile_cv_diagnostic,
     }
+    if args.motion_energy_camera is not None:
+        config_overrides["motion_energy_camera"] = args.motion_energy_camera
     if args.bin_width is not None:
         config_overrides["time_bin_width"] = float(args.bin_width)
     if args.cv_seed is not None:

@@ -81,17 +81,19 @@ def save_figure(fig: Figure, path_base: Path, fmt: str = "pdf") -> list[Path]:
 def plot_basis_functions(config: GLMConfig) -> Figure:
     """Overview of the continuous basis families used by the GLM.
 
-    Always shows Speed and TF (the two stimulus bases). The third panel
-    shows whichever temporal basis the active config selects:
-      - History (default since 2026-04-29 — `include_history=True`)
-      - Onset kernel (when `include_onset_kernel=True`, opt-in)
-      - Both, side-by-side, when both are active for an ablation run.
+    Always shows Speed and TF (the two main stimulus bases). Additional
+    panels render whichever bases the active config selects:
+      - History (when `include_history=True`)
+      - Onset kernel (when `include_onset_kernel=True`)
+      - ME_face (when `include_me_face=True` — added 2026-04-30)
     """
     show_history = config.include_history
     show_onset = config.include_onset_kernel
-    n_panels = 2 + (1 if show_history else 0) + (1 if show_onset else 0)
+    show_me_face = getattr(config, "include_me_face", False)
+    n_panels = 2 + sum(int(b) for b in (show_history, show_onset, show_me_face))
     if n_panels == 2:
-        # Edge case: someone disabled both. Still render an explanatory panel.
+        # Edge case: someone disabled all three temporal/behavioural panels.
+        # Still render an explanatory panel.
         n_panels = 3
     fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4),
                              constrained_layout=True)
@@ -162,9 +164,34 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
         axes[panel_idx].set_xlabel("t since onset (s)")
         axes[panel_idx].set_ylabel("activation")
         panel_idx += 1
-    if not show_history and not show_onset:
+    if show_me_face:
+        # ME_face uses Speed-style raised cosines on the value axis (not
+        # a temporal lag basis). Imported lazily to avoid hard-import in
+        # configs without ME_face. Range is z-score units; values outside
+        # the range clip to zero (raised-cosine clip behaviour).
+        from rc2_glm.basis import raised_cosine_basis_linear
+        me_lo, me_hi = config.me_face_range
+        # Pad ±0.5 z-units so the falling tails outside the range are visible.
+        pad = 0.5
+        me_grid = np.linspace(me_lo - pad, me_hi + pad, 400)
+        B_me = raised_cosine_basis_linear(
+            me_grid, config.n_me_face_bases, me_lo, me_hi,
+        )
+        for i in range(B_me.shape[1]):
+            axes[panel_idx].plot(me_grid, B_me[:, i], label=f"basis {i + 1}")
+        # Mark the configured range edges.
+        axes[panel_idx].axvline(me_lo, color="grey", linestyle=":", alpha=0.6)
+        axes[panel_idx].axvline(me_hi, color="grey", linestyle=":", alpha=0.6)
+        axes[panel_idx].set_title(
+            f"ME_face raised cosine ({config.n_me_face_bases} bases linear-spaced "
+            f"over z ∈ [{me_lo:g}, {me_hi:g}])"
+        )
+        axes[panel_idx].set_xlabel("face motion energy (z-score)")
+        axes[panel_idx].set_ylabel("activation")
+        panel_idx += 1
+    if not show_history and not show_onset and not show_me_face:
         axes[2].text(0.5, 0.5,
-                     "no temporal basis active\n(include_history=False,\ninclude_onset_kernel=False)",
+                     "no temporal/behavioural basis active",
                      ha="center", va="center", transform=axes[2].transAxes)
         axes[2].set_axis_off()
 
@@ -262,7 +289,56 @@ def _kernel_for_var(
         # Render in degrees for readability.
         return np.degrees(levels), sub["estimate"].to_numpy(), "orientation (deg)"
 
+    if var == "ME_face":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^ME_face_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        from rc2_glm.basis import raised_cosine_basis_linear
+        x_grid = np.linspace(*config.me_face_range, 200)
+        B = raised_cosine_basis_linear(
+            x_grid, config.n_me_face_bases, *config.me_face_range,
+        )
+        return x_grid, B @ betas, "face ME (z-score)"
+
     return None
+
+
+def _kernel_for_me_face_x_speed(
+    coef_rows: pd.DataFrame, config: GLMConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """ME_face × Speed interaction kernel as a 2D surface.
+
+    Returns ``(speed_grid, me_grid, kernel)`` with shape
+    ``(len(me_grid), len(speed_grid))``, or None if no MEf_x_Spd
+    coefficients are present.
+    """
+    sub = coef_rows[coef_rows["coefficient"].str.match(r"^MEf\d+_x_Spd\d+$")]
+    if sub.empty:
+        return None
+    coef_map: dict[tuple[int, int], float] = {}
+    for _, row in sub.iterrows():
+        m = re.match(r"^MEf(\d+)_x_Spd(\d+)$", row["coefficient"])
+        if not m:
+            continue
+        coef_map[(int(m.group(1)), int(m.group(2)))] = float(row["estimate"])
+    if not coef_map:
+        return None
+    from rc2_glm.basis import raised_cosine_basis_linear
+    n_me = config.n_me_face_bases
+    n_speed = config.n_speed_bases
+    speed_grid = np.linspace(*config.speed_range, 60)
+    me_grid = np.linspace(*config.me_face_range, 60)
+    Bs = raised_cosine_basis(speed_grid, n_speed, *config.speed_range)
+    Bm = raised_cosine_basis_linear(me_grid, n_me, *config.me_face_range)
+    kernel = np.zeros((me_grid.size, speed_grid.size))
+    for (mi, si), beta in coef_map.items():
+        if 1 <= mi <= n_me and 1 <= si <= n_speed:
+            kernel += beta * np.outer(Bm[:, mi - 1], Bs[:, si - 1])
+    return speed_grid, me_grid, kernel
 
 
 def _kernel_for_interaction(
@@ -301,14 +377,25 @@ def _kernel_for_interaction(
 
 
 _FULL_VAR_COLS: tuple[str, ...] = (
-    "Speed", "TF", "SF", "OR", "History", "Spd × TF",
+    "Speed", "TF", "SF", "OR", "ME_face", "Onset",
+    "History", "Spd × TF", "MEf × Spd",
 )
+# 9-column candidate grid used by Additive / FullInteraction rows of
+# plot_cluster_kernels. Panels for variables not present in the active
+# config or not in the model's design simply render "not selected" —
+# that's intentional, makes the candidate space inspectable. ME_face
+# and MEf × Spd added 2026-04-30 (prompt 06); Onset added same day to
+# match the restored default.
 
 
 def _selected_vars_present(coef_rows: pd.DataFrame) -> list[str]:
     """Return only the variables that have at least one non-Intercept
     coefficient in this model's coef_rows. Used to dynamically size the
     Selected row of plot_cluster_kernels.
+
+    ME_face / Onset / ME_face × Speed added 2026-04-30 (prompt 06).
+    Order matches the candidate grid used by Additive/FullInteraction
+    rows so the Selected row aligns visually.
     """
     if coef_rows.empty:
         return []
@@ -318,14 +405,20 @@ def _selected_vars_present(coef_rows: pd.DataFrame) -> list[str]:
     has_tf = any(re.match(r"^TF_\d+$", c) for c in coef_names)
     has_sf = any(c.startswith("SF_") for c in coef_names)
     has_or = any(c.startswith("OR_") for c in coef_names)
+    has_me_face = any(re.match(r"^ME_face_\d+$", c) for c in coef_names)
+    has_onset = any(re.match(r"^Onset_\d+$", c) for c in coef_names)
     has_history = any(c.startswith("History_") for c in coef_names)
-    has_int = any(re.match(r"^Spd\d+_x_TF\d+$", c) for c in coef_names)
+    has_spd_x_tf = any(re.match(r"^Spd\d+_x_TF\d+$", c) for c in coef_names)
+    has_mef_x_spd = any(re.match(r"^MEf\d+_x_Spd\d+$", c) for c in coef_names)
     if has_speed: present.append("Speed")
     if has_tf: present.append("TF")
     if has_sf: present.append("SF")
     if has_or: present.append("OR")
+    if has_me_face: present.append("ME_face")
+    if has_onset: present.append("Onset")
     if has_history: present.append("History")
-    if has_int: present.append("Spd × TF")
+    if has_spd_x_tf: present.append("Spd × TF")
+    if has_mef_x_spd: present.append("MEf × Spd")
     return present
 
 
@@ -363,11 +456,14 @@ def plot_cluster_kernels(
     add_rows = coef_df_cluster[coef_df_cluster["model"] == "Additive"]
     fi_rows = coef_df_cluster[coef_df_cluster["model"] == "FullInteraction"]
 
-    # GridSpec: row 0 = Null (1 wide), row 1 = Selected (n_selected wide,
-    # spanning the full width visually), rows 2-3 = Additive / FullInteraction
-    # (6 wide). Use a 6-column grid; Selected panels span their share.
-    n_full = len(var_cols)  # 6
-    fig = plt.figure(figsize=(3.4 * n_full, 11), constrained_layout=True)
+    # GridSpec: row 0 = Null (1 wide), row 1 = Selected (dynamic),
+    # rows 2-3 = Additive / FullInteraction (n_full wide, one panel per
+    # candidate variable). With ME_face / Onset / MEf × Spd added the
+    # grid is now 9 columns wide; figsize is generous to keep panels
+    # readable. Panels for variables not in the model just say "not
+    # selected" — that's the candidate-space inspection.
+    n_full = len(var_cols)
+    fig = plt.figure(figsize=(2.8 * n_full, 11), constrained_layout=True)
     gs = fig.add_gridspec(4, n_full)
 
     fig.suptitle(
@@ -457,6 +553,21 @@ def _render_kernel_panel(
         ax.set_xlabel("speed (cm/s)", fontsize=8)
         ax.set_ylabel("TF (Hz)", fontsize=8)
         return
+    if var == "MEf × Spd":
+        inter = _kernel_for_me_face_x_speed(coef_rows, config)
+        if inter is None:
+            ax.text(0.5, 0.5, "not selected", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=9, color=(0.5, 0.5, 0.5))
+            ax.set_xticks([]); ax.set_yticks([])
+            return
+        speed_grid, me_grid, kernel = inter
+        vmax = np.abs(kernel).max() or 1.0
+        im = ax.pcolormesh(speed_grid, me_grid, kernel, cmap="RdBu_r",
+                           vmin=-vmax, vmax=vmax, shading="auto")
+        ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_xlabel("speed (cm/s)", fontsize=8)
+        ax.set_ylabel("face ME (z)", fontsize=8)
+        return
     kdata = _kernel_for_var(coef_rows, var, config)
     if kdata is None:
         ax.text(0.5, 0.5, "not selected", ha="center", va="center",
@@ -490,35 +601,53 @@ _COLOR_SPEED = (0.17, 0.63, 0.17)
 _COLOR_TF = (1.00, 0.50, 0.05)
 _COLOR_SF = (0.95, 0.85, 0.10)
 _COLOR_OR = (0.84, 0.15, 0.16)
+_COLOR_ME_FACE = (0.40, 0.20, 0.55)  # purple — distinguishes face ME from stimuli (prompt 06)
 _COLOR_NULL = (0.75, 0.75, 0.75)
 _COLOR_4PLUS = (0.35, 0.35, 0.35)
 _COLOR_INT_BLUE = (0.20, 0.40, 0.80)
 
-_MAIN_EFFECT_NAMES = ("Speed", "TF", "SF", "OR")
+_MAIN_EFFECT_NAMES = ("Speed", "TF", "SF", "OR", "ME_face")
 _MAIN_EFFECT_COLORS: dict[str, tuple[float, float, float]] = {
     "Speed": _COLOR_SPEED, "TF": _COLOR_TF,
     "SF": _COLOR_SF, "OR": _COLOR_OR,
+    "ME_face": _COLOR_ME_FACE,
 }
-_MAIN_EFFECT_LABELS = {"Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR"}
+_MAIN_EFFECT_LABELS = {
+    "Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR",
+    "ME_face": "MEf",
+}
 _INTERACTION_LABELS = {
     "Speed_x_TF": "SxT", "Speed_x_SF": "SxSF", "Speed_x_OR": "SxO",
     "TF_x_SF": "TxSF", "TF_x_OR": "TxO", "SF_x_OR": "SFxO",
+    "ME_face_x_Speed": "MEfxS",
 }
 # Keys are sorted "+"-joined main-effect lists (matches MATLAB main_key).
+# ME_face combos added 2026-04-30 (prompt 06). Lighter purples for combos
+# with ME_face so panel 1 stays legible.
 _COMBO_COLORS: dict[str, tuple[float, float, float]] = {
     "Speed": _COLOR_SPEED, "TF": _COLOR_TF,
     "SF": _COLOR_SF, "OR": _COLOR_OR,
+    "ME_face": _COLOR_ME_FACE,
     "Speed+TF": (0.12, 0.47, 0.71),
     "SF+Speed": (0.26, 0.58, 0.85),
     "OR+Speed": (0.05, 0.30, 0.55),
     "SF+TF": (0.40, 0.60, 0.80),
     "OR+TF": (0.15, 0.40, 0.65),
     "OR+SF": (0.30, 0.50, 0.75),
+    "ME_face+Speed": (0.55, 0.40, 0.65),
+    "ME_face+TF": (0.65, 0.40, 0.55),
+    "ME_face+SF": (0.60, 0.50, 0.50),
+    "ME_face+OR": (0.65, 0.30, 0.50),
     "SF+Speed+TF": (0.50, 0.70, 0.90),
     "OR+Speed+TF": (0.35, 0.55, 0.80),
     "OR+SF+Speed": (0.45, 0.65, 0.85),
     "OR+SF+TF": (0.55, 0.75, 0.92),
+    "ME_face+Speed+TF": (0.55, 0.55, 0.75),
+    "ME_face+SF+Speed": (0.55, 0.50, 0.75),
+    "ME_face+OR+Speed": (0.55, 0.40, 0.65),
     "OR+SF+Speed+TF": _COLOR_4PLUS,
+    "ME_face+OR+SF+Speed": _COLOR_4PLUS,
+    "ME_face+OR+SF+Speed+TF": _COLOR_4PLUS,
 }
 
 
@@ -698,12 +827,16 @@ def plot_forward_selection_summary(
 
     # --- Panel 2: Variable-inclusion rates ---
     ax = axes[1]
-    # History selection isn't a column in comparison_df — derive it from
-    # the selected_vars string (which lists "History" when the spike-history
-    # term made it through forward selection).
+    # History and ME_face selection isn't always a dedicated column in
+    # comparison_df — derive them from the selected_vars string. Falls
+    # back to 0 cleanly when neither term is in the run.
     history_count = int(
         comparison_df["time_selected_vars"].astype(str)
         .apply(lambda s: "History" in s.split("+")).sum()
+    )
+    me_face_count = int(
+        comparison_df["time_selected_vars"].astype(str)
+        .apply(lambda s: "ME_face" in s.split("+")).sum()
     )
     me_counts = [
         int(comparison_df["time_is_speed_tuned"].sum()),
@@ -711,12 +844,13 @@ def plot_forward_selection_summary(
         int(comparison_df["time_is_sf_tuned"].sum()),
         int(comparison_df["time_is_or_tuned"].sum()),
         history_count,
+        me_face_count,
         int(comparison_df["time_has_interaction"].sum()),
     ]
-    me_labels = ["Speed", "TF", "SF", "OR", "History", "Any Interact."]
+    me_labels = ["Speed", "TF", "SF", "OR", "History", "ME_face", "Any Interact."]
     me_colors = [
         _COLOR_SPEED, _COLOR_TF, _COLOR_SF, _COLOR_OR,
-        _BETA_GROUP_COLORS["History"], _COLOR_INT_BLUE,
+        _BETA_GROUP_COLORS["History"], _COLOR_ME_FACE, _COLOR_INT_BLUE,
     ]
     y_pos = np.arange(1, len(me_counts) + 1)
     ax.barh(y_pos, me_counts, color=me_colors, edgecolor="none")
@@ -737,6 +871,12 @@ def plot_forward_selection_summary(
 
     # --- Panel 3: Interaction breakdown ---
     ax = axes[2]
+    # ME_face_x_Speed has no `time_has_*` column yet on older runs; derive
+    # from selected_vars so this works on legacy comparison CSVs too.
+    me_face_x_speed_count = int(
+        comparison_df["time_selected_vars"].astype(str)
+        .apply(lambda s: "ME_face_x_Speed" in s.split("+")).sum()
+    )
     int_counts = [
         int(comparison_df["time_has_speed_x_tf"].sum()),
         int(comparison_df["time_has_speed_x_sf"].sum()),
@@ -744,11 +884,17 @@ def plot_forward_selection_summary(
         int(comparison_df["time_has_tf_x_sf"].sum()),
         int(comparison_df["time_has_tf_x_or"].sum()),
         int(comparison_df["time_has_sf_x_or"].sum()),
+        me_face_x_speed_count,
     ]
-    int_labels = ["Spd x TF", "Spd x SF", "Spd x OR", "TF x SF", "TF x OR", "SF x OR"]
+    int_labels = [
+        "Spd x TF", "Spd x SF", "Spd x OR",
+        "TF x SF", "TF x OR", "SF x OR",
+        "MEf x Spd",
+    ]
     int_colors = [
         (0.9, 0.2, 0.2), (0.8, 0.5, 0.2), (0.6, 0.2, 0.6),
         (0.5, 0.8, 0.2), (0.2, 0.5, 0.8), (0.9, 0.6, 0.6),
+        _BETA_GROUP_COLORS["MEf x Spd"],
     ]
     y_pos = np.arange(1, len(int_counts) + 1)
     ax.barh(y_pos, int_counts, color=int_colors, edgecolor="none")
@@ -1115,6 +1261,7 @@ def plot_tuning_curves(
     config: GLMConfig,
     n_sweep: int = 20,
     precomputed_bins: PrecomputedBinEdges | None = None,
+    model_predictions: dict[str, np.ndarray] | None = None,
 ) -> Figure:
     """Reconstructed tuning curves matching MATLAB Fig 5 (5×4 grid).
 
@@ -1160,17 +1307,23 @@ def plot_tuning_curves(
     (≥2 trials) or a single trial's value (no error bar) if only one
     trial contributed.
     """
+    # 5×5 grid: rows are Observed / Null / Selected / Additive / FullInteraction.
+    # Cols 0-3 are the existing Speed / TF / SF / OR panels (handled by
+    # _plot_observed_row + _predict_model_row). Col 4 is ME_face (added
+    # 2026-04-30 prompt 06): per-condition trial-aggregated FR (Observed
+    # row) vs per-condition mean predicted FR (model rows), binned over
+    # 5%-quantile ME edges of the z-scored face camera signal.
     fig, axes = plt.subplots(
-        5, 4, figsize=(16, 14), sharex="col", constrained_layout=True,
+        5, 5, figsize=(20, 14), sharex="col", constrained_layout=True,
     )
     row_labels = ("Observed", "Null", "Selected", "Additive", "FullInteraction")
-    col_labels = ("Speed", "TF", "SF", "OR")
+    col_labels = ("Speed", "TF", "SF", "OR", "ME_face")
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(f"{lbl}\nrate (Hz)", fontsize=9)
     for c, lbl in enumerate(col_labels):
         axes[0, c].set_title(lbl, fontsize=10)
     for c, xlbl in enumerate(
-        ("Speed (cm/s)", "TF (Hz)", "SF (cpd)", "Orientation (rad)")
+        ("Speed (cm/s)", "TF (Hz)", "SF (cpd)", "Orientation (rad)", "face ME (z-score)")
     ):
         axes[4, c].set_xlabel(xlbl)
 
@@ -1249,9 +1402,14 @@ def plot_tuning_curves(
         tf_centres_by_cond[cond] = 0.5 * (tf_edges[:-1] + tf_edges[1:])
 
     _plot_observed_row(
-        axes[0, :], cluster_df, config,
+        axes[0, :4], cluster_df, config,
         sf_plot=sf_plot, or_plot=or_plot,
         precomputed_bins=precomputed_bins,
+    )
+    # ME_face Observed panel (col 4 of 5).
+    _plot_me_face_panel(
+        axes[0, 4], cluster_df, config,
+        per_bin_predictions=None,  # observed: bin spike counts
     )
 
     model_vars = {
@@ -1264,13 +1422,16 @@ def plot_tuning_curves(
     }
 
     for row_idx, label in enumerate(MODEL_LABELS, start=1):
-        row_axes = axes[row_idx, :]
+        row_axes = axes[row_idx, :4]
+        me_ax = axes[row_idx, 4]
         beta = model_betas.get(label)
         train_names = model_col_names.get(label)
         if beta is None or train_names is None:
             for ax in row_axes:
                 ax.text(0.5, 0.5, "not fitted", ha="center", va="center",
                         transform=ax.transAxes, color="#888", fontsize=10)
+            me_ax.text(0.5, 0.5, "not fitted", ha="center", va="center",
+                       transform=me_ax.transAxes, color="#888", fontsize=10)
             continue
         _predict_model_row(
             row_axes, label, beta, train_names, model_vars[label], config,
@@ -1284,8 +1445,19 @@ def plot_tuning_curves(
             spd_centres_by_cond=spd_centres_by_cond,
             tf_centres_by_cond=tf_centres_by_cond,
         )
+        # ME_face model panel — uses model_predictions[label] (per-bin
+        # in-sample model predictions on motion bins) when supplied;
+        # otherwise renders a placeholder.
+        per_bin_pred = (
+            model_predictions.get(label) if model_predictions else None
+        )
+        _plot_me_face_panel(
+            me_ax, cluster_df, config,
+            per_bin_predictions=per_bin_pred,
+        )
 
-    for col in range(4):
+    # Y-axis sharing within each column. Now 5 cols (Speed, TF, SF, OR, ME_face).
+    for col in range(5):
         hi = 0.0
         for row in range(5):
             yl = axes[row, col].get_ylim()
@@ -1564,9 +1736,10 @@ def plot_trial_level_predictions(
 # "History" added 2026-04-29 with the spike-history term — was previously
 # falling through to "Other" in the beta-swarm panel.
 _BETA_GROUP_ORDER: tuple[str, ...] = (
-    "Intercept", "Speed", "TF", "SF", "OR", "Time", "History",
+    "Intercept", "Speed", "TF", "SF", "OR", "Time", "History", "ME_face",
     "Spd x TF", "Spd x SF", "Spd x OR",
     "TF x SF", "TF x OR", "SF x OR",
+    "MEf x Spd",
     "Other",
 )
 _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
@@ -1577,12 +1750,14 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "OR":         (0.84, 0.15, 0.16),
     "Time":       (0.3, 0.8, 0.8),
     "History":    (0.45, 0.20, 0.65),  # purple — distinct from stimuli + Time
+    "ME_face":    (0.40, 0.20, 0.55),  # darker purple for face motion energy
     "Spd x TF":   (0.6, 0.35, 0.05),
     "Spd x SF":   (0.55, 0.50, 0.05),
     "Spd x OR":   (0.50, 0.10, 0.10),
     "TF x SF":    (0.85, 0.60, 0.05),
     "TF x OR":    (0.75, 0.20, 0.15),
     "SF x OR":    (0.55, 0.25, 0.35),
+    "MEf x Spd":  (0.30, 0.45, 0.30),  # green-purple blend for ME × Speed
     "Other":      (0.7, 0.7, 0.7),
 }
 
@@ -1816,6 +1991,8 @@ def _beta_group_tag(col_name: str) -> str:
             return "TF x OR"
         if left.startswith("SF") and right.startswith("OR"):
             return "SF x OR"
+        if left.startswith("MEf") and right.startswith("Spd"):
+            return "MEf x Spd"
         return "Other"
     if col_name.startswith("Speed_"):
         return "Speed"
@@ -1829,6 +2006,8 @@ def _beta_group_tag(col_name: str) -> str:
         return "Time"
     if col_name.startswith("History_"):
         return "History"
+    if col_name.startswith("ME_face_"):
+        return "ME_face"
     return "Other"
 
 
@@ -2272,6 +2451,144 @@ def _per_bin_median_iqr(tuning: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.
     q1 = np.nanquantile(tuning, 0.25, axis=0)
     q3 = np.nanquantile(tuning, 0.75, axis=0)
     return median, q1, q3
+
+
+def _plot_me_face_panel(
+    ax,
+    cluster_df: pd.DataFrame,
+    config: GLMConfig,
+    *,
+    per_bin_predictions: np.ndarray | None,
+    n_bins: int = 10,
+) -> None:
+    """ME_face tuning panel — works for both Observed and Model rows.
+
+    When ``per_bin_predictions is None`` (Observed): bins observed
+    spike-count/bin-width across motion bins by face ME (z-scored, then
+    5%-quantile bins per condition); plots per-condition median + IQR
+    across trials of those per-bin firing rates.
+
+    When ``per_bin_predictions`` is given (Model rows): bins the
+    pre-computed per-bin predicted rate (Hz) the same way; plots median +
+    IQR across trials of the model's predicted rate per ME bin.
+
+    The z-scoring uses session-level motion-bin mean/std of the cluster's
+    me_face_raw column, matching what `_fit_one_cluster` does upstream.
+
+    All three trial conditions (T_Vstatic, V, VT) plot on the same axes
+    with their canonical colours; ME_face is a session-level signal so
+    the same z-scored values are seen by all conditions.
+
+    Falls back to a placeholder when me_face_raw is absent / all-NaN
+    (no-camera probe like CAA-1123244 placeholder).
+    """
+    bw = config.time_bin_width
+    if "me_face_raw" not in cluster_df.columns:
+        ax.text(0.5, 0.5, "no ME column", ha="center", va="center",
+                transform=ax.transAxes, color="#888", fontsize=9)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+
+    motion = cluster_df[cluster_df["condition"] != "stationary"].copy()
+    if motion.empty:
+        ax.text(0.5, 0.5, "no motion bins", ha="center", va="center",
+                transform=ax.transAxes, color="#888", fontsize=9)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+
+    me_raw = motion["me_face_raw"].to_numpy(dtype=np.float64)
+    finite_motion = np.isfinite(me_raw)
+    if int(finite_motion.sum()) < 10:
+        ax.text(0.5, 0.5, "no ME data\n(camera placeholder)",
+                ha="center", va="center", transform=ax.transAxes,
+                color="#888", fontsize=9)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+
+    me_mean = float(me_raw[finite_motion].mean())
+    me_std = float(me_raw[finite_motion].std(ddof=0)) or 1.0
+    me_z_motion = np.where(finite_motion, (me_raw - me_mean) / me_std, np.nan)
+
+    # Per-bin signal we're plotting: observed FR for the Observed row,
+    # model-predicted FR for the model rows.
+    if per_bin_predictions is not None:
+        # per_bin_predictions is aligned with motion rows of cluster_df
+        # (the pipeline's `motion_row_mask` slice in _fit_plot_models).
+        if per_bin_predictions.size != len(motion):
+            ax.text(0.5, 0.5, f"shape mismatch\n{per_bin_predictions.size} vs {len(motion)}",
+                    ha="center", va="center", transform=ax.transAxes,
+                    color="#888", fontsize=9)
+            ax.set_xticks([]); ax.set_yticks([])
+            return
+        per_bin_signal = np.asarray(per_bin_predictions, dtype=np.float64)
+    else:
+        per_bin_signal = motion["spike_count"].to_numpy(dtype=np.float64) / bw
+
+    trial_ids = motion["trial_id"].to_numpy(dtype=np.int64)
+    cond_labels = motion["condition"].to_numpy(dtype=object)
+
+    plotted_any = False
+    for cond in ("T_Vstatic", "V", "VT"):
+        cmask = (cond_labels == cond) & finite_motion
+        if cmask.sum() < n_bins:
+            continue
+        me_z_c = me_z_motion[cmask]
+        signal_c = per_bin_signal[cmask]
+        trial_c = trial_ids[cmask]
+
+        # 5%-quantile bin edges within this condition. Drop duplicates so
+        # quantile collisions (e.g. heavy-tailed face ME) don't yield
+        # zero-width bins.
+        edges = np.unique(np.quantile(me_z_c, np.linspace(0, 1, n_bins + 1)))
+        if edges.size < 3:
+            continue
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        n_b = edges.size - 1
+
+        # Per-trial means per bin → median + IQR across trials per bin
+        trials = np.unique(trial_c)
+        per_trial_per_bin: list[np.ndarray] = []
+        for tid in trials:
+            tmask = trial_c == tid
+            if tmask.sum() < 2:
+                continue
+            tz = me_z_c[tmask]
+            ts = signal_c[tmask]
+            bin_idx = np.digitize(tz, edges) - 1
+            bin_idx = np.clip(bin_idx, 0, n_b - 1)
+            row = np.full(n_b, np.nan, dtype=np.float64)
+            for b in range(n_b):
+                in_b = bin_idx == b
+                if in_b.any():
+                    row[b] = float(np.nanmean(ts[in_b]))
+            per_trial_per_bin.append(row)
+        if not per_trial_per_bin:
+            continue
+        arr = np.array(per_trial_per_bin)
+        median = np.nanmedian(arr, axis=0)
+        with np.errstate(invalid="ignore"):
+            q1 = np.nanquantile(arr, 0.25, axis=0)
+            q3 = np.nanquantile(arr, 0.75, axis=0)
+        good = np.isfinite(median)
+        if not good.any():
+            continue
+        plotted_any = True
+        yerr = np.vstack([median[good] - q1[good], q3[good] - median[good]])
+        ax.errorbar(
+            centres[good], median[good], yerr=yerr,
+            fmt="o-", color=COND_COLORS[cond],
+            markersize=4, linewidth=1, capsize=3,
+        )
+
+    if not plotted_any:
+        ax.text(0.5, 0.5, "insufficient ME data\n(< 10 finite motion bins)",
+                ha="center", va="center", transform=ax.transAxes,
+                color="#888", fontsize=9)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+
+    # Light reference grid + zero line for z-scored axis
+    ax.axvline(0.0, color="grey", linestyle=":", alpha=0.4, linewidth=0.6)
 
 
 def _plot_observed_row(

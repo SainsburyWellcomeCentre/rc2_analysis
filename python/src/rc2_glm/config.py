@@ -29,7 +29,7 @@ class GLMConfig:
     n_onset_bases: int = 6
     onset_range: tuple[float, float] = (0.0, 2.0)         # seconds
 
-    # --- Spike history (prompt 03, 2026-04-28; default ON since 2026-04-29) ---
+    # --- Spike history (prompt 03, 2026-04-28; default ON since 2026-04-29; default OFF since 2026-04-30) ---
     # 10 log-spaced raised-cosine bases over a 200 ms post-spike window,
     # added as a Phase-1 forward-selection candidate. Each cluster's
     # history features are convolved trial-aware (zero-padded at trial
@@ -38,10 +38,20 @@ class GLMConfig:
     # Default flipped from False to True on 2026-04-29 after the prompt-03
     # ablation showed history dominates Phase-1 selection in 32/33 clusters
     # of the smoke probe and adds median Δ +0.071 bps on the 88-cluster
-    # filtered set (76/88 positive). Turn off via the `--no-history` CLI
-    # flag for one-off comparisons (or for legacy reruns of the
-    # MATLAB-parity model).
-    include_history: bool = True
+    # filtered set (76/88 positive).
+    #
+    # Default flipped back from True to False on 2026-04-30 (prompt 06).
+    # The 2026-04-29 history-overweighted analysis showed 66/79 clusters
+    # peak in trial-level Pearson r at α < 1 — a sign that the History
+    # term was absorbing structure beyond its autoregressive role
+    # (NLL-Pearson disagreement consistent with misspecification
+    # absorption). The component reads as a catch-all rather than an
+    # interpretable scientific quantity, defeating the explanatory
+    # purpose of the GLM. Standing by until a more interpretable
+    # parameterisation lands (per-cluster instead of session-shared,
+    # decoupled history-bin from GLM-bin, or hierarchical priors).
+    # CLI flag --include-history still works for ad-hoc experiments.
+    include_history: bool = False
     # Reduced from 10 to 5 on 2026-04-29 after the basis-count sweep.
     # At 100 ms only 2 lag bins are distinct (n_lag_bins = window/bin_width
     # = 0.2/0.1 = 2), so 10 bases over 2 lag bins is purely a basis-rotation
@@ -55,7 +65,7 @@ class GLMConfig:
     # When False (default), History interacts with nothing in Phase 2 —
     # interaction interpretations are rarely useful for spike history.
     allow_history_interactions: bool = False
-    # Onset kernel inclusion (default OFF since 2026-04-29).
+    # Onset kernel inclusion (default OFF since 2026-04-29; default ON since 2026-04-30).
     #
     # Default flipped from True to False on 2026-04-29 after the prompt-03
     # ablation showed the onset kernel adds ~0 CV-bps once history is
@@ -64,11 +74,51 @@ class GLMConfig:
     # design-matrix wiring stay in place for occasional ablation reruns
     # via the `--with-onset-kernel` opt-in flag.
     #
-    # Consequence: MATLAB parity claim retired on 2026-04-29 — the Null
-    # model is no longer "intercept + onset" so cv-bps comparisons against
-    # the MATLAB reference no longer hold gate-by-gate. New trust signal:
-    # python/tests/test_pipeline_regression.py.
-    include_onset_kernel: bool = False
+    # Default flipped back from False to True on 2026-04-30 (prompt 06).
+    # When history is on stand-by, the onset kernel reclaims its role of
+    # capturing the trial-onset response shape — without it, the Null
+    # model loses the "intercept + onset" baseline that anchors the
+    # cv_bps scale. Restoring onset returns the GLM to the pre-2026-04-29
+    # configuration, with the addition of ME_face as the new Phase-1
+    # candidate. Consequence: cv_bps numbers on the new run ARE comparable
+    # in absolute scale to legacy_with_onset/, but the new run also has
+    # ME_face columns so model-comparison is one-step-removed from
+    # legacy parity.
+    include_onset_kernel: bool = True
+
+    # --- Face motion energy (prompt 06, 2026-04-30) ---
+    # Pre-computed pixel-variance trace from session.camera0 (face camera),
+    # parameterised exactly like Speed: bin to 100 ms, z-score per session
+    # on motion bins, then evaluate 5 raised-cosine bases tiling the
+    # z-scored value range. Per-bin behavioural covariate, NOT a history-
+    # shaped lag basis (the lag-basis design from prompt 05 was rejected).
+    # Captures non-linear ME-tuning curves the same way Speed/TF tuning
+    # curves are captured.
+    #
+    # The earlier prompt-05 spec proposed convolving ME with a temporal
+    # lag basis (5 raised cosines × 300 ms window). That parameterisation
+    # was rejected on 2026-04-30: ME is a per-bin behavioural input, not
+    # a history-shaped signal. The Speed-style value-axis basis lets the
+    # marginal ME tuning curve be inspectable without smearing it across
+    # past bins.
+    #
+    # Range default (-2.0, 3.0) z-score units (slightly right-skewed to
+    # cover the high-ME tail of whisking/grooming bouts). Widen if the
+    # empirical per-session ME distribution clips at the boundaries.
+    # Switch to camera1 (body cam) via motion_energy_camera="camera1"
+    # without re-plumbing.
+    #
+    # CLI flag: --no-me-face turns off the candidate; --motion-energy-camera
+    # picks camera0 vs camera1.
+    n_me_face_bases: int = 5
+    me_face_range: tuple[float, float] = (-2.0, 3.0)
+    motion_energy_camera: str = "camera0"
+    # Master gate for the ME_face Phase-1 candidate. True (default):
+    # build B_me_face whenever camera0 is present. False (--no-me-face):
+    # skip ME_face construction entirely; "ME_face" is dropped from
+    # remaining candidates in forward_select. ME_face_x_Speed Phase-2
+    # eligibility falls through automatically.
+    include_me_face: bool = True
 
     # --- GLM fitting ---
     # Ridge on all non-intercept columns. Non-zero default picks a
@@ -109,10 +159,15 @@ class GLMConfig:
     profile_cv_diagnostic: bool = False
 
     # --- Forward selection ---
-    main_effects: tuple[str, ...] = ("Speed", "TF", "SF", "OR")
+    # ME_face joined main_effects 2026-04-30 (prompt 06) as a Speed-style
+    # value-axis candidate. ME_face_x_Speed joined interactions same day
+    # — face-motion vs locomotion-speed are correlated 0.3–0.7 (Musall
+    # 2019, Stringer 2019), so the interaction is the obvious one.
+    main_effects: tuple[str, ...] = ("Speed", "TF", "SF", "OR", "ME_face")
     interactions: tuple[str, ...] = (
         "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
         "TF_x_SF", "TF_x_OR", "SF_x_OR",
+        "ME_face_x_Speed",
     )
     delta_bps_threshold: float = 0.005
 
@@ -183,4 +238,5 @@ INTERACTION_PARENTS: dict[str, tuple[str, str]] = {
     "TF_x_SF": ("TF", "SF"),
     "TF_x_OR": ("TF", "OR"),
     "SF_x_OR": ("SF", "OR"),
+    "ME_face_x_Speed": ("ME_face", "Speed"),
 }
