@@ -179,6 +179,21 @@ class GLMConfig:
     )
     delta_bps_threshold: float = 0.005
 
+    # --- Forward-selection robustness (multi-seed admission) ---
+    # Admit a candidate at a forward-selection round iff its Δ cv_bps
+    # clears delta_bps_threshold in at least selection_threshold_count of
+    # n_selection_seeds independent cv-fold partitions (built by
+    # make_trial_folds with seeds 0..n_selection_seeds-1). Defaults below
+    # reduce to today's single-seed behaviour for back-compat. Production
+    # reruns 2026-05-08 set n_selection_seeds=10, selection_threshold_count=7
+    # — the 7/10 admission rule was chosen against the 2026-05-07 seed
+    # sweep where cluster 376 (TF on the knife edge) was 9/10 above
+    # threshold and cluster 377 (SF/OR straddle) was on the boundary.
+    # The "best" candidate of a passing round is the admitted candidate
+    # with the highest mean Δ across the n_selection_seeds partitions.
+    n_selection_seeds: int = 1
+    selection_threshold_count: int = 1
+
     # --- Reference levels (matches MATLAB sf_levels / or_levels) ---
     sf_levels: tuple[float, ...] = (0.003, 0.006, 0.012)
     or_levels: tuple[float, ...] = field(

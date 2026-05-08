@@ -451,6 +451,27 @@ def _fit_one_cluster(
         strategy=config.cv_strategy,
         profile_ids_per_bin=profile_ids,
     )
+    # Multi-seed forward-selection (added 2026-05-08). When
+    # config.n_selection_seeds > 1, build N independent fold-id arrays
+    # by varying the seed; forward_select then admits a candidate iff
+    # its Δ-bps clears delta_bps_threshold in ≥selection_threshold_count
+    # of N partitions. Default config (n_selection_seeds=1) leaves
+    # fold_ids_per_seed=None and the single-seed code path.
+    n_selection_seeds = int(getattr(config, "n_selection_seeds", 1))
+    if n_selection_seeds > 1:
+        fold_ids_per_seed = [
+            make_trial_folds(
+                trial_ids,
+                config.n_folds,
+                seed,
+                condition_labels_per_bin=condition_labels,
+                strategy=config.cv_strategy,
+                profile_ids_per_bin=profile_ids,
+            )
+            for seed in range(n_selection_seeds)
+        ]
+    else:
+        fold_ids_per_seed = None
 
     sf_valid = sf_vals[(sf_vals != 0.0) & ~np.isnan(sf_vals)]
     sf_ref_levels = np.sort(np.unique(sf_valid)).tolist() if sf_valid.size > 0 else []
@@ -465,6 +486,7 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        fold_ids_per_seed=fold_ids_per_seed,
     )
 
     additive_cv, additive_status = _cv_for_label(
@@ -879,24 +901,37 @@ def _history_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
 
 
 def _history_rows_full(probe_id: str, fit: ClusterFit) -> list[dict]:
-    """One row per (cluster, round, candidate). The forward-selection
-    `RoundResult.delta_bps` already holds every candidate's Δ-bps for
-    that round; this just flattens the dict so we can compute per-
-    candidate population statistics (mean / std across seeds) without
-    losing the losers of each round. Round 1 in particular gives the
-    Δ-from-Null for every main-effect candidate, the cleanest "marginal
-    contribution" definition.
+    """One row per (cluster, round, candidate). Captures every
+    candidate's Δ-from-baseline in the round, not just the round
+    winner — Round 1 in particular gives the Δ-from-Null for every
+    main-effect candidate, the cleanest "marginal contribution"
+    definition.
+
+    Multi-seed columns (added 2026-05-08): when forward selection
+    runs under N>1 cv-fold partitions, ``delta_bps_per_seed`` is a
+    ``;``-joined string of N floats and ``admitted_count`` is the
+    number of partitions in which the candidate's Δ exceeded
+    ``delta_bps_threshold``. For single-seed runs the per-seed list
+    has length 1 and ``admitted_count ∈ {0, 1}``.
     """
     rows = []
     for r in fit.selection.history:
-        for cand, delta in r.delta_bps.items():
+        for cand, delta_mean in r.delta_bps.items():
+            per_seed = r.delta_bps_per_seed.get(cand, [float(delta_mean)])
+            adm = int(r.admitted_count.get(cand, 1 if delta_mean > 0 else 0))
+            std_value = float(np.std(per_seed)) if len(per_seed) > 1 else 0.0
             rows.append({
                 "probe_id": probe_id,
                 "cluster_id": fit.cluster_id,
                 "round": r.round,
                 "phase": r.phase,
                 "candidate": cand,
-                "delta_bps": float(delta),
+                "delta_bps": float(delta_mean),                  # back-compat (mean across seeds)
+                "delta_bps_mean": float(delta_mean),
+                "delta_bps_std": std_value,
+                "delta_bps_per_seed": ";".join(f"{x:.10g}" for x in per_seed),
+                "admitted_count": adm,
+                "n_seeds": int(getattr(r, "n_seeds", len(per_seed))),
                 "is_best_this_round": cand == r.best_candidate,
                 "added_this_round": r.added and cand == r.best_candidate,
                 "cv_bps_after": r.cv_bps_after,
@@ -1946,6 +1981,27 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--n-selection-seeds", type=int, default=None,
+        help=(
+            "Number of independent cv-fold partitions used for forward-"
+            "selection admission (overrides config.n_selection_seeds, "
+            "default 1 = single-seed Hardcastle). Production reruns "
+            "2026-05-08 used 10. Each partition is built by "
+            "make_trial_folds with seeds 0..N-1."
+        ),
+    )
+    parser.add_argument(
+        "--selection-threshold-count", type=int, default=None,
+        help=(
+            "k in 'admit a candidate iff its Δ-bps clears "
+            "delta_bps_threshold in ≥k of n-selection-seeds partitions' "
+            "(overrides config.selection_threshold_count, default 1). "
+            "Production reruns 2026-05-08 used 7 (with N=10). The best "
+            "candidate of a passing round is the admitted one with the "
+            "highest mean Δ across partitions."
+        ),
+    )
+    parser.add_argument(
         "--cluster-filter-csv", type=str, default=None,
         help=(
             "Restrict the pipeline to the (probe_id, cluster_id) pairs in "
@@ -1992,7 +2048,20 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["lambda_ridge"] = float(args.lambda_ridge)
     if args.n_history_bases is not None:
         config_overrides["n_history_bases"] = int(args.n_history_bases)
+    if args.n_selection_seeds is not None:
+        config_overrides["n_selection_seeds"] = int(args.n_selection_seeds)
+    if args.selection_threshold_count is not None:
+        config_overrides["selection_threshold_count"] = int(args.selection_threshold_count)
     config = replace(GLMConfig(), **config_overrides)
+    if config.n_selection_seeds < 1:
+        raise SystemExit(
+            f"--n-selection-seeds={config.n_selection_seeds} must be >= 1"
+        )
+    if not (1 <= config.selection_threshold_count <= config.n_selection_seeds):
+        raise SystemExit(
+            f"--selection-threshold-count={config.selection_threshold_count} "
+            f"must lie in [1, --n-selection-seeds={config.n_selection_seeds}]"
+        )
 
     lookup = None
     if args.mc_sequence and args.mc_folders:
