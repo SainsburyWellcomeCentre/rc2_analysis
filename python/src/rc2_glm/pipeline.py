@@ -214,6 +214,7 @@ def _run_pipeline_inner(
     logger.info("fitting %d clusters (n_jobs=%d)", len(clusters), n_jobs)
     comparison_rows: list[dict] = []
     history_rows: list[dict] = []
+    history_full_rows: list[dict] = []
     coefficient_rows: list[dict] = []
     cluster_fits: list[tuple[ClusterFit, pd.DataFrame]] = []
 
@@ -259,6 +260,7 @@ def _run_pipeline_inner(
             continue
         comparison_rows.append(_comparison_row(probe.probe_id, df, fit))
         history_rows.extend(_history_rows(probe.probe_id, fit))
+        history_full_rows.extend(_history_rows_full(probe.probe_id, fit))
         coefficient_rows.extend(_coefficient_rows(probe.probe_id, fit))
         cluster_fits.append((fit, df))
         logger.info(
@@ -272,6 +274,7 @@ def _run_pipeline_inner(
 
     comparison_df = pd.DataFrame(comparison_rows)
     history_df = pd.DataFrame(history_rows)
+    history_full_df = pd.DataFrame(history_full_rows)
     coef_df = pd.DataFrame(coefficient_rows)
 
     if output_dir is not None:
@@ -280,6 +283,8 @@ def _run_pipeline_inner(
         logger.info("wrote glm_model_comparison.csv (%d rows)", len(comparison_df))
         history_df.to_csv(output_dir / "glm_selection_history.csv", index=False)
         logger.info("wrote glm_selection_history.csv (%d rows)", len(history_df))
+        history_full_df.to_csv(output_dir / "glm_selection_history_full.csv", index=False)
+        logger.info("wrote glm_selection_history_full.csv (%d rows)", len(history_full_df))
         coef_df.to_csv(output_dir / "glm_coefficients.csv", index=False)
         logger.info("wrote glm_coefficients.csv (%d rows)", len(coef_df))
         if cluster_fits:
@@ -871,6 +876,32 @@ def _history_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
         }
         for r in fit.selection.history
     ]
+
+
+def _history_rows_full(probe_id: str, fit: ClusterFit) -> list[dict]:
+    """One row per (cluster, round, candidate). The forward-selection
+    `RoundResult.delta_bps` already holds every candidate's Δ-bps for
+    that round; this just flattens the dict so we can compute per-
+    candidate population statistics (mean / std across seeds) without
+    losing the losers of each round. Round 1 in particular gives the
+    Δ-from-Null for every main-effect candidate, the cleanest "marginal
+    contribution" definition.
+    """
+    rows = []
+    for r in fit.selection.history:
+        for cand, delta in r.delta_bps.items():
+            rows.append({
+                "probe_id": probe_id,
+                "cluster_id": fit.cluster_id,
+                "round": r.round,
+                "phase": r.phase,
+                "candidate": cand,
+                "delta_bps": float(delta),
+                "is_best_this_round": cand == r.best_candidate,
+                "added_this_round": r.added and cand == r.best_candidate,
+                "cv_bps_after": r.cv_bps_after,
+            })
+    return rows
 
 
 def _coefficient_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
@@ -2075,6 +2106,7 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
         "glm_model_comparison.csv",
         "glm_coefficients.csv",
         "glm_selection_history.csv",
+        "glm_selection_history_full.csv",
         "prefilter_decision_tree.csv",
     )
     for basename in top_level:

@@ -121,17 +121,25 @@ class GLMConfig:
     include_me_face: bool = True
 
     # --- GLM fitting ---
-    # Ridge on all non-intercept columns. Non-zero default picks a
-    # specific rotation in the flat direction of the Poisson likelihood
-    # created by correlated raised-cosine bases (Speed/TF bases are
-    # correlated by construction — Park et al. 2014), which is what
-    # makes tuning-curve parity with MATLAB glmnet's lambda_1se
-    # achievable. 1e-3 was tuned empirically on CAA-1123243_rec1 as
-    # the largest value that still improves tuning-curve Pearson r vs
-    # MATLAB; 1e-2 over-shrinks (hurts parity), 0 leaves β rotation
-    # unconstrained (also hurts parity). FullInteraction keeps its own
-    # (larger) lambda because p approaches n there.
-    lambda_ridge: float = 1e-3
+    # Ridge on all non-intercept columns. Tuned by held-out cv_bps on
+    # probe 243 (no-ME no-history config, 33 retained clusters,
+    # 2026-05-07 sweep at λ ∈ {1e-8, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10}):
+    # mean Selected cv_bps maximises at λ=1.0 (mean = -3.7962, vs the
+    # previous default 1e-3 = -3.8460, +0.05 cv_bps mean improvement).
+    # The improvement is tail-driven (median is flat at -3.337 across
+    # all λ); a few bad-fit clusters benefit from the stronger shrinkage,
+    # the median cluster is unaffected. Selection sets are essentially
+    # unchanged across λ. Plot:
+    # ~/local_data/motion_clouds/figures/glm/exploration/ridge_cv_sweep.{pdf,png}.
+    #
+    # Earlier history: λ=1e-3 was originally chosen 2026-04-22 (commit
+    # 11226a8) for MATLAB-parity calibration of per-cluster tuning-curve
+    # Pearson — pinned Python's IRLS rotation close to MATLAB glmnet's
+    # lambda_1se rotation. MATLAB parity was retired as a production
+    # gate 2026-04-29; the value was inherited until the cv-bps re-tune
+    # on 2026-05-07. FullInteraction keeps its own (larger) lambda
+    # because p approaches n there.
+    lambda_ridge: float = 1.0
     full_interaction_lambda: float = 1.0
     lambda_ridge_min: float = 1e-6
     irls_max_iter: int = 100
