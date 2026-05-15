@@ -77,6 +77,9 @@ classdef Cluster < handle
         function val = get.region_str(obj)
         %%which region is the cluster in
             val = obj.cluster.region_str;
+            if ~ischar(val) || isempty(val)
+                val = 'unknownLocation';
+            end
         end
         
         

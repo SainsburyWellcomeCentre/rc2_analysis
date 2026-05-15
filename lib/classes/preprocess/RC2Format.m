@@ -265,14 +265,14 @@ classdef RC2Format < RC2Analysis
                 
                 % find position in the probe track file
                 if ~isempty(probe_track{shank_idx})
-                    
-                    [clusters(i).region_id, ...
+                     [clusters(i).region_id, ...
                      clusters(i).region_str, ...
                      clusters(i).depth] = ...
-                        probe_track{shank_idx}.get_region_of_point_from_tip_adjusted(clusters(i).distance_from_probe_tip);
+                         probe_track{shank_idx}.get_region_of_point_from_tip_adjusted(clusters(i).distance_from_probe_tip);
+
                 else
                     clusters(i).region_id   = nan;
-                    clusters(i).region_str  = "";
+                    clusters(i).region_str  = "unknownLocation";
                     clusters(i).depth       = nan;
                 end
                 
@@ -569,10 +569,10 @@ classdef RC2Format < RC2Analysis
         %   start and end indices of the trial in the session.
             
             % make sure that the solenoid starts high in the session
-            assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
+             assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
             
             % get the sample points of solenoid up and down
-            solenoid_down = find(diff(session.solenoid > 2.5) == -1) + 1;
+             solenoid_down = find(diff(session.solenoid > 2.5) == -1) + 1;
             
             % TODO: should be solved at acquisition
             if ~isfield(session.config, 'prot')
