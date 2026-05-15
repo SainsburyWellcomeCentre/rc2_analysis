@@ -19,6 +19,7 @@ classdef RC2Preprocess < RC2Format
 %       create_selected_mua_clusters_txt - create text file with the MUA clusters selected
 %       mua_from_tip_um                 - for MUA get disatnce from probe tip
 %       move_raw_to_local               - move the raw probe data to a local location
+%       patch_meta_NP2013               - patch NP2013 meta file for Janelia pipeline compatibility
 %       cluster_info                    - create CheckClusterQuality object
 
     properties
@@ -49,6 +50,7 @@ classdef RC2Preprocess < RC2Format
         %       - process the motion energy from the camera data
             
             obj.move_raw_to_local(probe_id);
+            obj.patch_meta_NP2013(probe_id);
             obj.janelia_ecephys_spike_sorting(probe_id);
             obj.create_check_clusters_csv(probe_id);
             obj.create_trigger_file(probe_id);
@@ -318,9 +320,58 @@ classdef RC2Preprocess < RC2Format
             obj.xcopy(remote_lf_bin, local_lf_bin);
             obj.xcopy(remote_lf_meta, local_lf_meta);
         end
-        
-        
-        
+
+
+
+        function patch_meta_NP2013(obj, probe_id)
+        %%patch_meta_NP2013 Patch NP2013 meta file for Janelia pipeline compatibility
+        %
+        %   patch_meta_NP2013(PROBE_ID) rewrites the locally-copied AP meta
+        %   file for probe recording PROBE_ID so that the (newer SpikeGLX)
+        %   NP2013 / probe-type 2013 fields are remapped to the NP2010 /
+        %   probe-type 24 form, and the `snsGeomMap` key is renamed to
+        %   `snsShankMap`. This matches the format the Janelia
+        %   `ecephys_spike_sorting` pipeline expects (`findDisabled()` in
+        %   `SGLXMetaToCoords.py` looks up `snsShankMap` directly).
+        %
+        %   No-op when the meta file does not contain `imDatPrb_pn=NP2013`,
+        %   so this is safe to call on already-compatible recordings.
+        %
+        %   Substitutions applied:
+        %       imDatPrb_pn=NP2013         -> imDatPrb_pn=NP2010
+        %       imDatPrb_type=2013         -> imDatPrb_type=24
+        %       ~imroTbl=(2013,            -> ~imroTbl=(24,
+        %       ~snsGeomMap=(NP2013,       -> ~snsShankMap=(
+
+            local_ap_meta = obj.file.glx_ap_meta_processed_fast(probe_id);
+
+            if ~isfile(local_ap_meta)
+                warning('patch_meta_NP2013: meta file not found: %s', local_ap_meta);
+                return
+            end
+
+            fid = fopen(local_ap_meta, 'r');
+            text = fread(fid, '*char')';
+            fclose(fid);
+
+            if ~contains(text, 'imDatPrb_pn=NP2013')
+                return
+            end
+
+            fprintf('Patching NP2013 meta to NP24 form: %s\n', local_ap_meta);
+
+            text = strrep(text, 'imDatPrb_pn=NP2013',     'imDatPrb_pn=NP2010');
+            text = strrep(text, 'imDatPrb_type=2013',     'imDatPrb_type=24');
+            text = strrep(text, '~imroTbl=(2013,',        '~imroTbl=(24,');
+            text = strrep(text, '~snsGeomMap=(NP2013,',   '~snsShankMap=(');
+
+            fid = fopen(local_ap_meta, 'w');
+            fwrite(fid, text);
+            fclose(fid);
+        end
+
+
+
         function cinfo = cluster_info(obj, probe_id)
         %%cluster_info Create CheckClusterQuality object
         %
