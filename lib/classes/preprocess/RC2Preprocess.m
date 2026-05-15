@@ -23,15 +23,17 @@ classdef RC2Preprocess < RC2Format
 %       cluster_info                    - create CheckClusterQuality object
 
     properties
+
+        leave_window_open_on_error = false
     end
-    
+
     methods
-        
+
         function obj = RC2Preprocess()
         %%RC2Preprocess
         %
         %   RC2Preprocess()
-        
+
             obj = obj@RC2Format();
         end
         
@@ -67,6 +69,7 @@ classdef RC2Preprocess < RC2Format
         %   ecephys_spike_sorting pipeline for probe recording PROBE_ID
         
             je_helper = JaneliaEcephysHelper(obj, probe_id);
+            je_helper.leave_window_open_on_error = obj.leave_window_open_on_error;
             je_helper.run_from_raw();
         end
         
