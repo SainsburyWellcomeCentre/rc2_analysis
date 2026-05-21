@@ -10,6 +10,7 @@ function sessions = data_cleansing(sessions)
 %
 %   See also: RC2Format.format
 
+config = path_config(); 
 if strcmp(sessions(1).session_id, 'CA_176_1_rec1_001')
     % insert log names to make consistent with later data
     basename = 'C:\Users\Mateo\Desktop\mateoData\CA_176_1\CA_176_1\CA_176_1_rec1_001_single_trial';
@@ -126,7 +127,8 @@ if (strcmp(sessions(1).session_id, 'CAA-1121416_rec1_001') && strcmp(sessions(2)
    strcmp(sessions(1).session_id, 'CAA-1121765_rec1_001') || ...
    strcmp(sessions(1).session_id, 'CAA-1121766_rec1_001') 
         
-    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+   % fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+   fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence.mat');
     passive_protocol_sequence = load(fname);
     
     for ii = 1 : sessions(1).n_trials   
@@ -154,7 +156,8 @@ if strcmp(sessions(1).session_id, 'CAA-1123243_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123466_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123467_rec1_001')
         
-    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
+    %fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
+    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds.mat');
     passive_protocol_sequence_motion_clouds = load(fname);
     
     for ii = 1 : sessions(1).n_trials   
