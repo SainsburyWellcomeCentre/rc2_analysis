@@ -313,10 +313,16 @@ classdef Saver < handle
         %  driftmap(PROBE_ID, FIGURE_HANDLE) save the driftmap figure
         %  referenced by FIGURE_HANDLE for probe recording PROBE_ID.
         
-            figure(h_fig);  % make current figure
+            % note: do not call figure(h_fig) here -- that would force the
+            % (deliberately off-screen) driftmap figure visible; exportgraphics
+            % takes the handle explicitly and does not need a current figure
             fname = obj.file_manager.driftmap(probe_id);
-            if obj.check_save(fname) 
-                print(fname, '-bestfit', '-dpdf');
+            if obj.check_save(fname)
+                % The driftmap is a dense scatter of every spike, so a
+                % vector PDF export ('-dpdf') overruns the painters
+                % renderer and fails with "Export failed". Rasterise the
+                % content into the PDF instead.
+                exportgraphics(h_fig, fname, 'ContentType', 'image', 'Resolution', 300);
             end
         end
         
