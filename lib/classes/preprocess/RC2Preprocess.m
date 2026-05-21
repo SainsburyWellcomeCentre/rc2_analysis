@@ -137,13 +137,17 @@ classdef RC2Preprocess < RC2Format
             ks2_dir = obj.file.imec0_ks2(probe_id);
             [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks2_dir);
             
-            figure()
+% render the driftmap off-screen: it is a very dense scatter
+            % that is saved straight to PDF and closed, never inspected
+            % live, and drawing it on screen can stall the graphics
+            % subsystem ("graphics handshaking" timeout)
+            h_fig = figure('Visible', 'off');
             plotDriftmap(spikeTimes, spikeAmps, spikeDepths);
-            set(gcf, 'position', [75, 158, 1041, 778]);
+            set(h_fig, 'position', [75, 158, 1041, 778]);
             box off;
             title(probe_id, 'interpreter', 'none');
-            obj.save.driftmap(probe_id, gcf);
-            close(gcf);
+            obj.save.driftmap(probe_id, h_fig);
+            close(h_fig);
         end
         
         
