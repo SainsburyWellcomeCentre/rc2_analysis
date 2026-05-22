@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from rc2_glm.config import GLMConfig
 from rc2_glm.plots import plot_cluster_kernels
 

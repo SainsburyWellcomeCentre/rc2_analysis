@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from rc2_glm.precomputed_bins import load_precomputed_bin_edges
 
 ROOT = Path("/Users/lauraporta/local_data/motion_clouds/figures")

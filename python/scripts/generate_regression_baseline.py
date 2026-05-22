@@ -18,15 +18,15 @@ from pathlib import Path
 
 import pandas as pd
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "python" / "tests"))
+PYTHON_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PYTHON_DIR / "tests"))
 from test_pipeline_regression import REGRESSION_CLUSTERS  # noqa: E402
 
 CURRENT_CSV = Path(
     "/Users/lauraporta/local_data/motion_clouds/figures/glm/current"
     "/glm_model_comparison.csv"
 )
-OUT_CSV = REPO / "python" / "tests" / "data" / "regression_baseline.csv"
+OUT_CSV = PYTHON_DIR / "tests" / "data" / "regression_baseline.csv"
 
 
 def main() -> int:

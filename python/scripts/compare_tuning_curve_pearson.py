@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from rc2_glm.precomputed_bins import load_precomputed_bin_edges
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")

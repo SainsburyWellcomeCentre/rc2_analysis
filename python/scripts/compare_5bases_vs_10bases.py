@@ -122,7 +122,7 @@ def render_kernel_comparison(out: Path, bin_width_s: float = 0.1,
     and 10 bases (basis-rotation ambiguity — see findings-so-far §1b),
     but the lag-space kernel is the directly-comparable function.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python" / "src"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
     from rc2_glm.basis import history_basis
 
     coefs_10 = pd.read_csv(DIR_10 / "glm_coefficients.csv")
