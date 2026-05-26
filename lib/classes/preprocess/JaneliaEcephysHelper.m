@@ -12,6 +12,15 @@ classdef JaneliaEcephysHelper < handle
 %                                    finishes naturally meaning the user 
 %                                    must close manually to resume any pipelines. Therefore, used more for
 %                                    debugging than general use.
+%       run_catgt                  - true (default) or false, whether to run the CatGT
+%                                    preprocessing step of the pipeline
+%       run_tprime                 - true or false (default), whether to run the TPrime
+%                                    step at the end of the pipeline
+%       start_module               - name of the ecephys_spike_sorting module to start
+%                                    from; that module and every module after it (see
+%                                    module_order) are run. Default 'kilosort_helper'
+%                                    (i.e. run all modules)
+%       module_order               - (Constant) the sorting modules in execution order
 %       ctl                        - instance of class RC2Analysis
 %       probe_id                   - string containing probe ID
 %       run_script                 - the script we run to start ecephys_spike_sorting
@@ -28,10 +37,24 @@ classdef JaneliaEcephysHelper < handle
 %       fix_waveforms               - fix the waveform metrics .csv
 
     properties
-        
-        leave_window_open_on_error = false
+
+        leave_window_open_on_error = true
+        run_catgt = true
+        run_tprime = false
+        start_module = 'kilosort_helper'
     end
-    
+
+    properties (Constant)
+
+        % the ecephys_spike_sorting modules in execution order; start_module
+        % picks where to begin (that module and every module after it run)
+        module_order = {'kilosort_helper', ...
+                        'kilosort_postprocessing', ...
+                        'noise_templates', ...
+                        'mean_waveforms', ...
+                        'quality_metrics'}
+    end
+
     properties (SetAccess = private)
         
         ctl
@@ -56,9 +79,26 @@ classdef JaneliaEcephysHelper < handle
             obj.ctl = ctl;
             obj.probe_id = probe_id;
         end
-        
-        
-        
+
+
+
+        function set.start_module(obj, val)
+        %%set.start_module Validate start_module against the known modules
+        %
+        %   start_module must be the exact (case-sensitive) name of one of
+        %   the modules in module_order.
+
+            if ~ismember(char(val), obj.module_order)
+                error('JaneliaEcephysHelper:start_module:unknownModule', ...
+                      ['Unknown module "%s". start_module must be the ' ...
+                       'exact name of one of:\n  %s'], ...
+                      char(val), strjoin(obj.module_order, '\n  '));
+            end
+            obj.start_module = char(val);
+        end
+
+
+
         function run_from_raw(obj)
         %%run_from_raw Run the full pipeline
         %
@@ -186,7 +226,26 @@ classdef JaneliaEcephysHelper < handle
             str = regexprep(str, '\nrun_specs =[^#]*',          sprintf('run_specs = %s\n\n', run_specs));
             str = regexprep(str, '\<catGT_dest =[^\n]*\n',      sprintf('catGT_dest = %s\n', catGT_dest));
             str = regexprep(str, '\<json_directory =[^\n]*\n',  sprintf('json_directory = %s\n', json_directory));
-            
+
+            % select which sorting modules to run: the chosen start_module
+            % and every module after it (mirrors run_from_step)
+            start_idx = find(strcmp(obj.start_module, obj.module_order), 1);
+            modules_to_run = obj.module_order(start_idx:end);
+            quoted_modules = cellfun(@(m) sprintf('''%s''', m), ...
+                                     modules_to_run, 'UniformOutput', false);
+            modules_str = ['[', strjoin(quoted_modules, ', '), ']'];
+
+            % python boolean literals for the CatGT / TPrime switches
+            bool_str   = {'False', 'True'};
+            catgt_str  = bool_str{logical(obj.run_catgt) + 1};
+            tprime_str = bool_str{logical(obj.run_tprime) + 1};
+
+            % overwrite the pipeline-control variables (trailing comments
+            % in the template are kept)
+            str = regexprep(str, '\<run_CatGT = \w+',    sprintf('run_CatGT = %s', catgt_str));
+            str = regexprep(str, '\<runTPrime = \w+',    sprintf('runTPrime = %s', tprime_str));
+            str = regexprep(str, 'modules = \[[^\]]*\]', sprintf('modules = %s', modules_str));
+
             % write a new pipeline script
             fid = fopen(obj.run_script, 'w');
             fprintf(fid, '%s', str);

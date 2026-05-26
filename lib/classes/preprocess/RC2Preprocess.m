@@ -5,7 +5,9 @@ classdef RC2Preprocess < RC2Format
 %
 %   RC2Preprocess Methods:
 %       preprocess_step_1               - first step of preprocessing
+%       run_from_step                   - run preprocess_step_1 starting from a chosen step
 %       janelia_ecephys_spike_sorting   - run ecephys_spike_sorting
+%       run_ecephys_from_step           - run ecephys_spike_sorting from a chosen module
 %       create_check_clusters_csv       - create the .csv with the clusters to manually check
 %       create_check_mua_clusters_csv   - create the .csv with the clusters to manually check for MUA clusters
 %       create_trigger_file             - separate the trigger channel from the the probe .bin file
@@ -32,9 +34,39 @@ classdef RC2Preprocess < RC2Format
         function obj = RC2Preprocess()
         %%RC2Preprocess
         %
-        %   RC2Preprocess()
+        %   RC2Preprocess() creates the object and prints a short usage
+        %   summary describing the two ways to run stage 1 of the
+        %   preprocessing.
 
             obj = obj@RC2Format();
+
+            fprintf('RC2Preprocess ready. Stage 1 can be run in two ways:\n');
+            fprintf('  1. preprocess_step_1(probe_id)            - run all 7 steps from the start (complete pipeline)\n');
+            fprintf('  2. run_from_step(probe_id, start_step)    - run from a chosen step onwards (useful to debug)\n');
+            fprintf('\n');
+            fprintf('Valid start_step names for run_from_step (in execution order):\n');
+            fprintf('  ''move_raw_to_local''\n');
+            fprintf('  ''patch_meta_NP2013''\n');
+            fprintf('  ''janelia_ecephys_spike_sorting''\n');
+            fprintf('  ''create_check_clusters_csv''\n');
+            fprintf('  ''create_trigger_file''\n');
+            fprintf('  ''create_driftmap''\n');
+            fprintf('  ''process_camera_data''\n');
+            fprintf('\n');
+            fprintf('To start the janelia step from a chosen sorting module AND still\n');
+            fprintf('run every later step to the end, name the module directly as the\n');
+            fprintf('start_step of run_from_step, e.g.:\n');
+            fprintf('  run_from_step(probe_id, ''noise_templates'')\n');
+            fprintf('Valid janelia sorting modules (in execution order):\n');
+            fprintf('  ''kilosort_helper''\n');
+            fprintf('  ''kilosort_postprocessing''\n');
+            fprintf('  ''noise_templates''\n');
+            fprintf('  ''mean_waveforms''\n');
+            fprintf('  ''quality_metrics''\n');
+            fprintf('\n');
+            fprintf('To run *only* the ecephys_spike_sorting step (without chaining to the\n');
+            fprintf('later steps), use:\n');
+            fprintf('  3. run_ecephys_from_step(probe_id, ...)   - see ''help RC2Preprocess.run_ecephys_from_step''\n');
         end
         
         
@@ -42,34 +74,236 @@ classdef RC2Preprocess < RC2Format
         function preprocess_step_1(obj, probe_id)
         %%preprocess_step_1 First step of preprocessing
         %
-        %   preprocess_step_1(PROBE_ID) runs stage 1 of the preprocessing 
+        %   preprocess_step_1(PROBE_ID) runs stage 1 of the preprocessing
         %   for probe recording PROBE_ID. This includes:
         %       - moving raw probe data to a local location
+        %       - patch the NP2013 meta file
         %       - run the ecephys_spike_sorting pipeline
         %       - create a .csv with clusters to check
         %       - create a .mat with the trigger channel
         %       - create a driftmap
         %       - process the motion energy from the camera data
-            
-            obj.move_raw_to_local(probe_id);
-            obj.patch_meta_NP2013(probe_id);
-            obj.janelia_ecephys_spike_sorting(probe_id);
-            obj.create_check_clusters_csv(probe_id);
-            obj.create_trigger_file(probe_id);
-            obj.create_driftmap(probe_id);
-            obj.process_camera_data(probe_id);
+        %
+        %   To start from a step other than the first one, use
+        %   run_from_step.
+
+            obj.run_from_step(probe_id, 'move_raw_to_local');
         end
-        
-        
-        
+
+
+
+        function run_from_step(obj, probe_id, start_step, varargin)
+        %%run_from_step Run preprocess_step_1 starting from a chosen step
+        %
+        %   run_from_step(PROBE_ID, START_STEP) runs stage 1 of the
+        %   preprocessing for probe recording PROBE_ID, starting from the
+        %   step named START_STEP and running every subsequent step in
+        %   order, *always to the end* of the pipeline. This matters because
+        %   the whole analysis is interlinked: each step depends on the
+        %   output of the previous ones, so resuming part-way through must
+        %   never stop early.
+        %
+        %   START_STEP must be the name (char or string) of one of the 7
+        %   steps below, listed in execution order:
+        %       'move_raw_to_local'
+        %       'patch_meta_NP2013'
+        %       'janelia_ecephys_spike_sorting'
+        %       'create_check_clusters_csv'
+        %       'create_trigger_file'
+        %       'create_driftmap'
+        %       'process_camera_data'
+        %
+        %   START_STEP may ALSO be the name of one of the janelia sorting
+        %   sub-modules, in which case the janelia step is resumed from that
+        %   module and, crucially, the pipeline then carries on through
+        %   create_check_clusters_csv and every later step (this is what
+        %   plain run_ecephys_from_step does NOT do). Valid modules, in
+        %   execution order:
+        %       'kilosort_helper'
+        %       'kilosort_postprocessing'
+        %       'noise_templates'
+        %       'mean_waveforms'
+        %       'quality_metrics'
+        %
+        %   run_from_step(..., NAME, VALUE, ...) forwards the optional
+        %   ecephys controls ('run_catgt', 'start_module', 'run_tprime') to
+        %   the janelia step (see run_ecephys_from_step). These only have an
+        %   effect when the janelia step is within the range being run.
+        %
+        %   When the janelia step is resumed from a module other than
+        %   'kilosort_helper', CatGT has normally already been produced, so
+        %   'run_catgt' defaults to false unless set explicitly.
+        %
+        %   Examples:
+        %       ctl.run_from_step(probe_id, 'create_trigger_file')
+        %   runs create_trigger_file, create_driftmap and
+        %   process_camera_data, skipping the four earlier steps.
+        %
+        %       ctl.run_from_step(probe_id, 'noise_templates')
+        %   resumes the janelia step from noise_templates (CatGT skipped by
+        %   default), then runs create_check_clusters_csv, create_trigger_file,
+        %   create_driftmap and process_camera_data.
+
+            steps = {'move_raw_to_local', ...
+                     'patch_meta_NP2013', ...
+                     'janelia_ecephys_spike_sorting', ...
+                     'create_check_clusters_csv', ...
+                     'create_trigger_file', ...
+                     'create_driftmap', ...
+                     'process_camera_data'};
+
+            % the janelia sorting sub-modules, in execution order; a module
+            % name may be given directly as START_STEP (see below).
+            ecephys_modules = JaneliaEcephysHelper.module_order;
+
+            start_step   = char(start_step);
+            ecephys_args = varargin;
+
+            % shorthand: when START_STEP names a janelia sub-module, treat it
+            % as "start the janelia step from this module". We translate it
+            % into the janelia step plus a 'start_module' control so the loop
+            % below still chains through every later step.
+            if ismember(start_step, ecephys_modules)
+                if any(strcmpi(ecephys_args(1:2:end), 'start_module'))
+                    error('RC2Preprocess:run_from_step:duplicateStartModule', ...
+                          ['START_STEP "%s" is a janelia module, so do not ' ...
+                           'also pass a ''start_module'' name-value pair.'], ...
+                          start_step);
+                end
+                ecephys_args = [{'start_module', start_step}, ecephys_args];
+                start_step   = 'janelia_ecephys_spike_sorting';
+            end
+
+            % exact, case-sensitive match against the valid step names;
+            % ismember returns the index of the match in START_IDX so no
+            % approximate / partial matching can ever occur.
+            [is_known_step, start_idx] = ismember(start_step, steps);
+
+            if ~is_known_step
+                error('RC2Preprocess:run_from_step:unknownStep', ...
+                      ['Unknown step "%s". START_STEP must be the exact ' ...
+                       'name of one of the pipeline steps:\n  %s\n' ...
+                       'or one of the janelia sorting modules:\n  %s'], ...
+                      start_step, strjoin(steps, '\n  '), ...
+                      strjoin(ecephys_modules, '\n  '));
+            end
+
+            janelia_idx = find(strcmp('janelia_ecephys_spike_sorting', steps), 1);
+
+            % the ecephys controls only apply if the janelia step is part of
+            % the range about to run; warn and drop them otherwise.
+            if ~isempty(ecephys_args) && start_idx > janelia_idx
+                warning('RC2Preprocess:run_from_step:ignoredEcephysArgs', ...
+                        ['Ecephys controls were supplied but START_STEP ' ...
+                         '"%s" is after the janelia step, so they are ' ...
+                         'ignored.'], start_step);
+                ecephys_args = {};
+            end
+
+            % when resuming the janelia step from a module other than the
+            % first one, CatGT has normally already run; default run_catgt to
+            % false unless the caller set it explicitly.
+            if ~isempty(ecephys_args) && mod(numel(ecephys_args), 2) == 0
+                keys     = ecephys_args(1:2:end);
+                sm_pos   = find(strcmpi(keys, 'start_module'), 1);
+                has_catgt = any(strcmpi(keys, 'run_catgt'));
+                if ~isempty(sm_pos) && ~has_catgt && ...
+                        ~strcmp(ecephys_args{2*sm_pos}, 'kilosort_helper')
+                    ecephys_args = [ecephys_args, {'run_catgt', false}];
+                end
+            end
+
+            for ii = start_idx : length(steps)
+                fprintf('Running step %i/%i: %s\n', ii, length(steps), steps{ii});
+                if strcmp(steps{ii}, 'janelia_ecephys_spike_sorting') && ~isempty(ecephys_args)
+                    % resume janelia from the chosen module / with the chosen
+                    % switches, then let the loop continue to the later steps
+                    obj.run_ecephys_from_step(probe_id, ecephys_args{:});
+                else
+                    obj.(steps{ii})(probe_id);
+                end
+            end
+        end
+
+
+
         function janelia_ecephys_spike_sorting(obj, probe_id)
         %%janelia_ecephys_spike_sorting Run ecephys_spike_sorting
         %
-        %   janelia_ecephys_spike_sorting(PROBE_ID) runs the
+        %   janelia_ecephys_spike_sorting(PROBE_ID) runs the full
         %   ecephys_spike_sorting pipeline for probe recording PROBE_ID
-        
+        %   (CatGT followed by all sorting modules, no TPrime).
+        %
+        %   To run the pipeline from a chosen point - skipping CatGT and/or
+        %   the early sorting modules, or enabling TPrime - use
+        %   run_ecephys_from_step.
+
+            obj.run_ecephys_from_step(probe_id);
+        end
+
+
+
+        function run_ecephys_from_step(obj, probe_id, varargin)
+        %%run_ecephys_from_step Run ecephys_spike_sorting from a chosen point
+        %
+        %   run_ecephys_from_step(PROBE_ID) runs the full ecephys_spike_sorting
+        %   pipeline for probe recording PROBE_ID and is identical to
+        %   janelia_ecephys_spike_sorting(PROBE_ID).
+        %
+        %   run_ecephys_from_step(PROBE_ID, NAME, VALUE, ...) runs the
+        %   pipeline with the optional name-value controls below, so it can
+        %   be re-run from any point without editing the python script:
+        %
+        %       'run_catgt'    - logical, whether to run the CatGT step
+        %                        (default true). Set false to sort data that
+        %                        has already been CatGT-processed.
+        %       'start_module' - char, the sorting module to start from. That
+        %                        module and every module after it are run.
+        %                        One of, in execution order:
+        %                            'kilosort_helper'         (default)
+        %                            'kilosort_postprocessing'
+        %                            'noise_templates'
+        %                            'mean_waveforms'
+        %                            'quality_metrics'
+        %       'run_tprime'   - logical, whether to run the TPrime step at
+        %                        the end of the pipeline (default false).
+        %
+        %   Example:
+        %       ctl.run_ecephys_from_step(probe_id, 'run_catgt', false, ...
+        %                                 'start_module', 'noise_templates')
+        %   skips CatGT and the first two sorting modules, running only
+        %   noise_templates, mean_waveforms and quality_metrics.
+        %
+        %   Note: starting from a later step assumes the output of the
+        %   earlier steps already exists on disk.
+        %
+        %   This method runs the ecephys_spike_sorting step ONLY; it does not
+        %   continue to create_check_clusters_csv or any later stage-1 step.
+        %   To resume from a sorting module AND carry on to the end of the
+        %   pipeline, use run_from_step (e.g.
+        %   run_from_step(PROBE_ID, 'noise_templates')).
+
+            parser = inputParser();
+            parser.addParameter('run_catgt', true, ...
+                                @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
+            parser.addParameter('run_tprime', false, ...
+                                @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
+            parser.addParameter('start_module', 'kilosort_helper', ...
+                                @(x) ischar(x) || isstring(x));
+            parser.parse(varargin{:});
+
             je_helper = JaneliaEcephysHelper(obj, probe_id);
             je_helper.leave_window_open_on_error = obj.leave_window_open_on_error;
+            je_helper.run_catgt  = logical(parser.Results.run_catgt);
+            je_helper.run_tprime = logical(parser.Results.run_tprime);
+            % the helper's set.start_module validates this against the known
+            % module names and errors on an unknown one
+            je_helper.start_module = char(parser.Results.start_module);
+
+            fprintf(['Running ecephys_spike_sorting (run_catgt=%d, ' ...
+                     'start_module=''%s'', run_tprime=%d)\n'], ...
+                    je_helper.run_catgt, je_helper.start_module, je_helper.run_tprime);
+
             je_helper.run_from_raw();
         end
         
@@ -137,7 +371,7 @@ classdef RC2Preprocess < RC2Format
             ks2_dir = obj.file.imec0_ks2(probe_id);
             [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks2_dir);
             
-% render the driftmap off-screen: it is a very dense scatter
+            % render the driftmap off-screen: it is a very dense scatter
             % that is saved straight to PDF and closed, never inspected
             % live, and drawing it on screen can stall the graphics
             % subsystem ("graphics handshaking" timeout)
