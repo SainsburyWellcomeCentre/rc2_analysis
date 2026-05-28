@@ -982,14 +982,24 @@ def _pearson_safe(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
 
 def _per_cluster_window_r(
     pb: ProbeBins, cluster_idx: int, condition: str,
-) -> dict[str, float]:
-    """For one cluster × condition, pooled Pearson r over (trial, bin) samples.
+) -> dict:
+    """For one cluster × condition, per-window pooled r and per-trial r lists.
 
-    Returns four numbers: baseline-window r, motion-window r, plus the
-    sample counts entering each. The "baseline" window is bin_offset < 0
-    (pre motion-onset stationary block); "motion" is bin_offset >= 0.
+    Returns:
+        r_baseline / r_motion: pooled (trial × bin) Pearson r in each window
+        per_trial_r_baseline / per_trial_r_motion: list of per-trial r
+            values (one per trial of this condition) — feed the
+            within-cluster paired Wilcoxon signed-rank test for the
+            baseline-vs-motion unity plot.
+        n_baseline / n_motion: pooled sample counts.
+
+    "Baseline" window = bin_offset < 0 (pre-motion stationary block);
+    "motion" = bin_offset >= 0. Per-trial r is NaN for trials with < 3
+    finite samples or zero variance in either side.
     """
     fr_b, me_b, fr_m, me_m = [], [], [], []
+    per_trial_b: list[float] = []
+    per_trial_m: list[float] = []
     for tb_i, tb in enumerate(pb.trials):
         if tb.condition != condition:
             continue
@@ -1001,6 +1011,10 @@ def _per_cluster_window_r(
         me_b.append(me_trial[base_mask])
         fr_m.append(fr_trial[motion_mask])
         me_m.append(me_trial[motion_mask])
+        r_tb, _ = _pearson_safe(fr_trial[base_mask], me_trial[base_mask])
+        r_tm, _ = _pearson_safe(fr_trial[motion_mask], me_trial[motion_mask])
+        per_trial_b.append(r_tb)
+        per_trial_m.append(r_tm)
     fr_b_arr = np.concatenate(fr_b) if fr_b else np.zeros(0)
     me_b_arr = np.concatenate(me_b) if me_b else np.zeros(0)
     fr_m_arr = np.concatenate(fr_m) if fr_m else np.zeros(0)
@@ -1010,17 +1024,21 @@ def _per_cluster_window_r(
     return {
         "r_baseline": r_b, "r_motion": r_m,
         "n_baseline": n_b, "n_motion": n_m,
+        "per_trial_r_baseline": np.asarray(per_trial_b, dtype=np.float64),
+        "per_trial_r_motion": np.asarray(per_trial_m, dtype=np.float64),
     }
 
 
 def _gather_per_cluster_table(pbs: list[ProbeBins]) -> dict[str, list]:
     """Compute per-cluster (r_baseline, r_motion) for each of V/VT/T pooled
     across all probes. Returns a dict of parallel lists; one row per
-    (probe, cluster).
+    (probe, cluster). Carries the per-trial r arrays needed for the
+    within-cluster significance test.
     """
     out: dict[str, list] = {
         "probe_id": [], "cluster_id": [],
         **{f"r_{w}_{c}": [] for c in CONDITIONS for w in ("baseline", "motion")},
+        **{f"per_trial_r_{w}_{c}": [] for c in CONDITIONS for w in ("baseline", "motion")},
     }
     for pb in pbs:
         for ci in range(pb.cluster_ids.size):
@@ -1030,48 +1048,162 @@ def _gather_per_cluster_table(pbs: list[ProbeBins]) -> dict[str, list]:
                 vals = _per_cluster_window_r(pb, ci, c)
                 out[f"r_baseline_{c}"].append(vals["r_baseline"])
                 out[f"r_motion_{c}"].append(vals["r_motion"])
+                out[f"per_trial_r_baseline_{c}"].append(vals["per_trial_r_baseline"])
+                out[f"per_trial_r_motion_{c}"].append(vals["per_trial_r_motion"])
     return out
+
+
+def _paired_pvalues(
+    xs: list[np.ndarray], ys: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cluster Wilcoxon signed-rank p + direction sign(median(y - x)).
+
+    For each cluster ``i``, ``xs[i]`` and ``ys[i]`` are arrays of paired
+    per-trial r values (e.g. baseline vs motion). NaN trials are dropped
+    pairwise. ``p[i] = NaN`` when fewer than 5 paired finite samples
+    survive or when all paired differences are zero.
+    """
+    from scipy.stats import wilcoxon
+    n = len(xs)
+    ps = np.full(n, np.nan, dtype=np.float64)
+    dirs = np.zeros(n, dtype=np.int8)
+    for i, (x, y) in enumerate(zip(xs, ys)):
+        valid = np.isfinite(x) & np.isfinite(y)
+        if int(valid.sum()) < 5:
+            continue
+        xv = np.asarray(x)[valid]
+        yv = np.asarray(y)[valid]
+        diff = yv - xv
+        if np.all(diff == 0):
+            continue
+        try:
+            stat = wilcoxon(xv, yv, zero_method="wilcox", alternative="two-sided")
+            ps[i] = float(stat.pvalue)
+            med = float(np.nanmedian(diff))
+            dirs[i] = int(np.sign(med))
+        except ValueError:
+            continue
+    return ps, dirs
+
+
+def _independent_pvalues(
+    xs: list[np.ndarray], ys: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cluster Mann-Whitney U p + direction sign(median(y) - median(x)).
+
+    For each cluster ``i``, ``xs[i]`` and ``ys[i]`` are per-trial r
+    values from two different (unpaired) trial sets (e.g. V trials and
+    VT trials of the same cluster). ``p[i] = NaN`` when either side has
+    fewer than 5 finite samples.
+    """
+    from scipy.stats import mannwhitneyu
+    n = len(xs)
+    ps = np.full(n, np.nan, dtype=np.float64)
+    dirs = np.zeros(n, dtype=np.int8)
+    for i, (x, y) in enumerate(zip(xs, ys)):
+        x = np.asarray(x)
+        y = np.asarray(y)
+        x = x[np.isfinite(x)]
+        y = y[np.isfinite(y)]
+        if x.size < 5 or y.size < 5:
+            continue
+        try:
+            stat = mannwhitneyu(x, y, alternative="two-sided")
+            ps[i] = float(stat.pvalue)
+            dirs[i] = int(np.sign(float(np.median(y)) - float(np.median(x))))
+        except ValueError:
+            continue
+    return ps, dirs
 
 
 def _draw_unity_scatter(
     ax,
     x: np.ndarray,
     y: np.ndarray,
+    p: np.ndarray,
+    direction: np.ndarray,
     *,
     xlabel: str,
     ylabel: str,
     title: str,
-    color_above: str = "C0",   # default blue = y > x
-    color_below: str = "C3",   # default red  = y < x
+    p_thresh: float = 0.05,
     lim: tuple[float, float] = (-0.4, 0.4),
 ) -> None:
-    """One scatter panel with the y = x unity line.
+    """One unity-line scatter panel, MATLAB-rc2-style.
 
-    Points coloured by sign of (y - x); blue for increase, red for
-    decrease. Equal-aspect axes so the unity line is visually 45°.
-    NaNs are dropped silently.
+    Each cluster gets a colour from its per-cluster p-value:
+      - p ≥ ``p_thresh`` or NaN  → grey (non-significant)
+      - p < ``p_thresh`` and direction == +1 (y > x) → red (increase)
+      - p < ``p_thresh`` and direction == −1 (y < x) → blue (decrease)
+    Mirrors `UnityPlotPopulation.m` in `rc2_analysis/lib/classes/plot/`.
+
+    Adds the green median + IQR cross-hairs and a corner stats string
+    with the population-level Wilcoxon signed-rank p of (x vs y) and the
+    counts of red / blue / grey clusters.
     """
-    valid = np.isfinite(x) & np.isfinite(y)
-    x = x[valid]
-    y = y[valid]
-    above = y > x
+    from scipy.stats import wilcoxon
+    valid_xy = np.isfinite(x) & np.isfinite(y)
+    x = np.asarray(x); y = np.asarray(y); p = np.asarray(p); direction = np.asarray(direction)
+    ns = (~np.isfinite(p)) | (p >= p_thresh)
+    red = (~ns) & (direction == 1)
+    blue = (~ns) & (direction == -1)
+    # NaN x/y → don't plot, but count.
+    ns_plot = ns & valid_xy
+    red_plot = red & valid_xy
+    blue_plot = blue & valid_xy
+
     ax.plot(lim, lim, color="0.4", lw=0.6, ls="--")
-    ax.axhline(0, color="0.85", lw=0.5)
-    ax.axvline(0, color="0.85", lw=0.5)
-    if (~above).any():
-        ax.scatter(x[~above], y[~above], s=14, c=color_below, alpha=0.7,
-                   edgecolors="none", label=f"y < x ({int((~above).sum())})")
-    if above.any():
-        ax.scatter(x[above], y[above], s=14, c=color_above, alpha=0.7,
-                   edgecolors="none", label=f"y > x ({int(above.sum())})")
+    ax.axhline(0, color="0.92", lw=0.5)
+    ax.axvline(0, color="0.92", lw=0.5)
+    if ns_plot.any():
+        ax.scatter(x[ns_plot], y[ns_plot], s=14, c="0.55", alpha=0.6,
+                   edgecolors="none")
+    if blue_plot.any():
+        ax.scatter(x[blue_plot], y[blue_plot], s=20, c="#1e90ff", alpha=0.85,
+                   edgecolors="none")
+    if red_plot.any():
+        ax.scatter(x[red_plot], y[red_plot], s=20, c="#d62728", alpha=0.85,
+                   edgecolors="none")
+    # Median dot + IQR cross-hairs (green), matching UnityPlotPopulation.
+    if valid_xy.any():
+        xv = x[valid_xy]; yv = y[valid_xy]
+        xm = float(np.median(xv)); ym = float(np.median(yv))
+        xq = np.percentile(xv, [25, 75])
+        yq = np.percentile(yv, [25, 75])
+        ax.scatter([xm], [ym], s=40, c="#2ca02c", zorder=5)
+        ax.plot(xq, [ym, ym], color="#2ca02c", lw=1.2, zorder=4)
+        ax.plot([xm, xm], yq, color="#2ca02c", lw=1.2, zorder=4)
+        # Population-level paired Wilcoxon
+        try:
+            p_pop = float(wilcoxon(xv, yv, alternative="two-sided").pvalue)
+        except ValueError:
+            p_pop = float("nan")
+    else:
+        xm = ym = float("nan"); p_pop = float("nan")
+
     ax.set_xlim(*lim)
     ax.set_ylim(*lim)
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel(xlabel, fontsize=8)
     ax.set_ylabel(ylabel, fontsize=8)
     ax.set_title(title, fontsize=8)
-    ax.legend(loc="lower right", fontsize=6, framealpha=0.7)
     ax.tick_params(labelsize=7)
+    n_red = int(red.sum()); n_blue = int(blue.sum()); n_ns = int(ns.sum())
+    n_total = n_red + n_blue + n_ns
+    p_fmt = "%.1e" % p_pop if (np.isfinite(p_pop) and p_pop < 0.01) else "%.3f" % p_pop
+    txt = (
+        f"pop p = {p_fmt}\n"
+        f"red (↑) = {n_red} ({100*n_red/max(n_total,1):.0f}%)\n"
+        f"blue (↓) = {n_blue} ({100*n_blue/max(n_total,1):.0f}%)\n"
+        f"grey (ns/NaN) = {n_ns} ({100*n_ns/max(n_total,1):.0f}%)\n"
+        f"x med = {xm:+.2f}  y med = {ym:+.2f}"
+    )
+    ax.text(
+        0.97, 0.03, txt,
+        transform=ax.transAxes, ha="right", va="bottom",
+        fontsize=6, color="0.15",
+        bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=2),
+    )
 
 
 def _emit_figure4_baseline_vs_motion(
@@ -1079,28 +1211,36 @@ def _emit_figure4_baseline_vs_motion(
 ) -> None:
     """3-panel unity scatter: baseline-window vs motion-window Pearson r
     of FR vs ME, per condition. One dot per (probe, cluster), pooled
-    across all 3 probes. Blue = correlation increased from baseline to
-    motion; red = decreased.
+    across all 3 probes. Per-cluster paired Wilcoxon signed-rank on the
+    per-trial r samples decides significance (red = sig increase,
+    blue = sig decrease, grey = ns/NaN). MATLAB ``UnityPlotPopulation``
+    convention.
     """
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, len(CONDITIONS), figsize=(11, 3.8))
+    fig, axes = plt.subplots(1, len(CONDITIONS), figsize=(13, 4.6))
     for ax, condition in zip(axes, CONDITIONS):
         x = np.asarray(table[f"r_baseline_{condition}"])
         y = np.asarray(table[f"r_motion_{condition}"])
+        xs = list(table[f"per_trial_r_baseline_{condition}"])
+        ys = list(table[f"per_trial_r_motion_{condition}"])
+        p_vals, dirs = _paired_pvalues(xs, ys)
         _draw_unity_scatter(
-            ax, x, y,
+            ax, x, y, p_vals, dirs,
             xlabel="r in baseline window",
             ylabel="r in motion window",
             title=f"{condition}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
         )
     fig.suptitle(
         "FR-vs-ME Pearson r — baseline (pre motion-onset) vs motion (post). "
-        "One dot per cluster, pooled across all 3 probes. Pearson computed "
-        "on pooled (trial × bin) samples within each window.",
+        "One dot per cluster, pooled across all 3 probes. Significance: "
+        "per-cluster paired Wilcoxon signed-rank on per-trial r values "
+        "(α = 0.05). Red = sig. increase, blue = sig. decrease, grey = ns or NaN p.",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig(out_pdf)
+    # Generous padding (CLAUDE.md feedback 2026-05-28: x-axis labels were
+    # being cropped at the previous tight_layout rect).
+    fig.tight_layout(rect=(0.03, 0.04, 0.99, 0.91))
+    fig.savefig(out_pdf, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out_pdf}", flush=True)
 
@@ -1112,28 +1252,35 @@ def _emit_figure5_cross_condition(
     """Cross-condition unity scatters (motion-window Pearson r by default).
 
     Two panels: (V, VT) and (T_Vstatic, VT). Same cluster contributes one
-    dot to each panel. Blue = VT correlation higher than the comparison
-    condition; red = lower.
+    dot to each panel. Significance via per-cluster Mann–Whitney U on
+    per-trial r samples (the two trial sets are independent).
+    Red = sig. increase (y > x), blue = sig. decrease (y < x),
+    grey = ns/NaN.
     """
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 2, figsize=(8.0, 4.2))
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 5.0))
     pairs = [("V", "VT"), ("T_Vstatic", "VT")]
     for ax, (cx, cy) in zip(axes, pairs):
         x = np.asarray(table[f"r_{window}_{cx}"])
         y = np.asarray(table[f"r_{window}_{cy}"])
+        xs = list(table[f"per_trial_r_{window}_{cx}"])
+        ys = list(table[f"per_trial_r_{window}_{cy}"])
+        p_vals, dirs = _independent_pvalues(xs, ys)
         _draw_unity_scatter(
-            ax, x, y,
+            ax, x, y, p_vals, dirs,
             xlabel=f"r in {cx} ({window})",
             ylabel=f"r in {cy} ({window})",
             title=f"{cx} vs {cy}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
         )
     fig.suptitle(
         f"FR-vs-ME Pearson r across conditions ({window} window). "
-        "One dot per cluster, pooled across all 3 probes.",
+        "One dot per cluster, pooled across all 3 probes. Significance: "
+        "per-cluster Mann–Whitney U on per-trial r values (α = 0.05). "
+        "Red = sig. y > x, blue = sig. y < x, grey = ns or NaN p.",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    fig.savefig(out_pdf)
+    fig.tight_layout(rect=(0.03, 0.04, 0.99, 0.90))
+    fig.savefig(out_pdf, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out_pdf}", flush=True)
 
