@@ -341,6 +341,7 @@ def _plot_grid(
     out_pdf: Path,
     *,
     z_score: bool = False,
+    xlim: tuple[float, float] = (T_LO_S, T_HI_S),
 ) -> None:
     """7 rows (subsets) × 3 cols (conditions). Each cell = depth-averaged
     line plot above a depth × time heatmap.
@@ -420,7 +421,7 @@ def _plot_grid(
                 ax_line.set_ylim(-line_ymax, line_ymax)
             else:
                 ax_line.set_ylim(0, line_ymax)
-            ax_line.set_xlim(T_LO_S, T_HI_S)
+            ax_line.set_xlim(*xlim)
             ax_line.tick_params(labelbottom=False, labelsize=6)
             if ci != 0:
                 ax_line.tick_params(labelleft=False)
@@ -449,7 +450,7 @@ def _plot_grid(
             ax.axvline(0.1, color="black", lw=0.5)
             for a_label, b_label, depth in layer_info["boundaries"]:
                 ax.axhline(depth, color="0.25", lw=0.4, ls=":")
-            ax.set_xlim(T_LO_S, T_HI_S)
+            ax.set_xlim(*xlim)
             ax.set_ylim(depth_hi, depth_lo)
             if ri == n_rows - 1:
                 ax.set_xlabel("Time from motion onset (s)", fontsize=8)
@@ -463,7 +464,7 @@ def _plot_grid(
                 )
                 for L, mean_d in layer_info["layer_means"].items():
                     ax.text(
-                        T_LO_S - 0.05 * (T_HI_S - T_LO_S),
+                        xlim[0] - 0.05 * (xlim[1] - xlim[0]),
                         mean_d, L,
                         fontsize=5, ha="right", va="center", color="0.25",
                     )
@@ -521,7 +522,15 @@ def main() -> None:
 
     depth_edges = _depth_bin_edges()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for tag, z_flag in (("raw_fr", False), ("z_score", True)):
+    # Three figures: raw FR full ±4 s, z-FR full ±4 s, and z-FR zoomed
+    # to ±1 s around motion onset (Laura's 2026-05-28 ask — onset window
+    # only, easier to compare layer structure within the response peak).
+    variants = [
+        ("raw_fr", False, (T_LO_S, T_HI_S)),
+        ("z_score", True, (T_LO_S, T_HI_S)),
+        ("z_score_zoom", True, (-1.0, 1.0)),
+    ]
+    for tag, z_flag, xlim in variants:
         aggregated: dict[tuple[str, str], dict] = {}
         for subset in SUBSET_ORDER:
             for condition in CONDITIONS:
@@ -532,7 +541,7 @@ def main() -> None:
         _plot_grid(
             aggregated, layer_info, depth_edges,
             OUT_DIR / f"depth_x_time_by_subset_{tag}.pdf",
-            z_score=z_flag,
+            z_score=z_flag, xlim=xlim,
         )
 
 
