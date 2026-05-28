@@ -41,8 +41,8 @@ import numpy as np
 import pandas as pd
 
 from rc2_formatted_data_reader import FormattedDataReader, StimulusLookup
-from rc2_formatted_data_reader import masks
-from rc2_glm.masks_helpers import acceleration_from_velocity
+from rc2_glm.config import GLMConfig
+from rc2_glm.io import load_probe_data
 
 
 DATA_ROOT = Path("~/local_data/motion_clouds").expanduser()
@@ -132,108 +132,64 @@ def _load_cluster_table() -> pd.DataFrame:
 
 # -- per-probe binning ------------------------------------------------------
 def _bin_one_probe(probe_stem: str, lookup: StimulusLookup) -> dict:
-    """Return per-(cluster, condition) z-FR arrays of shape (n_trials_in_cond, N_BINS).
+    """Bin each VISp cluster's spike train into 50 ms × ±4 s windows around
+    motion onset, grouped by condition.
 
-    Z-score is per-cluster against pooled (trial × baseline-bin) FR
-    statistics. NaN where a trial doesn't cover a bin (short
-    pre-motion-onset interval, etc.).
+    Built on top of ``rc2_glm.io.load_probe_data`` — per the
+    feedback-recycle-rc2-modules memory, trial wrappers
+    (``trial.probe_t``, ``trial.motion_mask``, ``trial.condition``,
+    ``trial.excluded``) are the canonical path. Don't re-derive any of
+    that here. Cluster depth is the one piece not in ``ClusterData``;
+    we read it from the reader for each cluster index.
     """
     mat = MAT_DIR / f"{probe_stem}.mat"
+    probe = load_probe_data(
+        mat, config=GLMConfig(), stimulus_lookup=lookup, visp_only=True,
+    )
+    # Per-cluster depth (not carried on ClusterData; cheap to fetch).
+    with FormattedDataReader(mat) as r:
+        cluster_depths = [r.cluster_depth(c.cluster_idx) for c in probe.clusters]
+
+    # Per-trial motion-onset time in probe time, condition label.
+    trial_t_onset: list[float] = []
+    trial_cond: list[str | None] = []
+    for trial in probe.trials:
+        if trial.excluded or trial.condition not in CONDITIONS:
+            trial_t_onset.append(float("nan"))
+            trial_cond.append(None)
+            continue
+        motion_idx = np.flatnonzero(trial.motion_mask)
+        if motion_idx.size == 0:
+            trial_t_onset.append(float("nan"))
+            trial_cond.append(None)
+            continue
+        trial_t_onset.append(float(trial.probe_t[int(motion_idx[0])]))
+        trial_cond.append(trial.condition)
+
+    # Per-cluster binning.
     out = {
-        "probe_id": probe_stem,
+        "probe_id": probe.probe_id,
         "cluster_ids": [],
         "cluster_regions": [],
         "cluster_depths": [],
-        "fr_by_cluster_cond": [],  # list per cluster: dict[condition] -> (n_trials, N_BINS) array
-        "z_baseline_mean": [],
-        "z_baseline_std": [],
+        "fr_by_cluster_cond": [],  # per cluster: dict[condition] -> (n_trials, N_BINS)
     }
-    with FormattedDataReader(mat) as r:
-        fs = r.fs
-        n_clusters = r.n_clusters
-        n_trials = r.n_trials
-        cluster_ids = r.cluster_ids()
-        regions = r.cluster_regions()
-
-        # Per trial: motion-onset time + condition
-        trial_motion_time = np.full(n_trials, np.nan, dtype=np.float64)
-        trial_cond = np.full(n_trials, None, dtype=object)
-        for ti in range(n_trials):
-            tid = r.trial_id(ti)
-            protocol = r.trial_protocol(ti)
-            if protocol not in ("StageOnly", "ReplayOnly"):
+    for ci, cluster in enumerate(probe.clusters):
+        per_cond_fr: dict[str, list[np.ndarray]] = {c: [] for c in CONDITIONS}
+        for ti, (t_onset, cond) in enumerate(zip(trial_t_onset, trial_cond)):
+            if not np.isfinite(t_onset) or cond is None:
                 continue
-            condition = r.trial_condition(ti)
-            if condition not in CONDITIONS:
-                continue
-            # excluded?
-            params = lookup.stimulus_params(tid)
-            if params.get("excluded", False):
-                continue
-            # Compute motion onset via the same logic as fr_me_corr.
-            # NB: spike_times in the .mat are in PROBE time (the trial's
-            # ``probe_t`` slice), NOT in sample_index / fs — those differ
-            # by a multi-second recording-start offset (~46 s on probe
-            # 243). Using (s_idx + motion_idx[0]) / fs picks up spikes
-            # from completely the wrong part of the session.
-            v = r.trial_velocity(ti)
-            accel = acceleration_from_velocity(v)
-            m_mask = masks.treadmill_motion_mask(
-                v, accel, fs, vel_thresh=1.0, acc_thresh=0.5, min_dur=0.2,
-            )
-            analysis_mask = r.trial_analysis_mask(ti)
-            m_mask = m_mask & analysis_mask
-            motion_idx = np.flatnonzero(m_mask)
-            if motion_idx.size == 0:
-                continue
-            s_idx, e_idx = r.trial_bounds(ti)
-            probe_t_trial = r.probe_t(s_idx, e_idx)
-            t_onset = float(probe_t_trial[int(motion_idx[0])])
-            trial_motion_time[ti] = t_onset
-            trial_cond[ti] = condition
-
-        # Per-cluster binning
-        for ci in range(n_clusters):
-            cid = int(cluster_ids[ci])
-            region = regions[ci]
-            depth = r.cluster_depth(ci)
-            spikes = r.spike_times(ci)
-            per_cond_fr: dict[str, list[np.ndarray]] = {c: [] for c in CONDITIONS}
-            for ti in range(n_trials):
-                t_onset = trial_motion_time[ti]
-                cond = trial_cond[ti]
-                if not np.isfinite(t_onset) or cond is None:
-                    continue
-                edges = t_onset + BIN_EDGES_REL
-                counts, _ = np.histogram(spikes, bins=edges)
-                fr = counts.astype(np.float64) / BIN_WIDTH_S  # Hz
-                per_cond_fr[cond].append(fr)
-            # Stack per condition
-            stacked: dict[str, np.ndarray] = {}
-            for c, lst in per_cond_fr.items():
-                stacked[c] = (
-                    np.vstack(lst) if lst else np.zeros((0, N_BINS), dtype=np.float64)
-                )
-            # Baseline stats — pooled across conditions, across (trial × baseline bin).
-            baseline_mask = (
-                (BIN_CENTRES_REL >= BASELINE_LO_S)
-                & (BIN_CENTRES_REL <= BASELINE_HI_S)
-            )
-            pool = np.concatenate(
-                [stacked[c][:, baseline_mask].ravel() for c in CONDITIONS]
-                if any(stacked[c].size for c in CONDITIONS) else []
-            ) if any(stacked[c].size for c in CONDITIONS) else np.zeros(0)
-            if pool.size >= 10 and pool.std(ddof=0) > 0:
-                b_mean = float(pool.mean())
-                b_std = float(pool.std(ddof=0))
-            else:
-                b_mean, b_std = 0.0, 1.0
-            out["cluster_ids"].append(cid)
-            out["cluster_regions"].append(region)
-            out["cluster_depths"].append(depth)
-            out["fr_by_cluster_cond"].append(stacked)
-            out["z_baseline_mean"].append(b_mean)
-            out["z_baseline_std"].append(b_std)
+            edges = t_onset + BIN_EDGES_REL
+            counts, _ = np.histogram(cluster.spike_times, bins=edges)
+            per_cond_fr[cond].append(counts.astype(np.float64) / BIN_WIDTH_S)
+        stacked = {
+            c: (np.vstack(lst) if lst else np.zeros((0, N_BINS), dtype=np.float64))
+            for c, lst in per_cond_fr.items()
+        }
+        out["cluster_ids"].append(cluster.cluster_id)
+        out["cluster_regions"].append(cluster.region)
+        out["cluster_depths"].append(cluster_depths[ci])
+        out["fr_by_cluster_cond"].append(stacked)
     return out
 
 
