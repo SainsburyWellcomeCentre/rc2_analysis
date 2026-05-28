@@ -900,6 +900,72 @@ def _load_cache(path: Path) -> ProbeBins:
     )
 
 
+# --- Figure 3: pooled std diagnostic ---------------------------------------
+def _emit_figure3_pooled_std(pbs: list[ProbeBins], out_pdf: Path) -> None:
+    """Pooled trial-to-trial SD of FR (Hz) and ME (raw) across all 3 animals.
+
+    Added 2026-05-28 as a diagnostic for the trial-residual r drop seen in
+    VT / T motion in Figure 2. If ME variance collapses post motion-onset
+    (the stage motion is stereotyped), Pearson r becomes noise-dominated
+    and the drop is partly a denominator effect rather than a real
+    decoupling. This figure plots the SD curves directly so the cause is
+    visible.
+
+    Per cell (3 conditions): black = SD of FR across the pooled
+    (cluster × trial) rows at each bin, red = SD of ME across trials at
+    each bin. Twin y-axes since FR (Hz) and raw ME aren't comparable.
+    Same x-axis convention as Figure 2.
+    """
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, len(CONDITIONS), figsize=(11, 2.8), sharex=True)
+    for ci, condition in enumerate(CONDITIONS):
+        fr_z, me_z, fr_raw, me_raw, bin_offsets, groups = _stack_multi_animal(
+            pbs, condition,
+        )
+        ax = axes[ci]
+        if fr_raw.shape[0] < 3:
+            ax.set_title(f"{condition}\n(insufficient data)", fontsize=8)
+            ax.set_xlim(*XLIM_S)
+            continue
+        t = bin_offsets.astype(np.float64) * BIN_WIDTH
+        # Trial-axis SD: for FR pool every (cluster × trial) row; for ME
+        # de-replicate to one row per unique trial first (the matrix has
+        # ME repeated across clusters within a trial, which doesn't
+        # change np.nanstd but is conceptually cleaner to report).
+        with np.errstate(invalid="ignore"):
+            fr_sd = np.nanstd(fr_raw, axis=0, ddof=1)
+            unique_groups, first_idx = np.unique(groups, return_index=True)
+            me_unique = me_raw[first_idx]
+            me_sd = np.nanstd(me_unique, axis=0, ddof=1)
+        n_trials = int(unique_groups.size)
+        ax.plot(t, fr_sd, color="black", lw=1.2, label="FR SD (Hz)")
+        ax.set_xlim(*XLIM_S)
+        ax.set_xlabel("Time from motion onset (s)")
+        ax.tick_params(axis="y", labelcolor="black", labelsize=7)
+        ax.axvline(0, color="black", lw=0.5, ls="--")
+        ax.axvline(T100_MS_S, color="black", lw=0.7, alpha=0.7)
+        ax.set_title(
+            f"{condition}  (n_trials={n_trials}, n_clusters_x_trials={fr_raw.shape[0]})",
+            fontsize=8,
+        )
+        if ci == 0:
+            ax.set_ylabel("Trial-to-trial SD of FR (Hz)", fontsize=8)
+        ax_me = ax.twinx()
+        ax_me.plot(t, me_sd, color="C3", lw=1.2, label="ME SD")
+        ax_me.tick_params(axis="y", labelcolor="C3", labelsize=7)
+        if ci == len(CONDITIONS) - 1:
+            ax_me.set_ylabel("Trial-to-trial SD of ME (raw)", fontsize=8, color="C3")
+    fig.suptitle(
+        "Trial-to-trial SD of FR (black, left) and ME (red, right) pooled across all 3 animals — "
+        "diagnostic for the trial-residual r drop in Figure 2",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(out_pdf)
+    plt.close(fig)
+    print(f"wrote {out_pdf}", flush=True)
+
+
 # --- Main ------------------------------------------------------------------
 def _load_or_build(probe_stem: str, *, use_cache: bool) -> ProbeBins:
     cache = _cache_path(probe_stem)
@@ -980,6 +1046,10 @@ def main() -> None:
     parser.add_argument(
         "--skip-fig2", action="store_true",
         help="Skip the per-animal pooled grid (Figure 2)."
+    )
+    parser.add_argument(
+        "--skip-fig3", action="store_true",
+        help="Skip the pooled trial-to-trial SD diagnostic (Figure 3)."
     )
     parser.add_argument(
         "--no-cache", action="store_true",
@@ -1068,6 +1138,10 @@ def main() -> None:
     if not args.skip_fig2:
         out_pdf = out_root / "per_animal_grid.pdf"
         _emit_figure2(pbs, out_pdf, rng)
+
+    if not args.skip_fig3:
+        out_pdf = out_root / "pooled_trial_to_trial_sd.pdf"
+        _emit_figure3_pooled_std(pbs, out_pdf)
 
 
 if __name__ == "__main__":
