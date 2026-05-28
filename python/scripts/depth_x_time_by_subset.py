@@ -282,6 +282,13 @@ def _aggregate_subset(
     sums = np.zeros((n_depth, N_BINS), dtype=np.float64)
     counts = np.zeros((n_depth, N_BINS), dtype=np.int64)
     clusters_per_depth = np.zeros(n_depth, dtype=np.int64)
+    # Cluster-weighted accumulators for the line plot — every cluster
+    # contributes equally per time bin, matching how fr_me_correlation
+    # Fig 2 averages FR across the pooled (cluster × trial) rows. Cluster
+    # weighting differs from the depth-weighted nanmean over the heatmap
+    # matrix when the cohort is unevenly distributed across depth bins.
+    line_sums = np.zeros(N_BINS, dtype=np.float64)
+    line_counts = np.zeros(N_BINS, dtype=np.int64)
     total = 0
     for pd_ in probe_data:
         probe_id = pd_["probe_id"]
@@ -305,21 +312,26 @@ def _aggregate_subset(
             fr_trials = pd_["fr_by_cluster_cond"][ci][condition]
             if fr_trials.shape[0] == 0:
                 continue
-            # Trial-mean per bin for this cluster, in Hz.
             with np.errstate(invalid="ignore"):
                 fr_mean = np.nanmean(fr_trials, axis=0)
             finite = np.isfinite(fr_mean)
             sums[bin_i, finite] += fr_mean[finite]
             counts[bin_i, finite] += 1
             clusters_per_depth[bin_i] += 1
+            line_sums[finite] += fr_mean[finite]
+            line_counts[finite] += 1
             total += 1
     means = np.full((n_depth, N_BINS), np.nan, dtype=np.float64)
     ok = counts > 0
     means[ok] = sums[ok] / counts[ok]
+    line_mean = np.full(N_BINS, np.nan, dtype=np.float64)
+    line_ok = line_counts > 0
+    line_mean[line_ok] = line_sums[line_ok] / line_counts[line_ok]
     return {
         "means": means,
         "counts": counts,
         "clusters_per_depth": clusters_per_depth,
+        "line_mean": line_mean,
         "total": total,
     }
 
@@ -368,14 +380,12 @@ def _plot_grid(
             max(1.0, float(np.nanpercentile(row_vals, 95)))
             if row_vals.size else 1.0
         )
-        # Per-row line-plot y range (depth-averaged FR).
+        # Per-row line-plot y range. Cluster-weighted mean FR
+        # (each cluster contributes equally per time bin), parallel to
+        # the fr_me_correlation Fig 2 trace aggregation. Computed in
+        # _aggregate_subset alongside the depth-binned heatmap matrix.
         line_means = {
-            c: (
-                np.nanmean(aggregated[(subset, c)]["means"], axis=0)
-                if aggregated[(subset, c)]["total"] > 0
-                else np.full(N_BINS, np.nan)
-            )
-            for c in CONDITIONS
+            c: aggregated[(subset, c)]["line_mean"] for c in CONDITIONS
         }
         line_vals = np.concatenate([v[np.isfinite(v)] for v in line_means.values()])
         if line_vals.size:
