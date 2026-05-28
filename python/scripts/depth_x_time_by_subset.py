@@ -270,12 +270,13 @@ def _aggregate_subset(
     condition: str,
     depth_edges: np.ndarray,
 ) -> dict:
-    """For one (subset, condition), aggregate mean z-FR over (depth-bin, time-bin).
+    """For one (subset, condition), aggregate mean raw FR (Hz) over
+    (depth-bin, time-bin). Per-cluster trial-mean FR is averaged across
+    clusters whose depth falls in the bin.
 
-    Returns a dict with a 2D ``means`` array shaped (n_depth_bins,
-    N_BINS), a parallel ``counts`` array (number of contributing
-    clusters per cell), the total cluster count, and the per-bin
-    cluster count along the depth axis (for caveat annotations).
+    NB: NO z-scoring or per-cluster normalisation. Heterogeneous cluster
+    rates mean high-rate clusters dominate the cell mean; this is
+    honest but please read alongside the depth-line cluster counts.
     """
     n_depth = depth_edges.size - 1
     sums = np.zeros((n_depth, N_BINS), dtype=np.float64)
@@ -301,16 +302,14 @@ def _aggregate_subset(
             bin_i = int(np.digitize(depth, depth_edges) - 1)
             if bin_i < 0 or bin_i >= n_depth:
                 continue
-            b_mean = pd_["z_baseline_mean"][ci]
-            b_std = pd_["z_baseline_std"][ci]
             fr_trials = pd_["fr_by_cluster_cond"][ci][condition]
             if fr_trials.shape[0] == 0:
                 continue
-            z = (fr_trials - b_mean) / b_std
+            # Trial-mean per bin for this cluster, in Hz.
             with np.errstate(invalid="ignore"):
-                z_mean = np.nanmean(z, axis=0)
-            finite = np.isfinite(z_mean)
-            sums[bin_i, finite] += z_mean[finite]
+                fr_mean = np.nanmean(fr_trials, axis=0)
+            finite = np.isfinite(fr_mean)
+            sums[bin_i, finite] += fr_mean[finite]
             counts[bin_i, finite] += 1
             clusters_per_depth[bin_i] += 1
             total += 1
@@ -332,69 +331,104 @@ def _plot_grid(
     depth_edges: np.ndarray,
     out_pdf: Path,
 ) -> None:
-    """7 rows (subsets) × 3 cols (conditions) + per-row colourbar.
+    """7 rows (subsets) × 3 cols (conditions). Each cell = depth-averaged
+    line plot above a depth × time heatmap.
 
-    Y axis: continuous depth in μm (50 μm bins). Dashed horizontal lines
-    mark the data-derived layer boundaries from
-    ``_layer_boundary_depths``. Each row uses its OWN colourmap scale
-    (vmax = nanpercentile(|z|, 95) of that subset) so weaker subsets
-    are not washed out by stronger ones — Laura's 2026-05-28 ask.
+    Line plot (top sub-panel): mean z-FR across all clusters in the
+    subset, per time bin — kept on a SHARED y-axis per row so V / VT / T
+    can be compared at a glance (motion-onset peaks are visible here
+    even when the heatmap colourmap flattens them).
+
+    Heatmap (bottom sub-panel): mean z-FR per (depth-bin, time-bin),
+    with the per-row colourmap scale (vmax = 95th-percentile of |z| in
+    that subset). Dotted lines mark data-derived layer boundaries.
     """
     from matplotlib.gridspec import GridSpec
 
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     n_rows = len(SUBSET_ORDER)
     n_cols = len(CONDITIONS)
-    # Width per condition column + extra for colourbar gutter + layer label gutter.
-    fig = plt.figure(figsize=(16, 2.2 * n_rows + 0.6))
-    gs = GridSpec(
+    # Each subset row is split into a (line, heatmap) pair via a sub-GridSpec.
+    fig = plt.figure(figsize=(16, 3.2 * n_rows + 0.6))
+    outer = GridSpec(
         n_rows, n_cols + 1,
         figure=fig,
         width_ratios=[*([1.0] * n_cols), 0.04],
-        wspace=0.08, hspace=0.35,
+        wspace=0.08, hspace=0.45,
     )
     depth_lo, depth_hi = float(depth_edges[0]), float(depth_edges[-1])
-    extent = (T_LO_S, T_HI_S, depth_hi, depth_lo)  # origin upper → invert y
+    extent = (T_LO_S, T_HI_S, depth_hi, depth_lo)
     for ri, subset in enumerate(SUBSET_ORDER):
-        # Per-row colour range: 95th-percentile of |z| across the three
-        # conditions of this subset. Skip NaNs. Floor at 0.3 so a totally
-        # flat row still has a tiny visible scale.
+        # Per-row heatmap colour range: 0 → 95th percentile of raw FR (Hz).
         row_vals = np.concatenate(
             [aggregated[(subset, c)]["means"].ravel() for c in CONDITIONS]
         )
         row_vals = row_vals[np.isfinite(row_vals)]
         vmax = (
-            max(0.3, float(np.nanpercentile(np.abs(row_vals), 95)))
+            max(1.0, float(np.nanpercentile(row_vals, 95)))
             if row_vals.size else 1.0
         )
+        # Per-row line-plot y range (depth-averaged FR).
+        line_means = {
+            c: (
+                np.nanmean(aggregated[(subset, c)]["means"], axis=0)
+                if aggregated[(subset, c)]["total"] > 0
+                else np.full(N_BINS, np.nan)
+            )
+            for c in CONDITIONS
+        }
+        line_vals = np.concatenate([v[np.isfinite(v)] for v in line_means.values()])
+        if line_vals.size:
+            line_ymax = max(1.0, float(np.nanpercentile(line_vals, 99)) * 1.1)
+        else:
+            line_ymax = 1.0
+        line_ax_share = None
         im = None
         for ci, condition in enumerate(CONDITIONS):
-            ax = fig.add_subplot(gs[ri, ci])
+            # Two sub-rows inside this (subset, condition) cell.
+            inner = outer[ri, ci].subgridspec(
+                2, 1, height_ratios=(0.35, 1.0), hspace=0.05,
+            )
+            ax_line = fig.add_subplot(inner[0], sharey=line_ax_share)
+            ax = fig.add_subplot(inner[1], sharex=ax_line)
+            line_ax_share = line_ax_share or ax_line
+
+            # ─── line plot ───
+            ax_line.plot(BIN_CENTRES_REL, line_means[condition],
+                          color="black", lw=1.0)
+            ax_line.axvline(0, color="black", lw=0.5, ls="--")
+            ax_line.axvline(0.1, color="black", lw=0.5)
+            ax_line.set_ylim(0, line_ymax)
+            ax_line.set_xlim(T_LO_S, T_HI_S)
+            ax_line.tick_params(labelbottom=False, labelsize=6)
+            if ci != 0:
+                ax_line.tick_params(labelleft=False)
+            if ri == 0:
+                ax_line.set_title(condition, fontsize=9)
+
+            # ─── heatmap ───
             cell = aggregated[(subset, condition)]
             im = ax.imshow(
                 cell["means"],
                 extent=extent, aspect="auto",
                 origin="upper",
-                cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                cmap="magma", vmin=0, vmax=vmax,
                 interpolation="nearest",
             )
             ax.axvline(0, color="black", lw=0.5, ls="--")
             ax.axvline(0.1, color="black", lw=0.5)
-            # Layer boundary lines + layer-name labels on the leftmost col.
             for a_label, b_label, depth in layer_info["boundaries"]:
                 ax.axhline(depth, color="0.25", lw=0.4, ls=":")
             ax.set_xlim(T_LO_S, T_HI_S)
             ax.set_ylim(depth_hi, depth_lo)
-            if ri == 0:
-                ax.set_title(condition, fontsize=9)
             if ri == n_rows - 1:
                 ax.set_xlabel("Time from motion onset (s)", fontsize=8)
             if ci == 0:
+                ax_line.set_ylabel("FR (Hz)", fontsize=6)
                 ax.set_ylabel(
                     f"{subset}\n(n={cell['total']} clusters)\n\ndepth (μm)",
                     fontsize=7,
                 )
-                # Annotate layer names against their mean depth in the LH gutter.
                 for L, mean_d in layer_info["layer_means"].items():
                     ax.text(
                         T_LO_S - 0.05 * (T_HI_S - T_LO_S),
@@ -404,20 +438,20 @@ def _plot_grid(
             else:
                 ax.tick_params(labelleft=False)
             ax.tick_params(labelsize=6)
-        # Per-row colourbar in the rightmost gridspec column.
-        cax = fig.add_subplot(gs[ri, -1])
+        # Per-row colourbar in the rightmost outer column.
+        cax = fig.add_subplot(outer[ri, -1])
         cb = fig.colorbar(im, cax=cax)
-        cb.set_label(f"z-FR (±{vmax:.1f})", fontsize=6)
+        cb.set_label(f"FR (Hz)  vmax = {vmax:.1f}", fontsize=6)
         cb.ax.tick_params(labelsize=6)
     fig.suptitle(
-        "z-FR per cortical depth × time, faceted by GLM Selected-model subset.  "
-        f"z-score per cluster against baseline ({BASELINE_LO_S:+.1f} s, {BASELINE_HI_S:+.1f} s); "
+        "Raw FR per cortical depth × time, faceted by GLM Selected-model subset.  "
+        "Line plots: depth-averaged FR (shared y per row).  "
         f"{int(BIN_WIDTH_S*1000)} ms time bins, {int(DEPTH_BIN_UM)} μm depth bins; "
-        "per-row colour scale (vmax = 95th percentile of |z| in that subset).  "
-        "Dotted lines: data-derived layer boundaries.",
+        "per-row colour scale (vmax = 95th percentile of FR in that subset).  "
+        "Dotted: data-derived layer boundaries.",
         fontsize=9,
     )
-    fig.subplots_adjust(left=0.08, right=0.96, bottom=0.05, top=0.94)
+    fig.subplots_adjust(left=0.08, right=0.96, bottom=0.04, top=0.94)
     fig.savefig(out_pdf, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out_pdf}", flush=True)
