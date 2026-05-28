@@ -59,13 +59,14 @@ PROBES = ("CAA-1123243_rec1", "CAA-1123244_rec1", "CAA-1123466_rec1")
 CONDITIONS = ("V", "VT", "T_Vstatic")
 TRIAL_CONDITION_MAP = {1: "VT", 2: "V", 3: "T_Vstatic"}
 
-# Time grid relative to motion onset. 100 ms bins matches the production GLM
-# binning convention; ±2 s window covers a useful chunk of both the
-# stationary prelude and the motion phase.
-BIN_WIDTH_S = 0.10
-T_LO_S = -2.0
-T_HI_S = 2.0
-N_BINS = int(round((T_HI_S - T_LO_S) / BIN_WIDTH_S))   # 40
+# Time grid relative to motion onset. 50 ms bins for the depth × time
+# heatmaps (finer than the production GLM 100 ms but still smoothing
+# enough for population averages); window ±4 s matches the fr_me_corr
+# time axis so the figures can be cross-referenced.
+BIN_WIDTH_S = 0.05
+T_LO_S = -4.0
+T_HI_S = 4.0
+N_BINS = int(round((T_HI_S - T_LO_S) / BIN_WIDTH_S))   # 160
 BIN_EDGES_REL = T_LO_S + BIN_WIDTH_S * np.arange(N_BINS + 1)
 BIN_CENTRES_REL = 0.5 * (BIN_EDGES_REL[:-1] + BIN_EDGES_REL[1:])
 
@@ -73,8 +74,16 @@ BIN_CENTRES_REL = 0.5 * (BIN_EDGES_REL[:-1] + BIN_EDGES_REL[1:])
 BASELINE_LO_S = -1.0
 BASELINE_HI_S = -0.1
 
-# Layer order, superficial → deep. The 80-cluster cohort spans L2/3 down,
-# so VISp1 is omitted.
+# Depth bin width (μm). Cohort depths span roughly 220–1160 μm; 50 μm
+# bins → ~19 rows, fine enough to see layer-scale structure without
+# leaving most bins empty.
+DEPTH_BIN_UM = 50.0
+DEPTH_LO_UM = 200.0
+DEPTH_HI_UM = 1200.0
+
+# Layer label order, superficial → deep. Used to derive data-driven
+# layer-boundary depths (midpoints between consecutive layer means)
+# in the same style as depth_variable_selection.py.
 LAYER_ORDER = ("VISp2/3", "VISp4", "VISp5", "VISp6a", "VISp6b")
 
 # Subset order — matches Laura's request, mutex categories.
@@ -223,20 +232,56 @@ def _bin_one_probe(probe_stem: str, lookup: StimulusLookup) -> dict:
     return out
 
 
+def _depth_bin_edges() -> np.ndarray:
+    """Edges of the depth (μm) bins for the heatmap y-axis."""
+    return np.arange(DEPTH_LO_UM, DEPTH_HI_UM + DEPTH_BIN_UM, DEPTH_BIN_UM)
+
+
+def _layer_boundary_depths(probe_data: list[dict]) -> dict[str, float]:
+    """Per-layer mean depth and the data-derived inter-layer boundaries.
+
+    Same approach as ``depth_variable_selection.py``: mean depth of all
+    clusters labelled with each ``VISp*`` region across all 3 probes,
+    midpoint between consecutive layer means is the boundary line drawn
+    on the figure. Layers absent from the cohort drop out silently.
+    """
+    pooled: dict[str, list[float]] = {L: [] for L in LAYER_ORDER}
+    for pd_ in probe_data:
+        for region, depth in zip(pd_["cluster_regions"], pd_["cluster_depths"]):
+            if region in pooled:
+                pooled[region].append(float(depth))
+    layer_means: dict[str, float] = {}
+    for L, depths in pooled.items():
+        if depths:
+            layer_means[L] = float(np.mean(depths))
+    # Boundaries between consecutive layers (in superficial → deep order).
+    ordered = [L for L in LAYER_ORDER if L in layer_means]
+    boundaries: list[tuple[str, str, float]] = []
+    for i in range(len(ordered) - 1):
+        a, b = ordered[i], ordered[i + 1]
+        boundaries.append((a, b, 0.5 * (layer_means[a] + layer_means[b])))
+    return {"layer_means": layer_means, "boundaries": boundaries}
+
+
 def _aggregate_subset(
     probe_data: list[dict],
     cluster_table: pd.DataFrame,
     subset: str,
     condition: str,
-) -> dict[str, np.ndarray]:
-    """For one (subset, condition), aggregate mean z-FR over (depth-layer, time-bin).
+    depth_edges: np.ndarray,
+) -> dict:
+    """For one (subset, condition), aggregate mean z-FR over (depth-bin, time-bin).
 
-    Returns a dict layer → (N_BINS,) array of mean z-FR (NaN where no
-    cluster contributes), plus a layer-wise cluster-count dict.
+    Returns a dict with a 2D ``means`` array shaped (n_depth_bins,
+    N_BINS), a parallel ``counts`` array (number of contributing
+    clusters per cell), the total cluster count, and the per-bin
+    cluster count along the depth axis (for caveat annotations).
     """
-    sums = defaultdict(lambda: np.zeros(N_BINS, dtype=np.float64))
-    counts = defaultdict(lambda: np.zeros(N_BINS, dtype=np.int64))
-    cluster_counts: dict[str, int] = defaultdict(int)
+    n_depth = depth_edges.size - 1
+    sums = np.zeros((n_depth, N_BINS), dtype=np.float64)
+    counts = np.zeros((n_depth, N_BINS), dtype=np.int64)
+    clusters_per_depth = np.zeros(n_depth, dtype=np.int64)
+    total = 0
     for pd_ in probe_data:
         probe_id = pd_["probe_id"]
         for ci, cid in enumerate(pd_["cluster_ids"]):
@@ -252,8 +297,9 @@ def _aggregate_subset(
                     continue
             elif cluster_subset != subset:
                 continue
-            region = pd_["cluster_regions"][ci]
-            if region not in LAYER_ORDER:
+            depth = float(pd_["cluster_depths"][ci])
+            bin_i = int(np.digitize(depth, depth_edges) - 1)
+            if bin_i < 0 or bin_i >= n_depth:
                 continue
             b_mean = pd_["z_baseline_mean"][ci]
             b_std = pd_["z_baseline_std"][ci]
@@ -261,91 +307,117 @@ def _aggregate_subset(
             if fr_trials.shape[0] == 0:
                 continue
             z = (fr_trials - b_mean) / b_std
-            # Trial-mean per bin for this cluster
             with np.errstate(invalid="ignore"):
                 z_mean = np.nanmean(z, axis=0)
             finite = np.isfinite(z_mean)
-            sums[region][finite] += z_mean[finite]
-            counts[region][finite] += 1
-            cluster_counts[region] += 1
-    means: dict[str, np.ndarray] = {}
-    for layer in LAYER_ORDER:
-        c = counts[layer]
-        s = sums[layer]
-        out = np.full(N_BINS, np.nan, dtype=np.float64)
-        ok = c > 0
-        out[ok] = s[ok] / c[ok]
-        means[layer] = out
-    return {"means": means, "cluster_counts": dict(cluster_counts)}
+            sums[bin_i, finite] += z_mean[finite]
+            counts[bin_i, finite] += 1
+            clusters_per_depth[bin_i] += 1
+            total += 1
+    means = np.full((n_depth, N_BINS), np.nan, dtype=np.float64)
+    ok = counts > 0
+    means[ok] = sums[ok] / counts[ok]
+    return {
+        "means": means,
+        "counts": counts,
+        "clusters_per_depth": clusters_per_depth,
+        "total": total,
+    }
 
 
 # -- plotting ---------------------------------------------------------------
 def _plot_grid(
     aggregated: dict[tuple[str, str], dict],
+    layer_info: dict,
+    depth_edges: np.ndarray,
     out_pdf: Path,
-    *,
-    vlim: float = 1.5,
 ) -> None:
-    """7 rows (subsets) × 3 cols (conditions). Each cell = layer × time heatmap."""
+    """7 rows (subsets) × 3 cols (conditions) + per-row colourbar.
+
+    Y axis: continuous depth in μm (50 μm bins). Dashed horizontal lines
+    mark the data-derived layer boundaries from
+    ``_layer_boundary_depths``. Each row uses its OWN colourmap scale
+    (vmax = nanpercentile(|z|, 95) of that subset) so weaker subsets
+    are not washed out by stronger ones — Laura's 2026-05-28 ask.
+    """
+    from matplotlib.gridspec import GridSpec
+
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     n_rows = len(SUBSET_ORDER)
     n_cols = len(CONDITIONS)
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(11, 1.6 * n_rows + 0.6), sharex=True,
+    # Width per condition column + extra for colourbar gutter + layer label gutter.
+    fig = plt.figure(figsize=(16, 2.2 * n_rows + 0.6))
+    gs = GridSpec(
+        n_rows, n_cols + 1,
+        figure=fig,
+        width_ratios=[*([1.0] * n_cols), 0.04],
+        wspace=0.08, hspace=0.35,
     )
-    extent = (T_LO_S, T_HI_S, len(LAYER_ORDER) - 0.5, -0.5)
+    depth_lo, depth_hi = float(depth_edges[0]), float(depth_edges[-1])
+    extent = (T_LO_S, T_HI_S, depth_hi, depth_lo)  # origin upper → invert y
     for ri, subset in enumerate(SUBSET_ORDER):
+        # Per-row colour range: 95th-percentile of |z| across the three
+        # conditions of this subset. Skip NaNs. Floor at 0.3 so a totally
+        # flat row still has a tiny visible scale.
+        row_vals = np.concatenate(
+            [aggregated[(subset, c)]["means"].ravel() for c in CONDITIONS]
+        )
+        row_vals = row_vals[np.isfinite(row_vals)]
+        vmax = (
+            max(0.3, float(np.nanpercentile(np.abs(row_vals), 95)))
+            if row_vals.size else 1.0
+        )
+        im = None
         for ci, condition in enumerate(CONDITIONS):
-            ax = axes[ri, ci]
+            ax = fig.add_subplot(gs[ri, ci])
             cell = aggregated[(subset, condition)]
-            mat = np.vstack([cell["means"][L] for L in LAYER_ORDER])
             im = ax.imshow(
-                mat,
+                cell["means"],
                 extent=extent, aspect="auto",
                 origin="upper",
-                cmap="RdBu_r", vmin=-vlim, vmax=vlim,
+                cmap="RdBu_r", vmin=-vmax, vmax=vmax,
                 interpolation="nearest",
             )
             ax.axvline(0, color="black", lw=0.5, ls="--")
             ax.axvline(0.1, color="black", lw=0.5)
+            # Layer boundary lines + layer-name labels on the leftmost col.
+            for a_label, b_label, depth in layer_info["boundaries"]:
+                ax.axhline(depth, color="0.25", lw=0.4, ls=":")
             ax.set_xlim(T_LO_S, T_HI_S)
+            ax.set_ylim(depth_hi, depth_lo)
             if ri == 0:
                 ax.set_title(condition, fontsize=9)
             if ri == n_rows - 1:
                 ax.set_xlabel("Time from motion onset (s)", fontsize=8)
             if ci == 0:
-                counts = cell["cluster_counts"]
-                total = sum(counts.get(L, 0) for L in LAYER_ORDER)
-                ax.set_ylabel(f"{subset}\n(n={total})", fontsize=7)
-                ax.set_yticks(np.arange(len(LAYER_ORDER)))
-                ax.set_yticklabels(LAYER_ORDER, fontsize=6)
-            else:
-                ax.set_yticks([])
-            ax.tick_params(labelsize=6)
-            # Annotate per-layer cluster counts on the right edge
-            if ci == n_cols - 1:
-                counts = cell["cluster_counts"]
-                for li, L in enumerate(LAYER_ORDER):
-                    n = counts.get(L, 0)
+                ax.set_ylabel(
+                    f"{subset}\n(n={cell['total']} clusters)\n\ndepth (μm)",
+                    fontsize=7,
+                )
+                # Annotate layer names against their mean depth in the LH gutter.
+                for L, mean_d in layer_info["layer_means"].items():
                     ax.text(
-                        T_HI_S + 0.05, li, f"n={n}",
-                        fontsize=5, va="center", ha="left", color="0.3",
+                        T_LO_S - 0.05 * (T_HI_S - T_LO_S),
+                        mean_d, L,
+                        fontsize=5, ha="right", va="center", color="0.25",
                     )
+            else:
+                ax.tick_params(labelleft=False)
+            ax.tick_params(labelsize=6)
+        # Per-row colourbar in the rightmost gridspec column.
+        cax = fig.add_subplot(gs[ri, -1])
+        cb = fig.colorbar(im, cax=cax)
+        cb.set_label(f"z-FR (±{vmax:.1f})", fontsize=6)
+        cb.ax.tick_params(labelsize=6)
     fig.suptitle(
-        "z-FR per cortical layer × time, faceted by GLM Selected-model subset.  "
-        "z-score per cluster against baseline (−1 s, −0.1 s); 100 ms bins; "
-        "diverging colour ±1.5 z.",
+        "z-FR per cortical depth × time, faceted by GLM Selected-model subset.  "
+        f"z-score per cluster against baseline ({BASELINE_LO_S:+.1f} s, {BASELINE_HI_S:+.1f} s); "
+        f"{int(BIN_WIDTH_S*1000)} ms time bins, {int(DEPTH_BIN_UM)} μm depth bins; "
+        "per-row colour scale (vmax = 95th percentile of |z| in that subset).  "
+        "Dotted lines: data-derived layer boundaries.",
         fontsize=9,
     )
-    fig.subplots_adjust(
-        left=0.10, right=0.92, bottom=0.06, top=0.93, hspace=0.25, wspace=0.10,
-    )
-    # Single colourbar on the right.
-    cbar_ax = fig.add_axes((0.94, 0.10, 0.012, 0.78))
-    cb = fig.colorbar(im, cax=cbar_ax)
-    cb.set_label("z-FR", fontsize=8)
-    cb.ax.tick_params(labelsize=7)
+    fig.subplots_adjust(left=0.08, right=0.96, bottom=0.05, top=0.94)
     fig.savefig(out_pdf, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out_pdf}", flush=True)
@@ -371,15 +443,20 @@ def main() -> None:
         print(f"[{stem}] binning …", flush=True)
         probe_data.append(_bin_one_probe(stem, lookup))
 
+    layer_info = _layer_boundary_depths(probe_data)
+    print("layer means (μm):", layer_info["layer_means"])
+    print("boundaries (μm):", [(a, b, round(d, 1)) for a, b, d in layer_info["boundaries"]])
+
+    depth_edges = _depth_bin_edges()
     aggregated: dict[tuple[str, str], dict] = {}
     for subset in SUBSET_ORDER:
         for condition in CONDITIONS:
             aggregated[(subset, condition)] = _aggregate_subset(
-                probe_data, cluster_table, subset, condition,
+                probe_data, cluster_table, subset, condition, depth_edges,
             )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    _plot_grid(aggregated, OUT_DIR / "depth_x_time_by_subset.pdf")
+    _plot_grid(aggregated, layer_info, depth_edges, OUT_DIR / "depth_x_time_by_subset.pdf")
 
 
 if __name__ == "__main__":
