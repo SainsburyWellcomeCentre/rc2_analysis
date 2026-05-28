@@ -1142,8 +1142,8 @@ def _draw_unity_scatter(
     counts of red / blue / grey clusters.
     """
     from scipy.stats import wilcoxon
-    valid_xy = np.isfinite(x) & np.isfinite(y)
     x = np.asarray(x); y = np.asarray(y); p = np.asarray(p); direction = np.asarray(direction)
+    valid_xy = np.isfinite(x) & np.isfinite(y)
     ns = (~np.isfinite(p)) | (p >= p_thresh)
     red = (~ns) & (direction == 1)
     blue = (~ns) & (direction == -1)
@@ -1164,16 +1164,10 @@ def _draw_unity_scatter(
     if red_plot.any():
         ax.scatter(x[red_plot], y[red_plot], s=20, c="#d62728", alpha=0.85,
                    edgecolors="none")
-    # Median dot + IQR cross-hairs (green), matching UnityPlotPopulation.
+    # Population-level paired Wilcoxon on the plotted scalars.
     if valid_xy.any():
         xv = x[valid_xy]; yv = y[valid_xy]
         xm = float(np.median(xv)); ym = float(np.median(yv))
-        xq = np.percentile(xv, [25, 75])
-        yq = np.percentile(yv, [25, 75])
-        ax.scatter([xm], [ym], s=40, c="#2ca02c", zorder=5)
-        ax.plot(xq, [ym, ym], color="#2ca02c", lw=1.2, zorder=4)
-        ax.plot([xm, xm], yq, color="#2ca02c", lw=1.2, zorder=4)
-        # Population-level paired Wilcoxon
         try:
             p_pop = float(wilcoxon(xv, yv, alternative="two-sided").pvalue)
         except ValueError:
@@ -1219,15 +1213,18 @@ def _emit_figure4_baseline_vs_motion(
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, len(CONDITIONS), figsize=(13, 4.6))
     for ax, condition in zip(axes, CONDITIONS):
-        x = np.asarray(table[f"r_baseline_{condition}"])
-        y = np.asarray(table[f"r_motion_{condition}"])
         xs = list(table[f"per_trial_r_baseline_{condition}"])
         ys = list(table[f"per_trial_r_motion_{condition}"])
+        # Plot the median per-trial r per cluster — same quantity the
+        # significance test compares, so dot above/below unity always
+        # matches the direction sign.
+        x = np.array([float(np.nanmedian(a)) if a.size else np.nan for a in xs])
+        y = np.array([float(np.nanmedian(a)) if a.size else np.nan for a in ys])
         p_vals, dirs = _paired_pvalues(xs, ys)
         _draw_unity_scatter(
             ax, x, y, p_vals, dirs,
-            xlabel="r in baseline window",
-            ylabel="r in motion window",
+            xlabel="median per-trial r, baseline",
+            ylabel="median per-trial r, motion",
             title=f"{condition}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
         )
     fig.suptitle(
@@ -1261,15 +1258,15 @@ def _emit_figure5_cross_condition(
     fig, axes = plt.subplots(1, 2, figsize=(9.5, 5.0))
     pairs = [("V", "VT"), ("T_Vstatic", "VT")]
     for ax, (cx, cy) in zip(axes, pairs):
-        x = np.asarray(table[f"r_{window}_{cx}"])
-        y = np.asarray(table[f"r_{window}_{cy}"])
         xs = list(table[f"per_trial_r_{window}_{cx}"])
         ys = list(table[f"per_trial_r_{window}_{cy}"])
+        x = np.array([float(np.nanmedian(a)) if a.size else np.nan for a in xs])
+        y = np.array([float(np.nanmedian(a)) if a.size else np.nan for a in ys])
         p_vals, dirs = _independent_pvalues(xs, ys)
         _draw_unity_scatter(
             ax, x, y, p_vals, dirs,
-            xlabel=f"r in {cx} ({window})",
-            ylabel=f"r in {cy} ({window})",
+            xlabel=f"median per-trial r, {cx} ({window})",
+            ylabel=f"median per-trial r, {cy} ({window})",
             title=f"{cx} vs {cy}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
         )
     fig.suptitle(
