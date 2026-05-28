@@ -966,6 +966,178 @@ def _emit_figure3_pooled_std(pbs: list[ProbeBins], out_pdf: Path) -> None:
     print(f"wrote {out_pdf}", flush=True)
 
 
+# --- Figures 4 & 5: unity-line scatters ------------------------------------
+def _pearson_safe(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
+    """Pearson r over (x, y), NaN-aware. Returns (r, n_used)."""
+    valid = np.isfinite(x) & np.isfinite(y)
+    n = int(valid.sum())
+    if n < 3:
+        return float("nan"), n
+    xv = x[valid]
+    yv = y[valid]
+    if xv.std() == 0 or yv.std() == 0:
+        return float("nan"), n
+    return float(np.corrcoef(xv, yv)[0, 1]), n
+
+
+def _per_cluster_window_r(
+    pb: ProbeBins, cluster_idx: int, condition: str,
+) -> dict[str, float]:
+    """For one cluster × condition, pooled Pearson r over (trial, bin) samples.
+
+    Returns four numbers: baseline-window r, motion-window r, plus the
+    sample counts entering each. The "baseline" window is bin_offset < 0
+    (pre motion-onset stationary block); "motion" is bin_offset >= 0.
+    """
+    fr_b, me_b, fr_m, me_m = [], [], [], []
+    for tb_i, tb in enumerate(pb.trials):
+        if tb.condition != condition:
+            continue
+        fr_trial = pb.fr[cluster_idx][tb_i]
+        me_trial = tb.me_raw
+        base_mask = tb.bin_offsets < 0
+        motion_mask = ~base_mask
+        fr_b.append(fr_trial[base_mask])
+        me_b.append(me_trial[base_mask])
+        fr_m.append(fr_trial[motion_mask])
+        me_m.append(me_trial[motion_mask])
+    fr_b_arr = np.concatenate(fr_b) if fr_b else np.zeros(0)
+    me_b_arr = np.concatenate(me_b) if me_b else np.zeros(0)
+    fr_m_arr = np.concatenate(fr_m) if fr_m else np.zeros(0)
+    me_m_arr = np.concatenate(me_m) if me_m else np.zeros(0)
+    r_b, n_b = _pearson_safe(fr_b_arr, me_b_arr)
+    r_m, n_m = _pearson_safe(fr_m_arr, me_m_arr)
+    return {
+        "r_baseline": r_b, "r_motion": r_m,
+        "n_baseline": n_b, "n_motion": n_m,
+    }
+
+
+def _gather_per_cluster_table(pbs: list[ProbeBins]) -> dict[str, list]:
+    """Compute per-cluster (r_baseline, r_motion) for each of V/VT/T pooled
+    across all probes. Returns a dict of parallel lists; one row per
+    (probe, cluster).
+    """
+    out: dict[str, list] = {
+        "probe_id": [], "cluster_id": [],
+        **{f"r_{w}_{c}": [] for c in CONDITIONS for w in ("baseline", "motion")},
+    }
+    for pb in pbs:
+        for ci in range(pb.cluster_ids.size):
+            out["probe_id"].append(pb.probe_id)
+            out["cluster_id"].append(int(pb.cluster_ids[ci]))
+            for c in CONDITIONS:
+                vals = _per_cluster_window_r(pb, ci, c)
+                out[f"r_baseline_{c}"].append(vals["r_baseline"])
+                out[f"r_motion_{c}"].append(vals["r_motion"])
+    return out
+
+
+def _draw_unity_scatter(
+    ax,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    color_above: str = "C0",   # default blue = y > x
+    color_below: str = "C3",   # default red  = y < x
+    lim: tuple[float, float] = (-0.4, 0.4),
+) -> None:
+    """One scatter panel with the y = x unity line.
+
+    Points coloured by sign of (y - x); blue for increase, red for
+    decrease. Equal-aspect axes so the unity line is visually 45°.
+    NaNs are dropped silently.
+    """
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+    above = y > x
+    ax.plot(lim, lim, color="0.4", lw=0.6, ls="--")
+    ax.axhline(0, color="0.85", lw=0.5)
+    ax.axvline(0, color="0.85", lw=0.5)
+    if (~above).any():
+        ax.scatter(x[~above], y[~above], s=14, c=color_below, alpha=0.7,
+                   edgecolors="none", label=f"y < x ({int((~above).sum())})")
+    if above.any():
+        ax.scatter(x[above], y[above], s=14, c=color_above, alpha=0.7,
+                   edgecolors="none", label=f"y > x ({int(above.sum())})")
+    ax.set_xlim(*lim)
+    ax.set_ylim(*lim)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel(xlabel, fontsize=8)
+    ax.set_ylabel(ylabel, fontsize=8)
+    ax.set_title(title, fontsize=8)
+    ax.legend(loc="lower right", fontsize=6, framealpha=0.7)
+    ax.tick_params(labelsize=7)
+
+
+def _emit_figure4_baseline_vs_motion(
+    pbs: list[ProbeBins], out_pdf: Path, table: dict[str, list],
+) -> None:
+    """3-panel unity scatter: baseline-window vs motion-window Pearson r
+    of FR vs ME, per condition. One dot per (probe, cluster), pooled
+    across all 3 probes. Blue = correlation increased from baseline to
+    motion; red = decreased.
+    """
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, len(CONDITIONS), figsize=(11, 3.8))
+    for ax, condition in zip(axes, CONDITIONS):
+        x = np.asarray(table[f"r_baseline_{condition}"])
+        y = np.asarray(table[f"r_motion_{condition}"])
+        _draw_unity_scatter(
+            ax, x, y,
+            xlabel="r in baseline window",
+            ylabel="r in motion window",
+            title=f"{condition}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
+        )
+    fig.suptitle(
+        "FR-vs-ME Pearson r — baseline (pre motion-onset) vs motion (post). "
+        "One dot per cluster, pooled across all 3 probes. Pearson computed "
+        "on pooled (trial × bin) samples within each window.",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(out_pdf)
+    plt.close(fig)
+    print(f"wrote {out_pdf}", flush=True)
+
+
+def _emit_figure5_cross_condition(
+    pbs: list[ProbeBins], out_pdf: Path, table: dict[str, list],
+    *, window: str = "motion",
+) -> None:
+    """Cross-condition unity scatters (motion-window Pearson r by default).
+
+    Two panels: (V, VT) and (T_Vstatic, VT). Same cluster contributes one
+    dot to each panel. Blue = VT correlation higher than the comparison
+    condition; red = lower.
+    """
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, 2, figsize=(8.0, 4.2))
+    pairs = [("V", "VT"), ("T_Vstatic", "VT")]
+    for ax, (cx, cy) in zip(axes, pairs):
+        x = np.asarray(table[f"r_{window}_{cx}"])
+        y = np.asarray(table[f"r_{window}_{cy}"])
+        _draw_unity_scatter(
+            ax, x, y,
+            xlabel=f"r in {cx} ({window})",
+            ylabel=f"r in {cy} ({window})",
+            title=f"{cx} vs {cy}  (n={int((np.isfinite(x) & np.isfinite(y)).sum())} clusters)",
+        )
+    fig.suptitle(
+        f"FR-vs-ME Pearson r across conditions ({window} window). "
+        "One dot per cluster, pooled across all 3 probes.",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(out_pdf)
+    plt.close(fig)
+    print(f"wrote {out_pdf}", flush=True)
+
+
 # --- Main ------------------------------------------------------------------
 def _load_or_build(probe_stem: str, *, use_cache: bool) -> ProbeBins:
     cache = _cache_path(probe_stem)
@@ -1050,6 +1222,14 @@ def main() -> None:
     parser.add_argument(
         "--skip-fig3", action="store_true",
         help="Skip the pooled trial-to-trial SD diagnostic (Figure 3)."
+    )
+    parser.add_argument(
+        "--skip-fig4", action="store_true",
+        help="Skip the baseline-vs-motion unity-line scatter (Figure 4)."
+    )
+    parser.add_argument(
+        "--skip-fig5", action="store_true",
+        help="Skip the cross-condition unity-line scatters (Figure 5)."
     )
     parser.add_argument(
         "--no-cache", action="store_true",
@@ -1142,6 +1322,17 @@ def main() -> None:
     if not args.skip_fig3:
         out_pdf = out_root / "pooled_trial_to_trial_sd.pdf"
         _emit_figure3_pooled_std(pbs, out_pdf)
+
+    if not (args.skip_fig4 and args.skip_fig5):
+        table = _gather_per_cluster_table(pbs)
+        if not args.skip_fig4:
+            _emit_figure4_baseline_vs_motion(
+                pbs, out_root / "unity_baseline_vs_motion.pdf", table,
+            )
+        if not args.skip_fig5:
+            _emit_figure5_cross_condition(
+                pbs, out_root / "unity_cross_condition.pdf", table,
+            )
 
 
 if __name__ == "__main__":
