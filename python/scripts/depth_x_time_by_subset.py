@@ -170,8 +170,12 @@ def _bin_one_probe(probe_stem: str, lookup: StimulusLookup) -> dict:
             params = lookup.stimulus_params(tid)
             if params.get("excluded", False):
                 continue
-            # Compute motion onset via the same logic as fr_me_corr:
-            # trial_velocity → treadmill_motion_mask → analysis_mask → first True.
+            # Compute motion onset via the same logic as fr_me_corr.
+            # NB: spike_times in the .mat are in PROBE time (the trial's
+            # ``probe_t`` slice), NOT in sample_index / fs — those differ
+            # by a multi-second recording-start offset (~46 s on probe
+            # 243). Using (s_idx + motion_idx[0]) / fs picks up spikes
+            # from completely the wrong part of the session.
             v = r.trial_velocity(ti)
             accel = acceleration_from_velocity(v)
             m_mask = masks.treadmill_motion_mask(
@@ -182,8 +186,9 @@ def _bin_one_probe(probe_stem: str, lookup: StimulusLookup) -> dict:
             motion_idx = np.flatnonzero(m_mask)
             if motion_idx.size == 0:
                 continue
-            s_idx, _ = r.trial_bounds(ti)
-            t_onset = float((s_idx + int(motion_idx[0])) / fs)
+            s_idx, e_idx = r.trial_bounds(ti)
+            probe_t_trial = r.probe_t(s_idx, e_idx)
+            t_onset = float(probe_t_trial[int(motion_idx[0])])
             trial_motion_time[ti] = t_onset
             trial_cond[ti] = condition
 
@@ -263,20 +268,51 @@ def _layer_boundary_depths(probe_data: list[dict]) -> dict[str, float]:
     return {"layer_means": layer_means, "boundaries": boundaries}
 
 
+def _per_cluster_baseline_stats(fr_by_cond: dict[str, np.ndarray]) -> tuple[float, float]:
+    """Pooled-across-conditions mean and std of FR in the baseline window
+    [BASELINE_LO_S, BASELINE_HI_S]. Used for the z-scored variant of
+    the depth × time figure (Lohuis convention).
+    """
+    baseline_bin_mask = (
+        (BIN_CENTRES_REL >= BASELINE_LO_S)
+        & (BIN_CENTRES_REL <= BASELINE_HI_S)
+    )
+    pool_chunks = []
+    for c in CONDITIONS:
+        a = fr_by_cond.get(c)
+        if a is None or a.size == 0:
+            continue
+        pool_chunks.append(a[:, baseline_bin_mask].ravel())
+    if not pool_chunks:
+        return 0.0, 1.0
+    pool = np.concatenate(pool_chunks)
+    pool = pool[np.isfinite(pool)]
+    if pool.size < 10:
+        return 0.0, 1.0
+    m = float(pool.mean())
+    s = float(pool.std(ddof=0))
+    return m, (s if s > 0 else 1.0)
+
+
 def _aggregate_subset(
     probe_data: list[dict],
     cluster_table: pd.DataFrame,
     subset: str,
     condition: str,
     depth_edges: np.ndarray,
+    *,
+    z_score: bool = False,
 ) -> dict:
-    """For one (subset, condition), aggregate mean raw FR (Hz) over
-    (depth-bin, time-bin). Per-cluster trial-mean FR is averaged across
-    clusters whose depth falls in the bin.
+    """For one (subset, condition), aggregate mean FR over (depth-bin,
+    time-bin). Per-cluster trial-mean FR is averaged across clusters
+    whose depth falls in the bin.
 
-    NB: NO z-scoring or per-cluster normalisation. Heterogeneous cluster
-    rates mean high-rate clusters dominate the cell mean; this is
-    honest but please read alongside the depth-line cluster counts.
+    ``z_score=False`` (default): raw FR (Hz). Heterogeneous cluster
+    rates mean high-rate clusters dominate the cell mean.
+
+    ``z_score=True``: per-cluster z-score against the pooled-across-
+    conditions baseline window stats (Lohuis convention). Each cluster
+    contributes (FR − baseline_mean) / baseline_std.
     """
     n_depth = depth_edges.size - 1
     sums = np.zeros((n_depth, N_BINS), dtype=np.float64)
@@ -314,6 +350,11 @@ def _aggregate_subset(
                 continue
             with np.errstate(invalid="ignore"):
                 fr_mean = np.nanmean(fr_trials, axis=0)
+            if z_score:
+                b_mean, b_std = _per_cluster_baseline_stats(
+                    pd_["fr_by_cluster_cond"][ci]
+                )
+                fr_mean = (fr_mean - b_mean) / b_std
             finite = np.isfinite(fr_mean)
             sums[bin_i, finite] += fr_mean[finite]
             counts[bin_i, finite] += 1
@@ -342,6 +383,8 @@ def _plot_grid(
     layer_info: dict,
     depth_edges: np.ndarray,
     out_pdf: Path,
+    *,
+    z_score: bool = False,
 ) -> None:
     """7 rows (subsets) × 3 cols (conditions). Each cell = depth-averaged
     line plot above a depth × time heatmap.
@@ -371,15 +414,23 @@ def _plot_grid(
     depth_lo, depth_hi = float(depth_edges[0]), float(depth_edges[-1])
     extent = (T_LO_S, T_HI_S, depth_hi, depth_lo)
     for ri, subset in enumerate(SUBSET_ORDER):
-        # Per-row heatmap colour range: 0 → 95th percentile of raw FR (Hz).
+        # Per-row heatmap colour range. Raw → 0..95th percentile (FR ≥ 0
+        # so colourmap is sequential 'magma'); z-score → ±95th
+        # percentile of |z| (diverging 'RdBu_r' around 0).
         row_vals = np.concatenate(
             [aggregated[(subset, c)]["means"].ravel() for c in CONDITIONS]
         )
         row_vals = row_vals[np.isfinite(row_vals)]
-        vmax = (
-            max(1.0, float(np.nanpercentile(row_vals, 95)))
-            if row_vals.size else 1.0
-        )
+        if z_score:
+            vmax = (
+                max(0.3, float(np.nanpercentile(np.abs(row_vals), 95)))
+                if row_vals.size else 1.0
+            )
+        else:
+            vmax = (
+                max(1.0, float(np.nanpercentile(row_vals, 95)))
+                if row_vals.size else 1.0
+            )
         # Per-row line-plot y range. Cluster-weighted mean FR
         # (each cluster contributes equally per time bin), parallel to
         # the fr_me_correlation Fig 2 trace aggregation. Computed in
@@ -408,7 +459,11 @@ def _plot_grid(
                           color="black", lw=1.0)
             ax_line.axvline(0, color="black", lw=0.5, ls="--")
             ax_line.axvline(0.1, color="black", lw=0.5)
-            ax_line.set_ylim(0, line_ymax)
+            if z_score:
+                ax_line.axhline(0, color="0.7", lw=0.4)
+                ax_line.set_ylim(-line_ymax, line_ymax)
+            else:
+                ax_line.set_ylim(0, line_ymax)
             ax_line.set_xlim(T_LO_S, T_HI_S)
             ax_line.tick_params(labelbottom=False, labelsize=6)
             if ci != 0:
@@ -418,13 +473,22 @@ def _plot_grid(
 
             # ─── heatmap ───
             cell = aggregated[(subset, condition)]
-            im = ax.imshow(
-                cell["means"],
-                extent=extent, aspect="auto",
-                origin="upper",
-                cmap="magma", vmin=0, vmax=vmax,
-                interpolation="nearest",
-            )
+            if z_score:
+                im = ax.imshow(
+                    cell["means"],
+                    extent=extent, aspect="auto",
+                    origin="upper",
+                    cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                    interpolation="nearest",
+                )
+            else:
+                im = ax.imshow(
+                    cell["means"],
+                    extent=extent, aspect="auto",
+                    origin="upper",
+                    cmap="magma", vmin=0, vmax=vmax,
+                    interpolation="nearest",
+                )
             ax.axvline(0, color="black", lw=0.5, ls="--")
             ax.axvline(0.1, color="black", lw=0.5)
             for a_label, b_label, depth in layer_info["boundaries"]:
@@ -434,7 +498,9 @@ def _plot_grid(
             if ri == n_rows - 1:
                 ax.set_xlabel("Time from motion onset (s)", fontsize=8)
             if ci == 0:
-                ax_line.set_ylabel("FR (Hz)", fontsize=6)
+                ax_line.set_ylabel(
+                    "z-FR" if z_score else "FR (Hz)", fontsize=6,
+                )
                 ax.set_ylabel(
                     f"{subset}\n(n={cell['total']} clusters)\n\ndepth (μm)",
                     fontsize=7,
@@ -451,14 +517,20 @@ def _plot_grid(
         # Per-row colourbar in the rightmost outer column.
         cax = fig.add_subplot(outer[ri, -1])
         cb = fig.colorbar(im, cax=cax)
-        cb.set_label(f"FR (Hz)  vmax = {vmax:.1f}", fontsize=6)
+        if z_score:
+            cb.set_label(f"z-FR (±{vmax:.1f})", fontsize=6)
+        else:
+            cb.set_label(f"FR (Hz)  vmax = {vmax:.1f}", fontsize=6)
         cb.ax.tick_params(labelsize=6)
+    title_prefix = (
+        f"z-FR per cluster (baseline {BASELINE_LO_S:+.1f} … {BASELINE_HI_S:+.1f} s)"
+        if z_score else "Raw FR (Hz)"
+    )
     fig.suptitle(
-        "Raw FR per cortical depth × time, faceted by GLM Selected-model subset.  "
-        "Line plots: depth-averaged FR (shared y per row).  "
+        f"{title_prefix} per cortical depth × time, faceted by GLM Selected-model subset.  "
+        "Line plots: cluster-weighted mean (shared y per row).  "
         f"{int(BIN_WIDTH_S*1000)} ms time bins, {int(DEPTH_BIN_UM)} μm depth bins; "
-        "per-row colour scale (vmax = 95th percentile of FR in that subset).  "
-        "Dotted: data-derived layer boundaries.",
+        "per-row colour scale.  Dotted: data-derived layer boundaries.",
         fontsize=9,
     )
     fig.subplots_adjust(left=0.08, right=0.96, bottom=0.04, top=0.94)
@@ -492,15 +564,20 @@ def main() -> None:
     print("boundaries (μm):", [(a, b, round(d, 1)) for a, b, d in layer_info["boundaries"]])
 
     depth_edges = _depth_bin_edges()
-    aggregated: dict[tuple[str, str], dict] = {}
-    for subset in SUBSET_ORDER:
-        for condition in CONDITIONS:
-            aggregated[(subset, condition)] = _aggregate_subset(
-                probe_data, cluster_table, subset, condition, depth_edges,
-            )
-
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    _plot_grid(aggregated, layer_info, depth_edges, OUT_DIR / "depth_x_time_by_subset.pdf")
+    for tag, z_flag in (("raw_fr", False), ("z_score", True)):
+        aggregated: dict[tuple[str, str], dict] = {}
+        for subset in SUBSET_ORDER:
+            for condition in CONDITIONS:
+                aggregated[(subset, condition)] = _aggregate_subset(
+                    probe_data, cluster_table, subset, condition, depth_edges,
+                    z_score=z_flag,
+                )
+        _plot_grid(
+            aggregated, layer_info, depth_edges,
+            OUT_DIR / f"depth_x_time_by_subset_{tag}.pdf",
+            z_score=z_flag,
+        )
 
 
 if __name__ == "__main__":
