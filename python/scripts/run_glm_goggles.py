@@ -187,7 +187,27 @@ def aggregate() -> pd.DataFrame | None:
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT_ROOT / "glm_model_comparison.csv", index=False)
     log.info("wrote %s (%d clusters)", OUT_ROOT / "glm_model_comparison.csv", len(out))
+    render_forward_selection_summary(out)
     return out
+
+
+def render_forward_selection_summary(pooled: pd.DataFrame) -> None:
+    """Combined forward-selection summary across both goggles probes."""
+    if pooled is None or pooled.empty:
+        return
+    from rc2_glm.plots import plot_forward_selection_summary, save_figure
+
+    fig = plot_forward_selection_summary(pooled)
+    n_probes = pooled["probe_id"].nunique()
+    fig.suptitle(
+        f"Forward selection — goggles, all conditions pooled "
+        f"({n_probes} probes, n={pooled['cluster_id'].count()} clusters)",
+        fontsize=12, fontweight="bold",
+    )
+    figdir = OUT_ROOT / "figs"
+    figdir.mkdir(parents=True, exist_ok=True)
+    for p in save_figure(fig, figdir / "forward_selection_summary", fmt="pdf"):
+        log.info("wrote %s", p)
 
 
 def main() -> int:
