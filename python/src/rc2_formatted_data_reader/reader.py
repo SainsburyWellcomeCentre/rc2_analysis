@@ -72,9 +72,11 @@ class FormattedDataReader:
     mapping to MATLAB IDs.
     """
 
-    def __init__(self, mat_path: str | Path):
+    def __init__(self, mat_path: str | Path, session_of_interest: str = "rec2"):
         self._path = Path(mat_path)
         self._f: h5py.File | None = h5py.File(self._path, "r")
+        self._multi: bool = False
+        self._session_idx: int = self._resolve_session(session_of_interest)
         self._replay_offsets = self._load_replay_offsets()
 
     def _load_replay_offsets(self) -> dict[int, int]:
@@ -112,6 +114,54 @@ class FormattedDataReader:
             raise ValueError("FormattedDataReader is closed")
         return self._f
 
+    # --- Session selection (single- vs multi-session bundled files) ---
+    #
+    # Screens motion-clouds files store a single inline ``sessions`` struct, so
+    # ``sessions["fs"]`` etc. are the field datasets directly. Goggles files
+    # bundle rec1/rec2/rec3 as a length-3 struct *array*: every field is an
+    # ``(n_sessions, 1)`` array of HDF5 object references. We pick one session
+    # (default the ``rec2`` motion-clouds block, mirroring
+    # ``scripts/preprocess/create_tables_by_batch.m`` →
+    # ``contains(session_id, 'rec2')``) and route every session-field access
+    # through ``_sfield`` so the rest of the reader is layout-agnostic.
+
+    def _resolve_session(self, session_of_interest: str) -> int:
+        sessions = self._file["sessions"]
+        # A struct *array* stores each field as object references; a scalar
+        # struct stores plain data. The reference dtype is the discriminator.
+        self._multi = h5py.check_dtype(ref=sessions["fs"].dtype) is not None
+        if not self._multi:
+            return 0
+        sid_node = sessions["session_id"]
+        ids = [_deref_string(self._file, sid_node[i, 0]) for i in range(sid_node.shape[0])]
+        for i, sid in enumerate(ids):
+            if session_of_interest in sid:
+                return i
+        raise ValueError(
+            f"no session matching {session_of_interest!r} in {ids} "
+            f"({self._path.name})"
+        )
+
+    @property
+    def _sess_group(self) -> h5py.Group:
+        """The raw ``sessions`` group — for field-existence checks only."""
+        return self._file["sessions"]
+
+    def _sfield(self, name: str):
+        """Resolve session field ``name`` for the selected session.
+
+        Single-session files: the field dataset directly. Multi-session
+        files: dereference the object ref at the selected session index.
+        """
+        node = self._file["sessions"][name]
+        if self._multi:
+            return self._file[node[self._session_idx, 0]]
+        return node
+
+    def _trials(self):
+        """The trials struct group for the selected session."""
+        return self._sfield("trials")
+
     # --- Top-level metadata ---
 
     @property
@@ -120,7 +170,7 @@ class FormattedDataReader:
 
     @property
     def fs(self) -> float:
-        return float(self._file["sessions"]["fs"][()].flat[0])
+        return float(self._sfield("fs")[()].flat[0])
 
     @property
     def n_clusters(self) -> int:
@@ -128,11 +178,11 @@ class FormattedDataReader:
 
     @property
     def n_trials(self) -> int:
-        return int(self._file["sessions"]["trials"]["trial_id"].shape[0])
+        return int(self._trials()["trial_id"].shape[0])
 
     @property
     def n_samples(self) -> int:
-        return int(self._file["sessions"]["probe_t"].shape[1])
+        return int(self._sfield("probe_t").shape[1])
 
     # --- Cluster-level access ---
 
@@ -180,8 +230,9 @@ class FormattedDataReader:
 
     def trial_bounds(self, trial_idx: int) -> tuple[int, int]:
         f = self._file
-        start = int(_deref_scalar(f, f["sessions"]["trials"]["start_idx"][trial_idx, 0]))
-        end = int(_deref_scalar(f, f["sessions"]["trials"]["end_idx"][trial_idx, 0]))
+        trials = self._trials()
+        start = int(_deref_scalar(f, trials["start_idx"][trial_idx, 0]))
+        end = int(_deref_scalar(f, trials["end_idx"][trial_idx, 0]))
         trial_id = self.trial_id(trial_idx)
         if trial_id in self._replay_offsets:
             offset = self._replay_offsets[trial_id]
@@ -191,15 +242,15 @@ class FormattedDataReader:
 
     def trial_id(self, trial_idx: int) -> int:
         f = self._file
-        return int(_deref_scalar(f, f["sessions"]["trials"]["trial_id"][trial_idx, 0]))
+        return int(_deref_scalar(f, self._trials()["trial_id"][trial_idx, 0]))
 
     def trial_protocol(self, trial_idx: int) -> str:
         f = self._file
-        return _deref_string(f, f["sessions"]["trials"]["protocol"][trial_idx, 0])
+        return _deref_string(f, self._trials()["protocol"][trial_idx, 0])
 
     def _trial_sequence(self, trial_idx: int) -> int:
         f = self._file
-        cfg_ref = f["sessions"]["trials"]["config"][trial_idx, 0]
+        cfg_ref = self._trials()["config"][trial_idx, 0]
         cfg = f[cfg_ref]
         return int(np.asarray(cfg["trial_sequence"][()]).flat[0])
 
@@ -208,7 +259,7 @@ class FormattedDataReader:
 
     def _trial_config_scalar(self, trial_idx: int, key: str, default: float = 0.0) -> float:
         f = self._file
-        cfg_ref = f["sessions"]["trials"]["config"][trial_idx, 0]
+        cfg_ref = self._trials()["config"][trial_idx, 0]
         cfg = f[cfg_ref]
         if key in cfg:
             val = cfg[key][0, 0]
@@ -253,8 +304,8 @@ class FormattedDataReader:
                 p2 = np.arange(int(idx[0] + remove_after_solenoid_start * fs), int(idx[-1] - remove_at_end * fs) + 1)
                 idx_new = np.concatenate([p1, p2])
 
-                sess = self._file["sessions"]
-                teensy_gain = sess["minidaq_ao0"][0, start:end] if "minidaq_ao0" in sess else sess["teensy_gain"][0, start:end]
+                chan = "minidaq_ao0" if "minidaq_ao0" in self._sess_group else "teensy_gain"
+                teensy_gain = self._sfield(chan)[0, start:end]
                 is_high = (teensy_gain > 2.5).astype(int)
                 mm_onsets = np.where(np.diff(is_high) == 1)[0]
                 if len(mm_onsets) > 0:
@@ -306,7 +357,7 @@ class FormattedDataReader:
     # --- Session-level arrays (lazy slicing) ---
 
     def probe_t(self, start: int, end: int) -> np.ndarray:
-        return self._file["sessions"]["probe_t"][0, start:end]
+        return self._sfield("probe_t")[0, start:end]
 
     def velocity(self, start: int, end: int) -> np.ndarray:
         """DEPRECATED: returns ``filtered_teensy`` unconditionally.
@@ -317,7 +368,7 @@ class FormattedDataReader:
         motion mask. Use ``trial_velocity(trial_idx)`` for protocol-correct
         velocity.
         """
-        return self._file["sessions"]["filtered_teensy"][0, start:end]
+        return self._sfield("filtered_teensy")[0, start:end]
 
     def trial_velocity_channel(self, trial_idx: int) -> str:
         """Return the session channel used for this trial's velocity.
@@ -351,7 +402,7 @@ class FormattedDataReader:
         channel = self.trial_velocity_channel(trial_idx)
         start, end = self.trial_bounds(trial_idx)
         raw = np.asarray(
-            self._file["sessions"][channel][0, start:end], dtype=np.float64
+            self._sfield(channel)[0, start:end], dtype=np.float64
         )
         if not apply_filter:
             return raw
@@ -364,27 +415,25 @@ class FormattedDataReader:
         channels (e.g. the trial-channel report) without hard-coding a method
         per channel.
         """
-        sess = self._file["sessions"]
-        if name not in sess:
+        if name not in self._sess_group:
             return None
-        return np.asarray(sess[name][0, start:end])
+        return np.asarray(self._sfield(name)[0, start:end])
 
     def solenoid(self, start: int, end: int) -> np.ndarray:
-        return self._file["sessions"]["solenoid"][0, start:end]
+        return self._sfield("solenoid")[0, start:end]
 
     def stage(self, start: int, end: int) -> np.ndarray:
-        return self._file["sessions"]["stage"][0, start:end]
+        return self._sfield("stage")[0, start:end]
 
     def photodiode(self, start: int, end: int) -> np.ndarray:
-        return self._file["sessions"]["photodiode"][0, start:end]
+        return self._sfield("photodiode")[0, start:end]
 
     def _camera(
         self, key: str, start: int | None, end: int | None
     ) -> np.ndarray | None:
-        sess = self._file["sessions"]
-        if key not in sess:
+        if key not in self._sess_group:
             return None
-        cam = sess[key]
+        cam = self._sfield(key)
         if start is None and end is None:
             return cam[()].squeeze()
         s = 0 if start is None else start
@@ -398,10 +447,9 @@ class FormattedDataReader:
         return self._camera("camera1", start, end)
 
     def camera_t(self) -> np.ndarray | None:
-        sess = self._file["sessions"]
-        if "camera_t" not in sess:
+        if "camera_t" not in self._sess_group:
             return None
-        return np.asarray(sess["camera_t"][()]).squeeze()
+        return np.asarray(self._sfield("camera_t")[()]).squeeze()
 
     # The bare threshold-based motion_mask / stationary_mask convenience
     # methods that used to live here were removed alongside the velocity

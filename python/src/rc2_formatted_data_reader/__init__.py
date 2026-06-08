@@ -3,7 +3,10 @@
 from rc2_formatted_data_reader.reader import FormattedDataReader
 from rc2_formatted_data_reader.trial_conditions import (
     CONDITION_MAP,
+    GOGGLES_STIMULUS,
+    SCREENS_STIMULUS,
     StimulusLookup,
+    StimulusSet,
     parse_cloud_name,
 )
 from rc2_formatted_data_reader.masks import (
@@ -15,7 +18,10 @@ from rc2_formatted_data_reader.masks import (
 __all__ = [
     "FormattedDataReader",
     "CONDITION_MAP",
+    "GOGGLES_STIMULUS",
+    "SCREENS_STIMULUS",
     "StimulusLookup",
+    "StimulusSet",
     "parse_cloud_name",
     "motion_mask",
     "stationary_mask",
