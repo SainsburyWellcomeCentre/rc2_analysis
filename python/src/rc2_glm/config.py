@@ -29,6 +29,17 @@ class GLMConfig:
     n_onset_bases: int = 6
     onset_range: tuple[float, float] = (0.0, 2.0)         # seconds
 
+    # Spacing for the Speed/TF value-axis raised-cosine bases. "log"
+    # (default, Weber-law via raised_cosine_basis — dense at low values,
+    # MATLAB parity) or "linear" (even tiling via raised_cosine_basis_linear
+    # — better mid-range resolution for a central tuning peak, at the cost
+    # of low-value resolution). Applies to the fit bases, the kernel
+    # reconstruction (_kernel_for_var) and the tuning-curve grid. NOTE:
+    # secondary plot panels (model overview, Speed×TF interaction heatmap)
+    # still assume log spacing; this switch is for value-axis fit/kernel/
+    # tuning experiments (scripts/smoke_basis_count_cluster.py, 2026-06-08).
+    speed_tf_basis_spacing: str = "log"
+
     # --- Spike history (prompt 03, 2026-04-28; default ON since 2026-04-29; default OFF since 2026-04-30) ---
     # 10 log-spaced raised-cosine bases over a 200 ms post-spike window,
     # added as a Phase-1 forward-selection candidate. Each cluster's
@@ -142,6 +153,14 @@ class GLMConfig:
     lambda_ridge: float = 1.0
     full_interaction_lambda: float = 1.0
     lambda_ridge_min: float = 1e-6
+    # Spike-history smoothness prior (ASD-style, 2026-06-05). None → plain
+    # isotropic ridge on the History block (historical behaviour). When set,
+    # the History coefficients are penalised by the squared second difference
+    # of the reconstructed lag-space filter (lambda * B.T D2.T D2 B + ridge
+    # floor), so fine-bin history filters stay smooth instead of oscillating.
+    # Only bites at >=3 lag bins (e.g. 20 ms); a no-op at the 100 ms / 2-lag
+    # default. See rc2_glm.penalty.build_penalty_matrix.
+    history_smooth_lambda: float | None = None
     irls_max_iter: int = 100
     irls_tol: float = 1e-8
     eta_clip: float = 20.0
@@ -165,6 +184,32 @@ class GLMConfig:
     # primary fit — only adds the extra diagnostic pass. Mirrors MATLAB
     # glm_single_cluster_analysis.m:2246-2367.
     profile_cv_diagnostic: bool = False
+    # Re-label profile_id from the recorded velocity trajectory (KMeans-2 on
+    # onset-aligned |velocity|) instead of the stimulus trial-order halving.
+    # The halving (StimulusLookup.trial_profile_id = trial_id <= midpoint)
+    # does NOT track the two reproduced velocity trajectories — they are
+    # interleaved across trial_id (verified 2026-06-08: dip/flat split
+    # 18/18/18/18 against profile_id). The recorded velocity is the ground
+    # truth of the trajectory each trial actually had. Default True (the
+    # fix); set False to reproduce the legacy trial-halving profile_id.
+    # See io._assign_profile_ids_by_velocity.
+    profile_from_velocity: bool = True
+
+    # --- Split-by-condition fitting (2026-06-05) ---
+    # When set to one of {"V", "T_Vstatic", "VT"}, restrict the fit to
+    # the trials of that single condition: that condition's motion bins
+    # PLUS their stationary prelude (the stationary rows carry the trial's
+    # trial_id but are tagged condition='stationary'; see time_binning
+    # bin_trial). Keeping the prelude preserves the intercept+onset
+    # "baseline vs motion" Null model while dropping the other two
+    # conditions' trials entirely. The caller is responsible for also
+    # restricting ``main_effects`` / ``interactions`` to the condition's
+    # non-degenerate regressors (V: TF/SF/OR — Speed is identically 0;
+    # T_Vstatic: Speed only — TF is 0 and SF/OR are NaN; VT: all four).
+    # None (default) = the standard pooled-conditions fit. Driver:
+    # scripts/run_glm_split_by_condition.py
+    # (figures/glm/current_splitted_by_condition/).
+    fit_condition: str | None = None
 
     # --- Forward selection ---
     # ME_face joined main_effects 2026-04-30 (prompt 06) as a Speed-style

@@ -227,8 +227,10 @@ def _kernel_for_var(
             lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
         ).sort_values("lag")
         betas = sub["estimate"].to_numpy()
+        from rc2_glm.basis import value_basis
         x_grid = np.linspace(*config.speed_range, 200)
-        B = raised_cosine_basis(x_grid, config.n_speed_bases, *config.speed_range)
+        B = value_basis(x_grid, config.n_speed_bases, *config.speed_range,
+                        spacing=getattr(config, "speed_tf_basis_spacing", "log"))
         return x_grid, B @ betas, "speed (cm/s)"
 
     if var == "TF":
@@ -239,8 +241,10 @@ def _kernel_for_var(
             lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
         ).sort_values("lag")
         betas = sub["estimate"].to_numpy()
+        from rc2_glm.basis import value_basis
         x_grid = np.linspace(*config.tf_range, 200)
-        B = raised_cosine_basis(x_grid, config.n_tf_bases, *config.tf_range)
+        B = value_basis(x_grid, config.n_tf_bases, *config.tf_range,
+                        spacing=getattr(config, "speed_tf_basis_spacing", "log"))
         return x_grid, B @ betas, "TF (Hz)"
 
     if var == "History":
@@ -427,6 +431,7 @@ def plot_cluster_kernels(
     cluster_id: int,
     coef_df_cluster: pd.DataFrame,
     config: GLMConfig,
+    observed_tuning: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
 ) -> Figure:
     """Per-cluster kernel shapes — what the GLM actually learned.
 
@@ -445,7 +450,14 @@ def plot_cluster_kernels(
     ``coef_df_cluster`` is the slice of ``glm_coefficients.csv`` for
     this cluster, ``glm_type == "time"`` (one row per (model,
     coefficient) pair).
+
+    ``observed_tuning`` (optional): maps "Speed"/"TF" → (x_centres,
+    median_fr, q1_fr, q3_fr) — the empirical tuning (median + Q1/Q3) from
+    the MATLAB cache for the relevant condition, overlaid dashed + shaded
+    on every Speed/TF panel so the learned kernel can be glanced against
+    the data (see _render_kernel_panel).
     """
+    obs = observed_tuning or {}
     var_cols = _FULL_VAR_COLS
 
     sel_rows = coef_df_cluster[coef_df_cluster["model"] == "Selected"]
@@ -504,7 +516,8 @@ def plot_cluster_kernels(
                 ax.text(-0.05, 0.5, "Selected", rotation=90, va="center",
                         transform=ax.transAxes, fontsize=11, fontweight="bold",
                         color="C3")
-            _render_kernel_panel(ax, sel_rows, var, config, title=var)
+            _render_kernel_panel(ax, sel_rows, var, config, title=var,
+                                 observed_overlay=obs.get(var))
     else:
         ax = fig.add_subplot(gs[1, :])
         ax.text(0.5, 0.5, "Selected: no variables selected",
@@ -521,16 +534,27 @@ def plot_cluster_kernels(
             if col_idx == 0:
                 ax.text(-0.18, 0.5, model_label, rotation=90, va="center",
                         transform=ax.transAxes, fontsize=11, fontweight="bold")
-            _render_kernel_panel(ax, sub, var, config, title=var if row_idx == 2 else "")
+            _render_kernel_panel(ax, sub, var, config,
+                                 title=var if row_idx == 2 else "",
+                                 observed_overlay=obs.get(var))
 
     return fig
 
 
 def _render_kernel_panel(
     ax, coef_rows: pd.DataFrame, var: str, config: GLMConfig, title: str = "",
+    observed_overlay: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> None:
     """Helper: render one (model, var) panel into ax. Used by
-    plot_cluster_kernels to keep the orchestration logic clean."""
+    plot_cluster_kernels to keep the orchestration logic clean.
+
+    ``observed_overlay`` (Speed/TF panels only): an
+    (x_centres, median_fr, q1_fr, q3_fr) tuple — the OBSERVED tuning from
+    the MATLAB cache (median + Q1/Q3 across trials of the per-trial-per-bin
+    firing rate). Drawn as a black dashed median line plus a shaded Q1-Q3
+    band (alpha 0.3) on a twin right-hand axis in Hz, so the fitted
+    log-gain kernel (left) and the empirical tuning + spread (right) can be
+    glanced together. Not model-derived; purely the data."""
     if title:
         ax.set_title(title, fontsize=10, fontweight="bold")
     if coef_rows.empty:
@@ -585,6 +609,19 @@ def _render_kernel_panel(
         ax.plot(x, kernel, color=colour, linewidth=2)
         ax.fill_between(x, 0, kernel, color=colour, alpha=0.15)
         ax.axhline(0, color="grey", linewidth=0.6, alpha=0.7)
+        if observed_overlay is not None:
+            ox, omed, oq1, oq3 = observed_overlay
+            if (ox is not None and omed is not None and np.size(omed)
+                    and np.isfinite(omed).any()):
+                ax2 = ax.twinx()
+                band = np.isfinite(oq1) & np.isfinite(oq3)
+                ax2.fill_between(ox, oq1, oq3, where=band, color="black",
+                                 alpha=0.3, linewidth=0)
+                ax2.plot(ox, omed, color="black", linestyle="--", linewidth=1.4,
+                         label="obs median FR")
+                ax2.set_ylabel("obs FR (Hz)", fontsize=7)
+                ax2.tick_params(axis="y", labelsize=6)
+                ax2.spines["top"].set_visible(False)
     ax.set_xlabel(xlabel, fontsize=8)
     ax.tick_params(axis="both", labelsize=7)
     for sp in ("top", "right"):

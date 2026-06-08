@@ -122,6 +122,7 @@ def cross_validate_glm(
     backend: str = "irls",
     eta_clip: float = 20.0,
     mu_floor: float = 1e-10,
+    penalty_matrix: np.ndarray | None = None,
 ) -> CVResult:
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64).ravel()
@@ -150,6 +151,7 @@ def cross_validate_glm(
         fit = fit_poisson_glm(
             X[train_idx], y[train_idx], offset_arr[train_idx],
             lambda_ridge=lambda_ridge, backend=backend,
+            penalty_matrix=penalty_matrix,
         )
 
         eta = np.clip(X[test_idx] @ fit.beta + offset_arr[test_idx],

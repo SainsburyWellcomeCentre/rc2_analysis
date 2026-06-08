@@ -60,6 +60,23 @@ def raised_cosine_basis_linear(
     return 0.5 * (1.0 + np.cos(z))
 
 
+def value_basis(
+    x: np.ndarray, n_bases: int, x_min: float, x_max: float, spacing: str = "log"
+) -> np.ndarray:
+    """Speed/TF value-axis raised-cosine bases, log-Weber or linear.
+
+    ``spacing="log"`` (default) → ``raised_cosine_basis`` (Weber-law,
+    MATLAB parity). ``spacing="linear"`` → ``raised_cosine_basis_linear``
+    (even tiling, better mid-range resolution). Single dispatch point so
+    the fit, kernel reconstruction and tuning grid stay consistent.
+    """
+    if spacing == "linear":
+        return raised_cosine_basis_linear(x, n_bases, x_min, x_max)
+    if spacing == "log":
+        return raised_cosine_basis(x, n_bases, x_min, x_max)
+    raise ValueError(f"unknown basis spacing {spacing!r}; use 'log' or 'linear'")
+
+
 def onset_kernel_basis(
     t_since_onset: np.ndarray, n_bases: int, t_max: float
 ) -> np.ndarray:

@@ -112,14 +112,29 @@ def fit_poisson_glm(
     eta_clip: float = 20.0,
     mu_floor: float = 1e-10,
     lambda_min: float = 1e-6,
+    penalty_matrix: np.ndarray | None = None,
 ) -> GLMFit:
+    """Fit a Poisson GLM.
+
+    ``penalty_matrix`` (optional, ``(p, p)``) overrides the default isotropic
+    ridge: when given it is used verbatim as the prior precision added to
+    ``X.T W X`` (the caller owns intercept-zeroing and any structured blocks —
+    see ``rc2_glm.penalty.build_penalty_matrix``). When ``None`` the historical
+    ``max(lambda_ridge, lambda_min) * I`` with unpenalised intercept is used.
+    """
     if backend == "irls":
         return _fit_irls(
             X, y, offset, lambda_ridge,
             max_iter=max_iter, tol=tol, eta_clip=eta_clip,
             mu_floor=mu_floor, lambda_min=lambda_min,
+            penalty_matrix=penalty_matrix,
         )
     if backend == "nemos":
+        if penalty_matrix is not None:
+            raise NotImplementedError(
+                "penalty_matrix (structured prior) is only supported by the "
+                "irls backend; nemos uses its own regulariser"
+            )
         return _fit_nemos(X, y, offset, lambda_ridge, mu_floor=mu_floor)
     raise ValueError(f"Unknown backend: {backend!r}")
 
@@ -140,15 +155,23 @@ def _fit_irls(
     eta_clip: float,
     mu_floor: float,
     lambda_min: float,
+    penalty_matrix: np.ndarray | None = None,
 ) -> GLMFit:
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64).ravel()
     offset = _broadcast_offset(offset, y.size)
 
     n, p = X.shape
-    lambda_eff = max(lambda_ridge, lambda_min)
-    ridge_mat = lambda_eff * np.eye(p)
-    ridge_mat[0, 0] = 0.0  # don't penalise intercept
+    if penalty_matrix is not None:
+        ridge_mat = np.asarray(penalty_matrix, dtype=np.float64)
+        if ridge_mat.shape != (p, p):
+            raise ValueError(
+                f"penalty_matrix shape {ridge_mat.shape} != (p, p) = {(p, p)}"
+            )
+    else:
+        lambda_eff = max(lambda_ridge, lambda_min)
+        ridge_mat = lambda_eff * np.eye(p)
+        ridge_mat[0, 0] = 0.0  # don't penalise intercept
 
     beta = np.zeros(p)
     beta[0] = np.log(max(y.mean(), 0.1))

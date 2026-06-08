@@ -7,6 +7,7 @@ StimulusLookup.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -14,6 +15,8 @@ from typing import Iterable, Iterator
 import numpy as np
 
 from rc2_formatted_data_reader import FormattedDataReader, StimulusLookup, masks
+
+logger = logging.getLogger("rc2_glm.io")
 from rc2_glm.config import GLMConfig
 from rc2_glm.masks_helpers import acceleration_from_velocity
 
@@ -112,6 +115,13 @@ def load_probe_data(
             for ti in trial_indices
         ]
 
+        # Re-label profile_id from the actual recorded velocity trajectory.
+        # The stimulus trial-order halving does not track the two reproduced
+        # trajectories (they're interleaved across trial_id), so cluster the
+        # onset-aligned velocity shape instead. Default on (config flag).
+        if getattr(config, "profile_from_velocity", True):
+            _assign_profile_ids_by_velocity(trials)
+
         # Session-level camera motion-energy traces (face + body) and
         # their shared timebase. Reader returns None when the camera
         # group is absent from the .mat. Cheap to load whole (~30 Hz
@@ -133,6 +143,78 @@ def load_probe_data(
             camera1=camera1,
             camera_t=camera_t,
         )
+
+
+def _assign_profile_ids_by_velocity(
+    trials: list["TrialData"],
+    grid_max_s: float = 3.5,
+    n_grid: int = 70,
+    dip_window_s: tuple[float, float] = (1.6, 2.1),
+) -> None:
+    """Re-label ``profile_id`` (1/2) from the recorded velocity trajectory.
+
+    The two reproduced velocity profiles are interleaved across ``trial_id``,
+    so the stimulus trial-order halving mislabels them. Each trial's
+    onset-aligned ``|velocity|`` is resampled to a common grid; trials are
+    clustered (KMeans, k=2) on the **shape** (per-trace z-scored, so the
+    V-replay vs stage amplitude difference doesn't dominate). Profile 1 is
+    assigned to the cluster with the lower mean velocity in ``dip_window_s``
+    (the dip trajectory), profile 2 to the other — matching the
+    speed_profiles_reference convention. Mutates ``trials`` in place.
+
+    No-op (leaves existing profile_id) when fewer than 4 trials have a usable
+    motion trace or scikit-learn is unavailable.
+    """
+    grid = np.linspace(0.0, grid_max_s, n_grid)
+    idx_usable: list[int] = []
+    raw: list[np.ndarray] = []
+    for i, t in enumerate(trials):
+        mi = np.flatnonzero(t.motion_mask)
+        if mi.size == 0:
+            continue
+        t_rel = t.probe_t - float(t.probe_t[int(mi[0])])
+        if float(t_rel.max()) < grid_max_s * 0.7:
+            continue  # motion period too short to characterise the trajectory
+        vel = np.abs(np.asarray(t.velocity, dtype=np.float64))
+        raw.append(np.interp(grid, t_rel, vel))
+        idx_usable.append(i)
+
+    if len(idx_usable) < 4:
+        logger.warning(
+            "profile-from-velocity: only %d usable trials; keeping stimulus "
+            "profile_id", len(idx_usable),
+        )
+        return
+
+    X_raw = np.asarray(raw)
+    mu = X_raw.mean(axis=1, keepdims=True)
+    sd = X_raw.std(axis=1, keepdims=True)
+    X_z = (X_raw - mu) / np.where(sd > 0, sd, 1.0)   # cluster on shape
+
+    try:
+        from sklearn.cluster import KMeans
+    except Exception as exc:  # pragma: no cover
+        logger.warning("profile-from-velocity: sklearn unavailable (%s); "
+                       "keeping stimulus profile_id", exc)
+        return
+
+    labels = KMeans(n_clusters=2, n_init=10, random_state=0).fit_predict(X_z)
+
+    # Deterministic mapping: profile 1 = the dip trajectory (lower mean
+    # |velocity| in the dip window), profile 2 = the other.
+    dip = (grid >= dip_window_s[0]) & (grid <= dip_window_s[1])
+    mean_dip = {c: X_raw[labels == c][:, dip].mean() for c in (0, 1)}
+    dip_cluster = min(mean_dip, key=mean_dip.get)
+    to_profile = {dip_cluster: 1, 1 - dip_cluster: 2}
+
+    for i, lab in zip(idx_usable, labels):
+        trials[i].profile_id = int(to_profile[int(lab)])
+
+    n1 = sum(1 for c in labels if to_profile[int(c)] == 1)
+    logger.info(
+        "profile-from-velocity: relabelled %d trials by trajectory shape "
+        "(profile1/dip=%d, profile2=%d)", len(idx_usable), n1, len(labels) - n1,
+    )
 
 
 def _load_trial(

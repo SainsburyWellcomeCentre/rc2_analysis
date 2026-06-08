@@ -36,7 +36,7 @@ import pandas as pd
 
 from rc2_formatted_data_reader import FormattedDataReader, StimulusLookup
 from rc2_formatted_data_reader.reader import PROTOCOL_VELOCITY_CHANNEL
-from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis
+from rc2_glm.basis import onset_kernel_basis, raised_cosine_basis, value_basis
 from rc2_glm.config import GLMConfig
 from rc2_glm.cross_validation import cross_validate_glm, make_trial_folds
 from rc2_glm.design_matrix import assemble_design_matrix, assemble_design_matrix_selected
@@ -224,6 +224,8 @@ def _run_pipeline_inner(
     fit_tasks: list[tuple[int, int, pd.DataFrame]] = []
     for idx, cluster in enumerate(clusters, start=1):
         df = bin_cluster(probe, cluster)
+        if getattr(config, "fit_condition", None):
+            df = _subset_to_condition(df, config.fit_condition)
         if df.empty:
             logger.info("[%d/%d] cluster %d: no bins, skipped",
                         idx, len(clusters), cluster.cluster_id)
@@ -363,6 +365,60 @@ def _log_fit_status_summary(
         logger.info("refit-status %s: %s", label, parts)
 
 
+def _observed_median_tuning(
+    precomputed_bins, condition: str | None, cluster_id: int,
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
+    """Empirical Speed/TF tuning curve (median + Q1/Q3) for one cluster + condition.
+
+    Reads the MATLAB tuning cache (per-trial-per-bin firing rate, Hz) via
+    ``PrecomputedBinEdges`` and collapses it across trials to the per-bin
+    **median** and the **Q1/Q3 interquartile band** — the same statistics
+    the per-cluster tuning PDFs draw (_per_bin_median_iqr). Returns
+    {"Speed": (centres, median, q1, q3), "TF": (...)} for use as the dashed
+    overlay (+ shaded IQR) in plot_cluster_kernels / the cross-condition
+    overlays, or None when no condition is given (pooled run) or no cache
+    is available.
+    """
+    if precomputed_bins is None or not condition:
+        return None
+    out: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    for var, tuning_fn, centres_fn in (
+        ("Speed", precomputed_bins.speed_tuning, precomputed_bins.speed_centres),
+        ("TF", precomputed_bins.tf_tuning, precomputed_bins.tf_centres),
+    ):
+        tuning = tuning_fn(condition, cluster_id)   # (n_trials, n_bins) or None
+        centres = centres_fn(condition)
+        if tuning is None or centres is None or tuning.size == 0:
+            continue
+        median = np.nanmedian(tuning, axis=0)
+        q1 = np.nanquantile(tuning, 0.25, axis=0)
+        q3 = np.nanquantile(tuning, 0.75, axis=0)
+        centres_arr = np.asarray(centres, dtype=float)
+        if median.shape[0] == centres_arr.shape[0]:
+            out[var] = (centres_arr, median, q1, q3)
+    return out or None
+
+
+def _subset_to_condition(df: pd.DataFrame, condition: str) -> pd.DataFrame:
+    """Restrict a binned-cluster frame to one condition's trials.
+
+    Keeps every row belonging to a trial whose *motion* condition is
+    ``condition`` — i.e. that condition's motion bins AND their stationary
+    prelude. The stationary rows are tagged ``condition='stationary'`` but
+    share the trial's ``trial_id`` (time_binning bin_trial, where
+    trial_id / profile_id are stamped on the concatenated motion+stat
+    frame), so they are recovered via trial_id membership. Dropping the
+    other two conditions' trials leaves the intercept+onset "baseline vs
+    motion" Null model intact. Used by the split-by-condition analysis
+    (config.fit_condition); the standard pooled fit never calls this.
+    """
+    motion = df[df["condition"] != "stationary"]
+    keep_trials = set(
+        motion.loc[motion["condition"] == condition, "trial_id"].unique()
+    )
+    return df[df["trial_id"].isin(keep_trials)].reset_index(drop=True)
+
+
 def _fit_one_cluster(
     df: pd.DataFrame,
     cluster_id: int,
@@ -387,11 +443,12 @@ def _fit_one_cluster(
         if "profile_id" in df.columns else None
     )
 
-    B_speed = raised_cosine_basis(
-        speed, config.n_speed_bases, *config.speed_range
+    spacing = getattr(config, "speed_tf_basis_spacing", "log")
+    B_speed = value_basis(
+        speed, config.n_speed_bases, *config.speed_range, spacing=spacing
     )
-    B_tf = raised_cosine_basis(
-        tf, config.n_tf_bases, *config.tf_range
+    B_tf = value_basis(
+        tf, config.n_tf_bases, *config.tf_range, spacing=spacing
     )
     B_onset = onset_kernel_basis(
         onset, config.n_onset_bases, config.onset_range[1]
@@ -737,6 +794,18 @@ def _fit_plot_models(
         ("FullInteraction", _FULL_INTERACTION_VARS),
     ]
 
+    # History smoothness prior (opt-in): rebuild the (n_lag, n_bases) basis so
+    # the refit coefficients/SE use the same penalty the selection cv used.
+    history_basis_mat = None
+    if getattr(config, "history_smooth_lambda", None) is not None and B_history is not None:
+        from rc2_glm.basis import history_basis
+        from rc2_glm.penalty import build_penalty_matrix
+        history_basis_mat = history_basis(
+            n_bases=config.n_history_bases,
+            t_max_s=config.history_window_s,
+            bin_width_s=config.time_bin_width,
+        )
+
     for label, vars_for_label in model_defs:
         X, names = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, vars_for_label,
@@ -765,8 +834,17 @@ def _fit_plot_models(
             if label == "FullInteraction"
             else config.lambda_ridge
         )
+        penalty = None
+        if history_basis_mat is not None:
+            penalty = build_penalty_matrix(
+                names, lambda_ridge,
+                lambda_min=config.lambda_ridge_min,
+                history_smooth_lambda=config.history_smooth_lambda,
+                history_basis_mat=history_basis_mat,
+            )
         fit = fit_poisson_glm(
             X, y, offset, lambda_ridge=lambda_ridge, backend=backend,
+            penalty_matrix=penalty,
         )
         betas[label] = np.asarray(fit.beta, dtype=np.float64).copy()
         col_names_by_model[label] = list(names)
@@ -995,7 +1073,8 @@ def _tuning_curve_grid(
         raise ValueError(f"unsupported tuning-curve variable: {variable!r}")
 
     x_grid = np.linspace(float(lo), float(hi), _TUNING_CURVE_GRID_N)
-    B_grid = raised_cosine_basis(x_grid, n_b, float(lo), float(hi))
+    B_grid = value_basis(x_grid, n_b, float(lo), float(hi),
+                         spacing=getattr(config, "speed_tf_basis_spacing", "log"))
     return x_grid, B_grid
 
 
@@ -1612,6 +1691,14 @@ def _write_all_plots(
                 })
         cluster_coef_df = pd.DataFrame(kernel_rows)
 
+        # Observed (empirical) median Speed/TF tuning for the kernel-panel
+        # overlay. Only well-defined for a split-by-condition run, where
+        # config.fit_condition names the single condition the cluster was
+        # fit on; the pooled run leaves it None (no overlay).
+        kernel_observed = _observed_median_tuning(
+            precomputed_bins, getattr(config, "fit_condition", None), cid,
+        )
+
         for fn, name in (
             (plots.plot_cluster_model_overview(
                 probe_id=probe_id,
@@ -1638,6 +1725,7 @@ def _write_all_plots(
                 cluster_id=cid,
                 coef_df_cluster=cluster_coef_df,
                 config=config,
+                observed_tuning=kernel_observed,
              ), f"cluster_{cid}_kernels"),
         ):
             for path in plots.save_figure(fn, figs_dir / name, fmt=plot_format):
@@ -1928,6 +2016,18 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--condition", choices=("V", "T_Vstatic", "VT"), default=None,
+        help=(
+            "Split-by-condition fit: restrict to one condition's trials "
+            "(that condition's motion bins + their stationary prelude), one "
+            "GLM per cluster per condition. The candidate regressor set must "
+            "also be restricted by the caller (V drops the all-zero Speed "
+            "column; T_Vstatic keeps only Speed) — the driver "
+            "scripts/run_glm_split_by_condition.py sets config.main_effects / "
+            "interactions per condition. Default: pooled-conditions fit."
+        ),
+    )
+    parser.add_argument(
         "--profile-cv-diagnostic", dest="profile_cv_diagnostic",
         action="store_true",
         help=(
@@ -1968,6 +2068,18 @@ def main(argv: list[str] | None = None) -> int:
             "bin widths (e.g. 20 ms = 5× more bins per cluster) a stronger "
             "λ may be needed to suppress noise in the History-filter "
             "coefficients. Try λ ∈ {1e-3, 1e-2, 1e-1, 1.0}."
+        ),
+    )
+    parser.add_argument(
+        "--history-smooth-lambda", type=float, default=None,
+        help=(
+            "Strength of the spike-history SMOOTHNESS prior (overrides "
+            "config.history_smooth_lambda, default None = off → plain ridge). "
+            "Penalises the squared second difference of the reconstructed "
+            "lag-space history filter (lambda * B.T D2.T D2 B + ridge floor), "
+            "the ASD-style fix for the ±5 filter oscillation at fine bins. "
+            "No effect at 100 ms (only 2 lag bins); meaningful at 20 ms. "
+            "Try lambda in {1, 10, 100}."
         ),
     )
     parser.add_argument(
@@ -2038,6 +2150,8 @@ def main(argv: list[str] | None = None) -> int:
         "cv_strategy": args.cv_strategy,
         "profile_cv_diagnostic": args.profile_cv_diagnostic,
     }
+    if args.condition is not None:
+        config_overrides["fit_condition"] = args.condition
     if args.motion_energy_camera is not None:
         config_overrides["motion_energy_camera"] = args.motion_energy_camera
     if args.bin_width is not None:
@@ -2046,6 +2160,8 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["cv_seed"] = int(args.cv_seed)
     if args.lambda_ridge is not None:
         config_overrides["lambda_ridge"] = float(args.lambda_ridge)
+    if args.history_smooth_lambda is not None:
+        config_overrides["history_smooth_lambda"] = float(args.history_smooth_lambda)
     if args.n_history_bases is not None:
         config_overrides["n_history_bases"] = int(args.n_history_bases)
     if args.n_selection_seeds is not None:

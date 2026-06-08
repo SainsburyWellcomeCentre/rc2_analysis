@@ -30,6 +30,28 @@ import numpy as np
 from rc2_glm.config import GLMConfig, INTERACTION_PARENTS
 from rc2_glm.cross_validation import CVResult, cross_validate_glm
 from rc2_glm.design_matrix import assemble_design_matrix_selected
+from rc2_glm.penalty import build_penalty_matrix
+
+
+def _penalty_for(
+    names: list[str],
+    config: GLMConfig,
+    history_basis_mat: np.ndarray | None,
+) -> np.ndarray | None:
+    """Build the smoothness penalty for a model's columns, or None.
+
+    Returns None (→ caller falls back to scalar ridge) unless
+    ``config.history_smooth_lambda`` is set and a history basis is available.
+    """
+    smooth = getattr(config, "history_smooth_lambda", None)
+    if smooth is None or history_basis_mat is None:
+        return None
+    return build_penalty_matrix(
+        names, config.lambda_ridge,
+        lambda_min=config.lambda_ridge_min,
+        history_smooth_lambda=smooth,
+        history_basis_mat=history_basis_mat,
+    )
 
 
 @dataclass
@@ -109,6 +131,17 @@ def forward_select(
         getattr(config, "include_history", False) and B_history is not None
     )
 
+    # Rebuild the (n_lag, n_bases) history basis for the smoothness penalty.
+    # Same args as pipeline's convolve_history input, so columns align.
+    history_basis_mat = None
+    if getattr(config, "history_smooth_lambda", None) is not None and include_history:
+        from rc2_glm.basis import history_basis
+        history_basis_mat = history_basis(
+            n_bases=config.n_history_bases,
+            t_max_s=config.history_window_s,
+            bin_width_s=config.time_bin_width,
+        )
+
     # Resolve seed list. Single-seed (back-compat): wrap fold_ids in a
     # one-element list. Multi-seed: use the provided list as-is.
     if fold_ids_per_seed is None or len(fold_ids_per_seed) <= 1:
@@ -136,15 +169,17 @@ def forward_select(
     )
 
     # Null model: intercept (+ onset kernel if include_onset_kernel)
-    X_null, _ = assemble_design_matrix_selected(
+    X_null, null_names = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, [],
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         **common_assembler_kwargs,
     )
+    null_penalty = _penalty_for(null_names, config, history_basis_mat)
     null_cv_per_seed = [
         cross_validate_glm(
             X_null, y, offset, seed_folds,
             lambda_ridge=config.lambda_ridge, backend=backend,
+            penalty_matrix=null_penalty,
         )
         for seed_folds in seeds
     ]
@@ -178,6 +213,7 @@ def forward_select(
             phase=1, round_num=round_num, backend=backend, config=config,
             threshold_count=threshold_count,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            history_basis_mat=history_basis_mat,
             **common_assembler_kwargs,
         )
         history.append(round_result)
@@ -189,6 +225,7 @@ def forward_select(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
                 y, offset, seeds, backend, config=config,
                 sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                history_basis_mat=history_basis_mat,
                 **common_assembler_kwargs,
             )
             current_bps_per_seed = np.array(
@@ -213,6 +250,7 @@ def forward_select(
             phase=2, round_num=round_num, backend=backend, config=config,
             threshold_count=threshold_count,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            history_basis_mat=history_basis_mat,
             **common_assembler_kwargs,
         )
         history.append(round_result)
@@ -223,6 +261,7 @@ def forward_select(
                 selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
                 y, offset, seeds, backend, config=config,
                 sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+                history_basis_mat=history_basis_mat,
                 **common_assembler_kwargs,
             )
             current_bps_per_seed = np.array(
@@ -270,6 +309,7 @@ def _try_candidates(
     threshold_count: int,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    history_basis_mat: np.ndarray | None = None,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
@@ -291,7 +331,7 @@ def _try_candidates(
 
     for cand in candidates:
         test_vars = list(already_selected) + [cand]
-        X_test, _ = assemble_design_matrix_selected(
+        X_test, test_names = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, test_vars,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             B_history=B_history,
@@ -305,12 +345,14 @@ def _try_candidates(
             admitted_count[cand] = 0
             continue
 
+        penalty = _penalty_for(test_names, config, history_basis_mat)
         cv_bps_per_seed: list[float] = []
         deltas_for_cand: list[float] = []
         for seed_idx, seed_folds in enumerate(fold_ids_list):
             cv = cross_validate_glm(
                 X_test, y, offset, seed_folds,
                 lambda_ridge=config.lambda_ridge, backend=backend,
+                penalty_matrix=penalty,
             )
             cv_bps_per_seed.append(cv.cv_bits_per_spike)
             deltas_for_cand.append(
@@ -369,21 +411,24 @@ def _cv_for_selected_per_seed(
     config: GLMConfig,
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
+    history_basis_mat: np.ndarray | None = None,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> list[CVResult]:
-    X, _ = assemble_design_matrix_selected(
+    X, names = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, list(selected),
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
         include_onset_kernel=include_onset_kernel,
     )
+    penalty = _penalty_for(names, config, history_basis_mat)
     return [
         cross_validate_glm(
             X, y, offset, seed_folds,
             lambda_ridge=config.lambda_ridge, backend=backend,
+            penalty_matrix=penalty,
         )
         for seed_folds in fold_ids_list
     ]
