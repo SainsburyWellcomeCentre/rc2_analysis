@@ -162,6 +162,18 @@ if strcmp(sessions(1).session_id, 'CAA-1123243_rec1_001') || ...
     end
 end
 
+% Include information for passive protocol sequence of motion clouds
+if strcmp(sessions(2).session_id, 'CAA-1124370_rec2_001') || ...
+        strcmp(sessions(2).session_id, 'CAA-1124371_rec2_001') 
+        
+    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds_goggles.mat';
+    passive_protocol_sequence_motion_clouds_goggles = load(fname);
+    
+    for ii = 1 : sessions(2).n_trials   
+         sessions(2).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds_goggles.trial_order(ii);
+    end
+end
+
 
 
 
