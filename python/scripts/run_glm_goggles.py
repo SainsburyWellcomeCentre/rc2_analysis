@@ -44,6 +44,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from rc2_formatted_data_reader import GOGGLES_STIMULUS, StimulusLookup
@@ -61,6 +63,9 @@ HOME = Path.home()
 ROOT = HOME / "local_data" / "motion_clouds"
 FORMATTED_DIR = ROOT / "formatted_data_goggles"
 OUT_ROOT = ROOT / "figures" / "glm" / "current_goggles"
+# Per-condition split run (one GLM per cluster per condition), reusing the
+# current_goggles/ cohort. Mirrors screens current_splitted_by_condition/.
+OUT_SPLIT = ROOT / "figures" / "glm" / "current_splitted_by_condition_goggles"
 MC_SEQUENCE = ROOT / "motion_clouds_goggles_sequence_260420.mat"
 MC_FOLDERS = ROOT / "image_folders_goggles.mat"
 
@@ -69,6 +74,28 @@ PROBES = (
     "CAA-1124371_rec1_rec2_rec3",
 )
 CONDITIONS = ("V", "T_Vstatic", "VT")
+
+# Non-degenerate candidate regressors per condition (stimulus-design driven, so
+# modality-independent — identical to the screens split driver). Within a single
+# condition the design is degenerate: V has Speed≡0, T_Vstatic has TF≡0 and
+# SF/OR=NaN, so each condition gets a restricted candidate set.
+CONDITION_CANDIDATES: dict[str, dict[str, tuple[str, ...]]] = {
+    "V": {
+        "main_effects": ("TF", "SF", "OR"),
+        "interactions": ("TF_x_SF", "TF_x_OR", "SF_x_OR"),
+    },
+    "T_Vstatic": {
+        "main_effects": ("Speed",),
+        "interactions": (),
+    },
+    "VT": {
+        "main_effects": ("Speed", "TF", "SF", "OR"),
+        "interactions": (
+            "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
+            "TF_x_SF", "TF_x_OR", "SF_x_OR",
+        ),
+    },
+}
 
 # Pooled (all-conditions-together) candidate set — the full design, matching
 # the screens current/ run (run_glm_split_by_condition.POOLED_CANDIDATES).
@@ -98,6 +125,38 @@ def make_config() -> GLMConfig:
         profile_cv_diagnostic=True,
         apply_prefilter=True,        # cohort from the goggles SVM table
     )
+
+
+def make_config_condition(condition: str) -> GLMConfig:
+    """Per-condition config: restricted candidates, cohort reused (no prefilter)."""
+    cand = CONDITION_CANDIDATES[condition]
+    return replace(
+        GLMConfig(),
+        fit_condition=condition,
+        main_effects=cand["main_effects"],
+        interactions=cand["interactions"],
+        include_me_face=False,
+        include_history=False,
+        include_onset_kernel=True,
+        lambda_ridge=1.0,
+        cv_strategy="condition-stratified",
+        n_selection_seeds=10,
+        selection_threshold_count=7,
+        profile_cv_diagnostic=True,
+        apply_prefilter=False,        # cohort fixed to the current_goggles/ run
+    )
+
+
+def load_cohort(probe: str) -> set[int]:
+    """Cohort cluster ids for one probe, from the pooled current_goggles/ run."""
+    csv = OUT_ROOT / "_runs" / probe / "glm_model_comparison.csv"
+    if not csv.exists():
+        raise FileNotFoundError(
+            f"cohort source missing: {csv}. Run the pooled fit first "
+            f"(python scripts/run_glm_goggles.py)."
+        )
+    df = pd.read_csv(csv)
+    return {int(c) for c in df["cluster_id"].dropna().unique()}
 
 
 def _lookup() -> StimulusLookup:
@@ -210,6 +269,227 @@ def render_forward_selection_summary(pooled: pd.DataFrame) -> None:
         log.info("wrote %s", p)
 
 
+def run_probe_condition(probe: str, condition: str, cohort: set[int]) -> Path:
+    out_dir = OUT_SPLIT / "_runs" / probe / condition
+    cmp_path = out_dir / "glm_model_comparison.csv"
+    if cmp_path.exists():
+        log.info("skip %s/%s — already at %s", probe, condition, cmp_path)
+        return out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log.info("fitting %s / %s (%d clusters)", probe, condition, len(cohort))
+    run_pipeline(
+        mat_path=FORMATTED_DIR / f"{probe}.mat",
+        config=make_config_condition(condition),
+        output_dir=out_dir,
+        stimulus_lookup=_lookup(),
+        backend="irls",
+        visp_only=True,
+        make_plots=True,
+        plot_format="pdf",
+        n_jobs=4,
+        cluster_filter=cohort,
+    )
+    return out_dir
+
+
+def aggregate_condition(condition: str) -> pd.DataFrame | None:
+    """Concatenate per-probe model_comparison for one condition + summary plot."""
+    frames = []
+    for probe in PROBES:
+        csv = OUT_SPLIT / "_runs" / probe / condition / "glm_model_comparison.csv"
+        if not csv.exists():
+            log.warning("missing %s — skipping in %s aggregation", csv, condition)
+            continue
+        df = pd.read_csv(csv)
+        df["probe_id"] = probe
+        frames.append(df)
+    if not frames:
+        return None
+    out = pd.concat(frames, ignore_index=True)
+    OUT_SPLIT.mkdir(parents=True, exist_ok=True)
+    out_csv = OUT_SPLIT / f"glm_model_comparison_{condition}.csv"
+    out.to_csv(out_csv, index=False)
+    log.info("wrote %s (%d clusters)", out_csv, len(out))
+
+    from rc2_glm.plots import plot_forward_selection_summary, save_figure
+
+    fig = plot_forward_selection_summary(out)
+    fig.suptitle(
+        f"Forward selection — goggles, {condition} "
+        f"({out['probe_id'].nunique()} probes, n={out['cluster_id'].count()} clusters)",
+        fontsize=12, fontweight="bold",
+    )
+    figdir = OUT_SPLIT / "figs"
+    figdir.mkdir(parents=True, exist_ok=True)
+    for p in save_figure(fig, figdir / f"forward_selection_summary_{condition}", fmt="pdf"):
+        log.info("wrote %s", p)
+    return out
+
+
+# ----------------------------------------------------------------------
+# Cross-condition tuning overlays (the headline split-by-condition comparison)
+# ----------------------------------------------------------------------
+def load_tuning(probe: str, condition: str) -> pd.DataFrame | None:
+    csv = OUT_SPLIT / "_runs" / probe / condition / "diagnostics" / "tuning_curves.csv"
+    if not csv.exists():
+        return None
+    return pd.read_csv(csv)
+
+
+def _mean_norm(y: np.ndarray) -> np.ndarray:
+    """Divide a curve by its mean over bins (gain-cancelling normalisation)."""
+    m = np.nanmean(y)
+    return y / m if (np.isfinite(m) and m != 0) else y
+
+
+# TF compared V vs VT; Speed compared T_Vstatic vs VT.
+_OVERLAYS = (("TF", "V", "VT"), ("Speed", "T_Vstatic", "VT"))
+
+
+def render_cross_condition_overlays(model: str = "Additive") -> None:
+    """Per-cluster overlay: TF (V vs VT) and Speed (T_Vstatic vs VT).
+
+    SOLID = the condition's GLM marginal gain exp(B·β) (left axis); DASHED =
+    observed median FR from the goggles tuning cache (right Hz axis, with a
+    shaded Q1-Q3 band). Mirrors the screens split driver.
+    """
+    from rc2_glm.pipeline import _observed_median_tuning
+    from rc2_glm.precomputed_bins import load_precomputed_bin_edges
+
+    tuning = {(p, c): load_tuning(p, c) for p in PROBES for c in CONDITIONS}
+    figdir = OUT_SPLIT / "figs" / "cross_condition"
+    figdir.mkdir(parents=True, exist_ok=True)
+    n_made = 0
+    for probe in PROBES:
+        pre = load_precomputed_bin_edges(FORMATTED_DIR / f"{probe}.mat")
+        for cid in sorted(load_cohort(probe)):
+            fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.8))
+            drew_any = False
+            for ax, (var, cond_a, cond_b) in zip(axes, _OVERLAYS):
+                ax2 = ax.twinx()
+                obs_drawn = False
+                for cond, colour in ((cond_a, "tab:blue"), (cond_b, "tab:red")):
+                    tdf = tuning.get((probe, cond))
+                    if tdf is not None:
+                        sub = tdf[
+                            (tdf["cluster_id"] == cid)
+                            & (tdf["model"] == model)
+                            & (tdf["variable"] == var)
+                        ].sort_values("grid_x")
+                        if not sub.empty:
+                            ax.plot(sub["grid_x"], sub["gain"], color=colour,
+                                    lw=2, label=f"{cond} model gain")
+                            drew_any = True
+                    obs = _observed_median_tuning(pre, cond, cid)
+                    if obs and var in obs:
+                        ox, omed, oq1, oq3 = obs[var]
+                        band = np.isfinite(oq1) & np.isfinite(oq3)
+                        ax2.fill_between(ox, oq1, oq3, where=band, color=colour,
+                                         alpha=0.3, linewidth=0)
+                        ax2.plot(ox, omed, color=colour, lw=1.4, ls="--",
+                                 label=f"{cond} obs FR")
+                        obs_drawn = True
+                        drew_any = True
+                ax.set_title(f"{var}: {cond_a} vs {cond_b}")
+                ax.set_xlabel(var)
+                ax.set_ylabel("model gain  exp(B·β)")
+                ax.axhline(1.0, color="0.7", lw=0.8, ls=":")
+                if obs_drawn:
+                    ax2.set_ylabel("obs median FR (Hz)", fontsize=8)
+                else:
+                    ax2.set_yticks([])
+                h1, l1 = ax.get_legend_handles_labels()
+                h2, l2 = ax2.get_legend_handles_labels()
+                if h1 or h2:
+                    ax.legend(h1 + h2, l1 + l2, fontsize=6, loc="best")
+            if not drew_any:
+                plt.close(fig)
+                continue
+            fig.suptitle(
+                f"{probe}  cluster {cid}  "
+                f"(solid: {model} model gain · dashed: observed median FR)",
+                fontsize=10, fontweight="bold",
+            )
+            fig.tight_layout()
+            fig.savefig(figdir / f"{probe}_cluster_{cid}.pdf")
+            plt.close(fig)
+            n_made += 1
+    log.info("wrote %d cross-condition overlay figures to %s", n_made, figdir)
+
+
+def render_cross_condition_normalized(model: str = "Additive") -> None:
+    """Mean-normalised single-axis version (overlap = gain-only, divergence = shape)."""
+    from rc2_glm.pipeline import _observed_median_tuning
+    from rc2_glm.precomputed_bins import load_precomputed_bin_edges
+
+    tuning = {(p, c): load_tuning(p, c) for p in PROBES for c in CONDITIONS}
+    figdir = OUT_SPLIT / "figs" / "cross_condition_normalized"
+    figdir.mkdir(parents=True, exist_ok=True)
+    n_made = 0
+    for probe in PROBES:
+        pre = load_precomputed_bin_edges(FORMATTED_DIR / f"{probe}.mat")
+        for cid in sorted(load_cohort(probe)):
+            fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.8))
+            drew_any = False
+            for ax, (var, cond_a, cond_b) in zip(axes, _OVERLAYS):
+                for cond, colour in ((cond_a, "tab:blue"), (cond_b, "tab:red")):
+                    tdf = tuning.get((probe, cond))
+                    if tdf is not None:
+                        sub = tdf[
+                            (tdf["cluster_id"] == cid)
+                            & (tdf["model"] == model)
+                            & (tdf["variable"] == var)
+                        ].sort_values("grid_x")
+                        if not sub.empty:
+                            ax.plot(sub["grid_x"], _mean_norm(sub["gain"].to_numpy()),
+                                    color=colour, lw=2, label=f"{cond} model")
+                            drew_any = True
+                    obs = _observed_median_tuning(pre, cond, cid)
+                    if obs and var in obs:
+                        ox, omed, oq1, oq3 = obs[var]
+                        divisor = np.nanmean(omed)
+                        if np.isfinite(divisor) and divisor != 0:
+                            band = np.isfinite(oq1) & np.isfinite(oq3)
+                            ax.fill_between(ox, oq1 / divisor, oq3 / divisor,
+                                            where=band, color=colour, alpha=0.3,
+                                            linewidth=0)
+                            ax.plot(ox, omed / divisor, color=colour, lw=1.4,
+                                    ls="--", label=f"{cond} obs")
+                            drew_any = True
+                ax.set_title(f"{var}: {cond_a} vs {cond_b}")
+                ax.set_xlabel(var)
+                ax.set_ylabel("normalised tuning (curve / its mean)")
+                ax.axhline(1.0, color="0.7", lw=0.8, ls=":")
+                h, l = ax.get_legend_handles_labels()
+                if h:
+                    ax.legend(fontsize=6, loc="best")
+            if not drew_any:
+                plt.close(fig)
+                continue
+            fig.suptitle(
+                f"{probe}  cluster {cid}  — mean-normalised "
+                f"(overlap = gain-only · divergence = shape change)",
+                fontsize=10, fontweight="bold",
+            )
+            fig.tight_layout()
+            fig.savefig(figdir / f"{probe}_cluster_{cid}.pdf")
+            plt.close(fig)
+            n_made += 1
+    log.info("wrote %d normalised cross-condition figures to %s", n_made, figdir)
+
+
+def run_split() -> None:
+    """Per-condition fits (V / T_Vstatic / VT) for both probes + summaries."""
+    for probe in PROBES:
+        cohort = load_cohort(probe)
+        for condition in CONDITIONS:
+            run_probe_condition(probe, condition, cohort)
+    for condition in CONDITIONS:
+        aggregate_condition(condition)
+    render_cross_condition_overlays()
+    render_cross_condition_normalized()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -220,10 +500,29 @@ def main() -> int:
         "--probe", choices=PROBES, default=None,
         help="Fit a single probe (default: both).",
     )
+    parser.add_argument(
+        "--split", action="store_true",
+        help="Per-condition split run (V / T_Vstatic / VT) → "
+             "current_splitted_by_condition_goggles/, reusing the current_goggles/ "
+             "cohort. Requires the pooled fit to have run first.",
+    )
+    parser.add_argument(
+        "--overlays-only", action="store_true",
+        help="Skip fitting; re-render the split cross-condition overlays only.",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
         return dry_run()
+
+    if args.overlays_only:
+        render_cross_condition_overlays()
+        render_cross_condition_normalized()
+        return 0
+
+    if args.split:
+        run_split()
+        return 0
 
     probes = (args.probe,) if args.probe else PROBES
     for probe in probes:
