@@ -14,6 +14,9 @@
 experiment_groups       = {'passive_same_luminance_mc'};
 trial_group_labels      = {'VT', 'V', 'T_Vstatic'};
 
+% Session selection: Specify which session contains the trials to analyze
+session_of_interest     = 'rec2';  % Change to 'rec1', 'rec2', or 'rec3' as needed
+
 % Mode selection: 'all' creates single file with all trials (backward compatible)
 %                 'separate' creates three separate files by TF batch
 batch_mode              = 'separate';  % Options: 'all' or 'separate'
@@ -29,8 +32,8 @@ probe_ids_to_analyze    = {'CAA-1124370_rec1_rec2_rec3', 'CAA-1124371_rec1_rec2_
 %% Batches definitions - automatically selected based on batch_type
 
 % Control stimuli to ALWAYS exclude (regardless of batch type)
-% exclude_patterns =
-% {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'}; % Only present in screen experiements
+exclude_patterns = {};  % Empty for goggles experiments
+% exclude_patterns = {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'}; % Only present in screen experiments
 
 if strcmp(batch_type, 'TF')
     % Temporal frequency batch patterns
@@ -196,17 +199,24 @@ elseif strcmp(batch_mode, 'separate')
             
             for jj = 1 : length(trial_group_labels)
                 
-                % Skip if the trial group label is not in the experiment
-                if ~data.check_trial_group(trial_group_labels{jj})
-                    fprintf('    Skipping %s (not found in experiment)\n', trial_group_labels{jj});
-                    continue
+                % Get trials from specified session only
+                all_trials = {};
+                for sess_idx = 1:length(data.sessions)
+                    sess = data.sessions{sess_idx};
+                    % Only process the session of interest
+                    if contains(sess.session_id, session_of_interest)
+                        try
+                            sess_trials = sess.get_trials_with_trial_group_label(trial_group_labels{jj});
+                            all_trials = [all_trials, sess_trials];
+                        catch
+                            % Session doesn't have this method, skip it
+                        end
+                        break; % Found session of interest, no need to continue
+                    end
                 end
                 
-                % Get all trials for this trial group
-                all_trials = data.get_trials_with_trial_group_label(trial_group_labels{jj});
-                
                 if isempty(all_trials)
-                    fprintf('    No trials found for %s\n', trial_group_labels{jj});
+                    fprintf('    No trials found for %s in %s\n', trial_group_labels{jj}, session_of_interest);
                     continue
                 end
                 
