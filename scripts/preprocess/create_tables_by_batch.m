@@ -22,32 +22,37 @@ batch_mode              = 'separate';  % Options: 'all' or 'separate'
 % Options: 'TF' (temporal frequency), 'SF' (spatial frequency), 'OR' (orientation)
 batch_type              = 'TF';  % Change this to 'TF', 'SF', or 'OR'
 
+% Subset selection: Leave empty to process all probes, or specify probe IDs
+probe_ids_to_analyze    = {'CAA-1124370_rec1_rec2_rec3', 'CAA-1124371_rec1_rec2_rec3'};  % Empty = all probes
+% probe_ids_to_analyze  = {'probe1', 'probe2', 'probe3'};  % Specific subset
+
 %% Batches definitions - automatically selected based on batch_type
 
 % Control stimuli to ALWAYS exclude (regardless of batch type)
-exclude_patterns = {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'};
+% exclude_patterns =
+% {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'}; % Only present in screen experiements
 
 if strcmp(batch_type, 'TF')
     % Temporal frequency batch patterns
     % Batch 1 patterns (low temporal frequencies)
-    batch1_patterns = {'sf00p003_Bsf0p002_VX1p002', 'sf00p006_Bsf0p002_VX0p501', 'sf00p012_Bsf0p002_VX0p250'};
+    batch1_patterns = {'sf00p008_Bsf0p005_VX0p382', 'sf00p016_Bsf0p005_VX0p191', 'sf00p032_Bsf0p005_VX0p095'};
     
     % Batch 2 patterns (medium temporal frequencies)  
-    batch2_patterns = {'sf00p003_Bsf0p002_VX2p003', 'sf00p006_Bsf0p002_VX1p002', 'sf00p012_Bsf0p002_VX0p501'};
+    batch2_patterns = {'sf00p008_Bsf0p005_VX0p764', 'sf00p016_Bsf0p005_VX0p382', 'sf00p032_Bsf0p005_VX0p191'};
     
     % Batch 3 patterns (high temporal frequencies)
-    batch3_patterns = {'sf00p003_Bsf0p002_VX4p006', 'sf00p006_Bsf0p002_VX2p003', 'sf00p012_Bsf0p002_VX1p002'};
+    batch3_patterns = {'sf00p008_Bsf0p005_VX1p528', 'sf00p016_Bsf0p005_VX0p764', 'sf00p032_Bsf0p005_VX0p382'};
     
 elseif strcmp(batch_type, 'SF')
     % Spatial frequency batch patterns
     % Batch 1 patterns
-    batch1_patterns = {'sf00p003'};
+    batch1_patterns = {'sf00p008'};
     
     % Batch 2 patterns  
-    batch2_patterns = {'sf00p006'};
+    batch2_patterns = {'sf00p016'};
     
     % Batch 3 patterns
-    batch3_patterns = {'sf00p012'};
+    batch3_patterns = {'sf00p032'};
     
 elseif strcmp(batch_type, 'OR')
     % Orientation batch patterns
@@ -76,7 +81,7 @@ mc_sequence = [];
 cloud_names = {};
 
 % Load presentation sequence
-proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_cloud_sequence_250414.mat');
+proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_clouds_goggles_sequence_260420.mat');
 if exist(proto_seq_path,'file')
     P = load(proto_seq_path);
     if isfield(P,'presentation_sequence')
@@ -140,9 +145,14 @@ if strcmp(batch_mode, 'all')
     % Backward compatible mode: create single file with all trials (original behavior)
     fprintf('\nMode: Creating single tuning curve file with all trials (backward compatible)\n');
     
+    % Get probe IDs and apply subset filter if specified
+    probe_ids = ctl.get_probe_ids(experiment_groups{:});
+    if ~isempty(probe_ids_to_analyze)
+        probe_ids = intersect(probe_ids, probe_ids_to_analyze, 'stable');
+        fprintf('Restricting analysis to %d specified probes\n', length(probe_ids));
+    end
+    
     for jj = 1 : length(trial_group_labels)
-        probe_ids = ctl.get_probe_ids(experiment_groups{jj});
-
         for ii = 1 : length(probe_ids)
             fprintf('Processing probe %d/%d: %s\n', ii, length(probe_ids), probe_ids{ii});
             ctl.create_tuning_curves(probe_ids{ii}, trial_group_labels);
@@ -154,7 +164,12 @@ elseif strcmp(batch_mode, 'separate')
     % New mode: create separate files, one for each batch
     fprintf('\nMode: Creating separate tuning curve files for each %s batch\n', batch_type);
     
+    % Get probe IDs and apply subset filter if specified
     probe_ids = ctl.get_probe_ids(experiment_groups{:});
+    if ~isempty(probe_ids_to_analyze)
+        probe_ids = intersect(probe_ids, probe_ids_to_analyze, 'stable');
+        fprintf('Restricting analysis to %d specified probes\n', length(probe_ids));
+    end
     
     for ii = 1 : length(probe_ids)
         fprintf('\nProcessing probe %d/%d: %s\n', ii, length(probe_ids), probe_ids{ii});
