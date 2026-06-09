@@ -132,8 +132,7 @@ def _band(v: float) -> str:
 
 def _plot_vif(df: pd.DataFrame) -> None:
     scopes = ["pooled", "T_Vstatic", "V", "VT"]
-    blocks = ["Speed", "TF", "Onset", "SF", "OR"]
-    cols = blocks + ["cond#"]
+    cols = ["Speed", "TF", "Onset", "SF", "OR"]
 
     def med(scope, col):
         sub = df[df["scope"] == scope]
@@ -141,19 +140,13 @@ def _plot_vif(df: pd.DataFrame) -> None:
             return np.nan
         return sub[col].median()  # inf medians stay inf
 
-    fig, ax = plt.subplots(figsize=(8.5, 3.8))
+    fig, ax = plt.subplots(figsize=(7.5, 3.8))
     for r, scope in enumerate(scopes):
         for c, block in enumerate(cols):
-            if block == "cond#":
-                v = med(scope, "cond_number")
-                band = ("good" if v < 30 else "worrying" if v < 100 else "severe") \
-                    if np.isfinite(v) else "n/a"
-                label = "n/a" if not np.isfinite(v) else f"{v:.0f}"
-            else:
-                v = med(scope, f"gvif_{block}")
-                band = _band(v)
-                label = ("n/a" if band == "n/a"
-                         else "∞" if band == "rank-deficient" else f"{v:.2f}")
+            v = med(scope, f"gvif_{block}")
+            band = _band(v)
+            label = ("n/a" if band == "n/a"
+                     else "∞" if band == "rank-deficient" else f"{v:.2f}")
             ax.add_patch(plt.Rectangle((c, len(scopes) - 1 - r), 1, 1,
                                        facecolor=BAND_COLOR[band], edgecolor="white",
                                        lw=2))
@@ -174,8 +167,8 @@ def _plot_vif(df: pd.DataFrame) -> None:
               "rank-deficient (∞)", "n/a (degenerate)"]
     ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.12),
               ncol=3, fontsize=7.5, frameon=False)
-    ax.set_title("Collinearity per condition — generalised VIF (SE scale) + cond#\n"
-                 "Speed/TF separable in pooled & T_Vstatic; NOT in VT",
+    ax.set_title("Collinearity per condition — generalised VIF (SE scale, GVIF^(1/2df))\n"
+                 "Speed/TF separable in pooled & T_Vstatic; NOT in VT (rank-deficient)",
                  fontsize=10, fontweight="bold")
     fig.tight_layout()
     out = Path.home() / "local_data/motion_clouds/figures/glm/current/diagnostics/collinearity_vif"
