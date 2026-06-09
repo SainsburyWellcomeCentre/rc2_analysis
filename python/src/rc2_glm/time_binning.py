@@ -127,6 +127,23 @@ def _resolve_me_signal(probe: ProbeData) -> tuple[np.ndarray, np.ndarray] | None
         _ME_SIGNAL_CACHE[key] = None
         return None
 
+    # Goggles sessions record two synchronised 30 Hz cameras into a single
+    # 60 Hz *interleaved* camera_t (camera0 = even frames, camera1 = odd),
+    # so camera_t is exactly twice the per-camera length. Screens used a
+    # single-camera timebase that matches cam_vals 1:1. De-interleave to each
+    # camera's own 30 Hz stamps — a naive min()-truncation would otherwise
+    # pair the 30 Hz values with only the first half of the 60 Hz stamps,
+    # compressing the ME signal ~2x in time (silent misalignment).
+    if cam_t.size == 2 * cam_vals.size:
+        offset = 1 if cam_attr == "camera1" else 0
+        cam_t = cam_t[offset::2]
+        if log_once:
+            print(
+                f"[time_binning] probe {probe.probe_id}: de-interleaved 60 Hz "
+                f"camera_t → {cam_attr} 30 Hz stamps ({cam_t.size} samples).",
+                flush=True,
+            )
+
     n = min(cam_vals.size, cam_t.size)
     if cam_vals.size != cam_t.size and log_once:
         print(

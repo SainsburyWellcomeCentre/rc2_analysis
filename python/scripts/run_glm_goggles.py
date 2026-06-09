@@ -63,6 +63,8 @@ HOME = Path.home()
 ROOT = HOME / "local_data" / "motion_clouds"
 FORMATTED_DIR = ROOT / "formatted_data_goggles"
 OUT_ROOT = ROOT / "figures" / "glm" / "current_goggles"
+# Pooled run WITH face motion energy (ME_face) as a candidate.
+OUT_ME = ROOT / "figures" / "glm" / "current_plus_ME_goggles"
 # Per-condition split run (one GLM per cluster per condition), reusing the
 # current_goggles/ cohort. Mirrors screens current_splitted_by_condition/.
 OUT_SPLIT = ROOT / "figures" / "glm" / "current_splitted_by_condition_goggles"
@@ -124,6 +126,29 @@ def make_config() -> GLMConfig:
         selection_threshold_count=7,
         profile_cv_diagnostic=True,
         apply_prefilter=True,        # cohort from the goggles SVM table
+    )
+
+
+def make_config_me() -> GLMConfig:
+    """Pooled config WITH face motion energy (ME_face) as a Phase-1 candidate.
+
+    Same as make_config() but keeps the GLMConfig default candidate set
+    {Speed, TF, SF, OR, ME_face} + pairwise interactions incl. ME_face_x_Speed,
+    and include_me_face=True (camera0 = face). Needs the de-interleaved 60 Hz
+    camera_t fix in time_binning._resolve_me_signal.
+    """
+    return replace(
+        GLMConfig(),
+        fit_condition=None,
+        include_me_face=True,
+        include_history=False,
+        include_onset_kernel=True,
+        lambda_ridge=1.0,
+        cv_strategy="condition-stratified",
+        n_selection_seeds=10,
+        selection_threshold_count=7,
+        profile_cv_diagnostic=True,
+        apply_prefilter=True,
     )
 
 
@@ -207,17 +232,17 @@ def dry_run() -> int:
 # ----------------------------------------------------------------------
 # Fitting
 # ----------------------------------------------------------------------
-def run_probe(probe: str) -> Path:
-    out_dir = OUT_ROOT / "_runs" / probe
+def run_probe(probe: str, out_root: Path = OUT_ROOT, config_fn=make_config) -> Path:
+    out_dir = out_root / "_runs" / probe
     cmp_path = out_dir / "glm_model_comparison.csv"
     if cmp_path.exists():
         log.info("skip %s — already at %s", probe, cmp_path)
         return out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    log.info("fitting %s (prefilter cohort)", probe)
+    log.info("fitting %s → %s (prefilter cohort)", probe, out_root.name)
     run_pipeline(
         mat_path=FORMATTED_DIR / f"{probe}.mat",
-        config=make_config(),
+        config=config_fn(),
         output_dir=out_dir,
         stimulus_lookup=_lookup(),
         backend="irls",
@@ -229,11 +254,11 @@ def run_probe(probe: str) -> Path:
     return out_dir
 
 
-def aggregate() -> pd.DataFrame | None:
-    """Concatenate per-probe model_comparison → current_goggles/glm_model_comparison.csv."""
+def aggregate(out_root: Path = OUT_ROOT, label: str = "all conditions pooled") -> pd.DataFrame | None:
+    """Concatenate per-probe model_comparison → <out_root>/glm_model_comparison.csv."""
     frames = []
     for probe in PROBES:
-        csv = OUT_ROOT / "_runs" / probe / "glm_model_comparison.csv"
+        csv = out_root / "_runs" / probe / "glm_model_comparison.csv"
         if not csv.exists():
             log.warning("missing %s — skipping in aggregation", csv)
             continue
@@ -243,14 +268,16 @@ def aggregate() -> pd.DataFrame | None:
     if not frames:
         return None
     out = pd.concat(frames, ignore_index=True)
-    OUT_ROOT.mkdir(parents=True, exist_ok=True)
-    out.to_csv(OUT_ROOT / "glm_model_comparison.csv", index=False)
-    log.info("wrote %s (%d clusters)", OUT_ROOT / "glm_model_comparison.csv", len(out))
-    render_forward_selection_summary(out)
+    out_root.mkdir(parents=True, exist_ok=True)
+    out.to_csv(out_root / "glm_model_comparison.csv", index=False)
+    log.info("wrote %s (%d clusters)", out_root / "glm_model_comparison.csv", len(out))
+    render_forward_selection_summary(out, out_root, label)
     return out
 
 
-def render_forward_selection_summary(pooled: pd.DataFrame) -> None:
+def render_forward_selection_summary(
+    pooled: pd.DataFrame, out_root: Path = OUT_ROOT, label: str = "all conditions pooled"
+) -> None:
     """Combined forward-selection summary across both goggles probes."""
     if pooled is None or pooled.empty:
         return
@@ -259,11 +286,11 @@ def render_forward_selection_summary(pooled: pd.DataFrame) -> None:
     fig = plot_forward_selection_summary(pooled)
     n_probes = pooled["probe_id"].nunique()
     fig.suptitle(
-        f"Forward selection — goggles, all conditions pooled "
+        f"Forward selection — goggles, {label} "
         f"({n_probes} probes, n={pooled['cluster_id'].count()} clusters)",
         fontsize=12, fontweight="bold",
     )
-    figdir = OUT_ROOT / "figs"
+    figdir = out_root / "figs"
     figdir.mkdir(parents=True, exist_ok=True)
     for p in save_figure(fig, figdir / "forward_selection_summary", fmt="pdf"):
         log.info("wrote %s", p)
@@ -510,6 +537,10 @@ def main() -> int:
         "--overlays-only", action="store_true",
         help="Skip fitting; re-render the split cross-condition overlays only.",
     )
+    parser.add_argument(
+        "--plus-me", action="store_true",
+        help="Pooled run WITH face motion energy (ME_face) → current_plus_ME_goggles/.",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
@@ -522,6 +553,13 @@ def main() -> int:
 
     if args.split:
         run_split()
+        return 0
+
+    if args.plus_me:
+        probes = (args.probe,) if args.probe else PROBES
+        for probe in probes:
+            run_probe(probe, OUT_ME, make_config_me)
+        aggregate(OUT_ME, "pooled + face ME")
         return 0
 
     probes = (args.probe,) if args.probe else PROBES
