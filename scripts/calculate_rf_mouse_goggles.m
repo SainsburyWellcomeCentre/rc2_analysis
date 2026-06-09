@@ -29,6 +29,7 @@
 % -------------------------------------------------------------------------
 degs_per_square = 5;     % degrees per square in the stimulus (constant)
 threshold       = 2.5;   % multiplicative factor applied to shuffled STA std
+n_events_per_session = 2500;  % number of stimulus presentations per session (rec1 and rec3)
 
 % Optional: Generate comparison plots showing rec1 vs rec3 separately
 show_individual_sessions = true;  % Set to false to only generate combined RFs
@@ -41,7 +42,7 @@ cmap_off = [linspace(1,0,256)', linspace(1,0,256)', linspace(1,1,256)'];  % whit
 % -------------------------------------------------------------------------
 % Stimulus file path
 % -------------------------------------------------------------------------
-goggles_stim_fname = 'C:\Users\lee\Documents\mvelez\visual_stimuli\visual_stimuli\user\mvelez\sparse_noise\sparse_noise_wisecoco_2500stim.mat';
+goggles_stim_fname = 'C:\Users\lee\Documents\mvelez\visual_stimuli\visual_stimuli\user\mvelez\sparse_noise\sparse_noise_wisecoco_2500stims.mat';
 
 % -------------------------------------------------------------------------
 % Output directories
@@ -124,8 +125,8 @@ for probe_i = 1 : length(probe_ids)
     animal_id = get_animal_id(this_probe);
 
     % Find stimulus onset times from photodiode signal
-    starts_rec1 = photodiode_times(animal_id, session_rec1, "sparse_noise_goggles");
-    starts_rec3 = photodiode_times(animal_id, session_rec3, "sparse_noise_goggles");
+    starts_rec1 = photodiode_times(animal_id, session_rec1, "sparse_noise_goggles", n_events_per_session);
+    starts_rec3 = photodiode_times(animal_id, session_rec3, "sparse_noise_goggles", n_events_per_session);
 
     fprintf('  rec1: %d stimulus onsets detected\n', length(starts_rec1));
     fprintf('  rec3: %d stimulus onsets detected\n', length(starts_rec3));
@@ -276,6 +277,20 @@ for probe_i = 1 : length(probe_ids)
     % Figures: Combined rec1+rec3 (2x2 layout)
     % =====================================================================
     combined_fnames = {};
+    
+    % Initialize CSV data storage for RF metrics
+    csv_data = struct();
+    csv_data.cluster_id = [];
+    csv_data.region = {};
+    csv_data.rf_type = {};  % 'white' or 'black'
+    csv_data.centroid_azimuth_pixels = [];
+    csv_data.centroid_elevation_pixels = [];
+    csv_data.centroid_azimuth_deg = [];
+    csv_data.centroid_elevation_deg = [];
+    csv_data.size_azimuth_pixels = [];
+    csv_data.size_elevation_pixels = [];
+    csv_data.size_azimuth_deg = [];
+    csv_data.size_elevation_deg = [];
 
     for i = 1 : size(sta_white_combined_store, 3)
 
@@ -310,6 +325,35 @@ for probe_i = 1 : length(probe_ids)
         size_RF_h      = len_h * degs_per_square;
         if len_w > 0, RF_w_combined(end + 1) = size_RF_w; end
         if len_h > 0, RF_h_combined(end + 1) = size_RF_h; end
+        
+        % Calculate centroid for white RF
+        if any(RF_comb(:))
+            props_white = regionprops(RF_comb, 'Centroid', 'BoundingBox');
+            if ~isempty(props_white)
+                % Get centroid of largest component
+                [~, max_idx] = max(arrayfun(@(x) x.BoundingBox(3)*x.BoundingBox(4), props_white));
+                centroid_white = props_white(max_idx).Centroid;  % [x, y] in grid squares
+                
+                % Convert to pixels (center of each square)
+                pix_per_square_x = w_pix_g / n_x_g;
+                pix_per_square_y = h_pix_g / n_y_g;
+                centroid_white_pix = [(centroid_white(1) - 0.5) * pix_per_square_x, ...
+                                      (centroid_white(2) - 0.5) * pix_per_square_y];
+                
+                % Store in CSV data
+                csv_data.cluster_id(end+1) = c.id;
+                csv_data.region{end+1} = c.region_str;
+                csv_data.rf_type{end+1} = 'white';
+                csv_data.centroid_azimuth_pixels(end+1) = centroid_white_pix(1);
+                csv_data.centroid_elevation_pixels(end+1) = centroid_white_pix(2);
+                csv_data.centroid_azimuth_deg(end+1) = (centroid_white(1) - 0.5) * degs_per_square;
+                csv_data.centroid_elevation_deg(end+1) = (centroid_white(2) - 0.5) * degs_per_square;
+                csv_data.size_azimuth_pixels(end+1) = len_w * pix_per_square_x;
+                csv_data.size_elevation_pixels(end+1) = len_h * pix_per_square_y;
+                csv_data.size_azimuth_deg(end+1) = size_RF_w;
+                csv_data.size_elevation_deg(end+1) = size_RF_h;
+            end
+        end
 
         % White, processed
         RF_comb = imgaussfilt(double(imresize(RF_comb, [h_pix_g + 1, w_pix_g + 1])), 10);
@@ -335,6 +379,35 @@ for probe_i = 1 : length(probe_ids)
         size_RF_h      = len_h * degs_per_square;
         if len_w > 0, RF_w_combined(end + 1) = size_RF_w; end
         if len_h > 0, RF_h_combined(end + 1) = size_RF_h; end
+        
+        % Calculate centroid for black RF
+        if any(RF_comb(:))
+            props_black = regionprops(RF_comb, 'Centroid', 'BoundingBox');
+            if ~isempty(props_black)
+                % Get centroid of largest component
+                [~, max_idx] = max(arrayfun(@(x) x.BoundingBox(3)*x.BoundingBox(4), props_black));
+                centroid_black = props_black(max_idx).Centroid;  % [x, y] in grid squares
+                
+                % Convert to pixels (center of each square)
+                pix_per_square_x = w_pix_g / n_x_g;
+                pix_per_square_y = h_pix_g / n_y_g;
+                centroid_black_pix = [(centroid_black(1) - 0.5) * pix_per_square_x, ...
+                                      (centroid_black(2) - 0.5) * pix_per_square_y];
+                
+                % Store in CSV data
+                csv_data.cluster_id(end+1) = c.id;
+                csv_data.region{end+1} = c.region_str;
+                csv_data.rf_type{end+1} = 'black';
+                csv_data.centroid_azimuth_pixels(end+1) = centroid_black_pix(1);
+                csv_data.centroid_elevation_pixels(end+1) = centroid_black_pix(2);
+                csv_data.centroid_azimuth_deg(end+1) = (centroid_black(1) - 0.5) * degs_per_square;
+                csv_data.centroid_elevation_deg(end+1) = (centroid_black(2) - 0.5) * degs_per_square;
+                csv_data.size_azimuth_pixels(end+1) = len_w * pix_per_square_x;
+                csv_data.size_elevation_pixels(end+1) = len_h * pix_per_square_y;
+                csv_data.size_azimuth_deg(end+1) = size_RF_w;
+                csv_data.size_elevation_deg(end+1) = size_RF_h;
+            end
+        end
 
         % Black, processed
         RF_comb = imgaussfilt(double(imresize(RF_comb, [h_pix_g + 1, w_pix_g + 1])), 10);
@@ -355,6 +428,29 @@ for probe_i = 1 : length(probe_ids)
     new_fname_combined = fullfile(goggles_combined_dir, ...
         sprintf('%s_rf_by_cluster_goggles_combined.pdf', probe_ids{probe_i}));
     join_pdfs(combined_fnames, new_fname_combined, true);
+    
+    % =====================================================================
+    % Save CSV file with RF metrics
+    % =====================================================================
+    if ~isempty(csv_data.cluster_id)
+        % Create table from collected data
+        rf_table = table(csv_data.cluster_id', csv_data.region', csv_data.rf_type', ...
+                         csv_data.centroid_azimuth_pixels', csv_data.centroid_elevation_pixels', ...
+                         csv_data.centroid_azimuth_deg', csv_data.centroid_elevation_deg', ...
+                         csv_data.size_azimuth_pixels', csv_data.size_elevation_pixels', ...
+                         csv_data.size_azimuth_deg', csv_data.size_elevation_deg', ...
+                         'VariableNames', {'cluster_id', 'region', 'rf_type', ...
+                                           'centroid_azimuth_pixels', 'centroid_elevation_pixels', ...
+                                           'centroid_azimuth_deg', 'centroid_elevation_deg', ...
+                                           'size_azimuth_pixels', 'size_elevation_pixels', ...
+                                           'size_azimuth_deg', 'size_elevation_deg'});
+        
+        % Save CSV
+        csv_fname = fullfile(goggles_combined_dir, ...
+            sprintf('%s_rf_metrics.csv', probe_ids{probe_i}));
+        writetable(rf_table, csv_fname);
+        fprintf('  Saved RF metrics to: %s\n', csv_fname);
+    end
 
     % =====================================================================
     % Figures: Comparison rec1 vs rec3 (2x4 layout, optional)
