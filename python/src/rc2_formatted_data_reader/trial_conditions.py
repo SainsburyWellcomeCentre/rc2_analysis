@@ -64,14 +64,18 @@ SCREENS_STIMULUS = StimulusSet(
 )
 
 # Goggles motion clouds (CAA-1124370/371, mouse VR goggles, 2026-03).
-# Ported from master e2a65b5 (Mateo). New SF grid (008/016/032) and VX values,
-# but each batch reproduces the same SF×VX product as the matching screens
-# batch (≈0.003 / 0.006 / 0.012), so the gain ladder is preserved.
-# NOTE: batch_gains are carried over from screens on that design-equivalence
-# argument; confirm with Mateo that the goggles speed→TF coupling gains are the
-# same three rungs and not rescaled for the goggles display geometry.
+# Ported from master e2a65b5 (Mateo). The cloud-name SF tokens are larger
+# (sf00p008/016/032) but these are GENERATION units, not the physical SF: the
+# goggles' different deg/pixel rescales sf0 by ~2.67x (and VX down by 2.67x, so
+# SF×VX=TF is preserved). Same 1:2:4 ratio as screens. The physical spatial
+# frequency is unchanged, so the new tokens map to the SAME values as screens
+# {0.003, 0.006, 0.012} — matching glm_single_cluster_analysis.m (which is the
+# authoritative SF map and was NOT changed for goggles). batch_gains likewise
+# carry over (physical TF/speed coupling preserved). SF is a categorical
+# regressor, so this only affects axis labels / cross-modality comparison, not
+# the fit; it also lets the overview SF panel (hardcoded screens levels) match.
 GOGGLES_STIMULUS = StimulusSet(
-    sf_values={"sf00p008": 0.008, "sf00p016": 0.016, "sf00p032": 0.032},
+    sf_values={"sf00p008": 0.003, "sf00p016": 0.006, "sf00p032": 0.012},
     batch_patterns=(
         ("sf00p008_Bsf0p005_VX0p382", "sf00p016_Bsf0p005_VX0p191", "sf00p032_Bsf0p005_VX0p095"),
         ("sf00p008_Bsf0p005_VX0p764", "sf00p016_Bsf0p005_VX0p382", "sf00p032_Bsf0p005_VX0p191"),
