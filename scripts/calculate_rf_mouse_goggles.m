@@ -41,7 +41,7 @@ cmap_off = [linspace(1,0,256)', linspace(1,0,256)', linspace(1,1,256)'];  % whit
 % -------------------------------------------------------------------------
 % Stimulus file path
 % -------------------------------------------------------------------------
-goggles_stim_fname = 'C:\Users\lee\Documents\mvelez\visual_stimuli\user\mvelez\sparse_noise\sparse_noise_wisecoco_2500stim.mat';
+goggles_stim_fname = 'C:\Users\lee\Documents\mvelez\visual_stimuli\visual_stimuli\user\mvelez\sparse_noise\sparse_noise_wisecoco_2500stim.mat';
 
 % -------------------------------------------------------------------------
 % Output directories
