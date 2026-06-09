@@ -7,25 +7,24 @@ run), test whether the VT tuning curve is the additive sum of the two unimodal
 contributions:
 
   * Speed axis  (Speed_T_to_VT): observed VT speed-tuning vs
-        Model A (gain+offset) : VT ~ a·T(s) + b               [black]
-        Model B (additive)     : VT ~ a·T(s) + b·V(ḡ·s) + c    [red]
-    where T = T_Vstatic speed-tuning, and V(ḡ·s) is the V-condition TF-tuning
-    sampled at the TF the visual flow carries at speed s (TF = ḡ·s).
-
+        Model A (gain+offset) : VT ~ a·T + b           [black]
+        Model B (additive)     : VT ~ a·T + b·V + c     [red]
   * TF axis     (TF_V_to_VT):    observed VT TF-tuning vs
-        Model A : VT ~ a·V(f) + b
-        Model B : VT ~ a·V(f) + b·T(f/ḡ) + c
-    where V = V TF-tuning, and T(f/ḡ) is the T_Vstatic speed-tuning at the
-    speed matching TF f.
+        Model A : VT ~ a·V + b
+        Model B : VT ~ a·V + b·T + c
 
-Per-bin tuning = MEAN across trials from the MATLAB tuning cache
-(``csvs/{tuning_curves,tf_tuning_curves}/<probe>.mat`` beside the formatted
-file). ḡ = 2/30 Hz/(cm/s), the middle rung of the goggles gain ladder. Model B
-beating Model A (and the red sum tracking the data) = additivity holds.
+where T = T_Vstatic tuning, V = V tuning. The Speed and TF caches share the
+same 20 quantile bins of the trial distribution; because TF = gain·speed is
+monotone, the i-th speed bin and i-th TF bin are the matched pair, so the
+cross-modality "equivalent" is just index-alignment (no ḡ rescaling, no
+interpolation). Per-bin tuning = MEAN across trials from the MATLAB cache
+(``csvs/{tuning_curves,tf_tuning_curves}/<probe>.mat``). Model B beating
+Model A (and the red sum tracking the data) = additivity holds.
 
 NB: this is a clean reconstruction (the original screens script was lost, only
-its gain_offset_per_cluster.csv survived). Conventions chosen 2026-06-09 with
-Laura: mean per-bin tuning, ḡ = middle gain, additive 2-regressor Model B.
+its gain_offset_per_cluster.csv survived). Conventions agreed with Laura
+2026-06-09: mean per-bin tuning, index-aligned cross term, additive 2-regressor
+Model B.
 
 Usage:
     python scripts/plot_two_models_per_cluster_goggles.py
@@ -54,7 +53,6 @@ FORMATTED_DIR = ROOT / "formatted_data_goggles"
 POOLED_CMP = ROOT / "figures" / "glm" / "current_goggles" / "glm_model_comparison.csv"
 OUT_DIR = ROOT / "figures" / "glm" / "exploration" / "subspace_population_goggles"
 
-GBAR = 2.0 / 30.0   # Hz per cm/s — middle rung of the goggles gain ladder
 N_TOP = 20
 
 
@@ -102,32 +100,29 @@ def _fit(cols: list[np.ndarray], y: np.ndarray):
 def _models_for(pre, cid: int, axis: str):
     """Build the three condition curves + Model A/B predictions on the VT grid.
 
-    axis='Speed' → Speed_T_to_VT; axis='TF' → TF_V_to_VT. Each condition curve
-    is expressed on the VT grid: the cross-modality term is the *other*
-    condition's tuning resampled via ḡ (TF=ḡ·speed), edge-clamped so it spans
-    the whole grid rather than truncating where ḡ runs out of range.
+    axis='Speed' → Speed_T_to_VT; axis='TF' → TF_V_to_VT.
 
-    Returns a dict {grid, vt, t_curve, v_curve, predA, r2A, predB, r2B} or None.
-    ``t_curve`` is always the T_Vstatic contribution (green), ``v_curve`` the V
-    contribution (gold), ``vt`` the observed VT (blue).
+    The Speed and TF caches each carry the *same* 20 quantile bins of the
+    trial distribution: because TF = gain·speed (monotone), the i-th speed bin
+    and the i-th TF bin are the matched pair. So the cross-modality "equivalent"
+    is simple index-alignment of the bins (T at speed-bin i ↔ TF-bin i) — no ḡ
+    rescaling, no interpolation, no truncation.
+
+    Returns {grid, vt, t_curve, v_curve, predA, r2A, predB, r2B} or None.
+    ``t_curve`` = T_Vstatic contribution (green), ``v_curve`` = V (gold),
+    ``vt`` = observed VT (blue), all on the same 20-bin index.
     """
-    if axis == "Speed":
-        grid, vt = _mean_tuning(pre, "VT", cid, "Speed")         # blue (target)
-        _, t_curve = _mean_tuning(pre, "T_Vstatic", cid, "Speed")  # green, raw T(s)
-        cV, V = _mean_tuning(pre, "V", cid, "TF")               # gold = V(ḡ·s)
-        if grid is None or t_curve is None or V is None:
-            return None
-        v_curve = np.interp(GBAR * grid, cV, V)                 # edge-clamped
-        primary, matched = t_curve, v_curve
-    else:  # TF
-        grid, vt = _mean_tuning(pre, "VT", cid, "TF")            # blue (target)
-        _, v_curve = _mean_tuning(pre, "V", cid, "TF")          # gold, raw V(f)
-        cT, T = _mean_tuning(pre, "T_Vstatic", cid, "Speed")    # green = T(f/ḡ)
-        if grid is None or v_curve is None or T is None:
-            return None
-        t_curve = np.interp(grid / GBAR, cT, T)                 # edge-clamped
-        primary, matched = v_curve, t_curve
+    grid, vt = _mean_tuning(pre, "VT", cid, "Speed" if axis == "Speed" else "TF")
+    _, t_curve = _mean_tuning(pre, "T_Vstatic", cid, "Speed")   # green, on speed bins
+    _, v_curve = _mean_tuning(pre, "V", cid, "TF")             # gold,  on TF bins
+    if grid is None or t_curve is None or v_curve is None:
+        return None
+    # All three share the 20-bin quantile index → align by index.
+    n = len(grid)
+    if not (len(t_curve) == len(v_curve) == n):
+        return None
 
+    primary, matched = (t_curve, v_curve) if axis == "Speed" else (v_curve, t_curve)
     a = _fit([primary], vt)               # Model A: gain+offset of the unimodal
     b = _fit([primary, matched], vt)      # Model B: additive (2 regressors)
     if a is None or b is None:
