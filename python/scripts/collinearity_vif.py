@@ -15,6 +15,12 @@ not the cluster's spikes, so one representative cluster per probe suffices.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -101,7 +107,82 @@ def main() -> int:
                  f"OR={med('gvif_OR'):.2f}" if "gvif_OR" in sub else ""]
         parts = [p for p in parts if p]
         print(f"{scope:10s} cond#={med('cond_number'):7.1f}  | " + "  ".join(parts))
+
+    _plot_vif(df)
     return 0
+
+
+# Bands on the SE scale (GVIF^(1/2df)); 2.24/3.16 = variance-scale 5/10.
+GOOD, WORRY = 2.24, 3.16
+BAND_COLOR = {"good": "#2ca02c", "worrying": "#ff8c00", "severe": "#d62728",
+              "rank-deficient": "#6a1b9a", "n/a": "0.85"}
+
+
+def _band(v: float) -> str:
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return "n/a"
+    if not np.isfinite(v):
+        return "rank-deficient"
+    if v < GOOD:
+        return "good"
+    if v < WORRY:
+        return "worrying"
+    return "severe"
+
+
+def _plot_vif(df: pd.DataFrame) -> None:
+    scopes = ["pooled", "T_Vstatic", "V", "VT"]
+    blocks = ["Speed", "TF", "Onset", "SF", "OR"]
+    cols = blocks + ["cond#"]
+
+    def med(scope, col):
+        sub = df[df["scope"] == scope]
+        if col not in sub or sub.empty:
+            return np.nan
+        return sub[col].median()  # inf medians stay inf
+
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
+    for r, scope in enumerate(scopes):
+        for c, block in enumerate(cols):
+            if block == "cond#":
+                v = med(scope, "cond_number")
+                band = ("good" if v < 30 else "worrying" if v < 100 else "severe") \
+                    if np.isfinite(v) else "n/a"
+                label = "n/a" if not np.isfinite(v) else f"{v:.0f}"
+            else:
+                v = med(scope, f"gvif_{block}")
+                band = _band(v)
+                label = ("n/a" if band == "n/a"
+                         else "∞" if band == "rank-deficient" else f"{v:.2f}")
+            ax.add_patch(plt.Rectangle((c, len(scopes) - 1 - r), 1, 1,
+                                       facecolor=BAND_COLOR[band], edgecolor="white",
+                                       lw=2))
+            tc = "white" if band in ("severe", "rank-deficient") else "black"
+            ax.text(c + 0.5, len(scopes) - 1 - r + 0.5, label, ha="center",
+                    va="center", fontsize=9, color=tc, fontweight="bold")
+    ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(scopes))
+    ax.set_xticks(np.arange(len(cols)) + 0.5); ax.set_xticklabels(cols)
+    ax.set_yticks(np.arange(len(scopes)) + 0.5)
+    ax.set_yticklabels(list(reversed(scopes)))
+    ax.set_xticks(np.arange(len(cols) + 1), minor=True)
+    ax.tick_params(length=0)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=BAND_COLOR[b]) for b in
+               ("good", "worrying", "severe", "rank-deficient", "n/a")]
+    labels = ["good (<2.24)", "worrying (2.24–3.16)", "severe (>3.16)",
+              "rank-deficient (∞)", "n/a (degenerate)"]
+    ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.12),
+              ncol=3, fontsize=7.5, frameon=False)
+    ax.set_title("Collinearity per condition — generalised VIF (SE scale) + cond#\n"
+                 "Speed/TF separable in pooled & T_Vstatic; NOT in VT",
+                 fontsize=10, fontweight="bold")
+    fig.tight_layout()
+    out = Path.home() / "local_data/motion_clouds/figures/glm/current/diagnostics/collinearity_vif"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{out}.pdf"); fig.savefig(f"{out}.png", dpi=120)
+    plt.close(fig)
+    print(f"wrote {out}.pdf / .png")
 
 
 if __name__ == "__main__":
