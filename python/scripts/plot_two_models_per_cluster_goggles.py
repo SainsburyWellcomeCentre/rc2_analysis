@@ -100,31 +100,40 @@ def _fit(cols: list[np.ndarray], y: np.ndarray):
 
 
 def _models_for(pre, cid: int, axis: str):
-    """Build observed VT + Model A/B predictions on the VT grid for one axis.
+    """Build the three condition curves + Model A/B predictions on the VT grid.
 
-    axis='Speed' → Speed_T_to_VT; axis='TF' → TF_V_to_VT.
-    Returns (grid, y_obs, predA, r2A, predB, r2B) or None.
+    axis='Speed' → Speed_T_to_VT; axis='TF' → TF_V_to_VT. Each condition curve
+    is expressed on the VT grid: the cross-modality term is the *other*
+    condition's tuning resampled via ḡ (TF=ḡ·speed), edge-clamped so it spans
+    the whole grid rather than truncating where ḡ runs out of range.
+
+    Returns a dict {grid, vt, t_curve, v_curve, predA, r2A, predB, r2B} or None.
+    ``t_curve`` is always the T_Vstatic contribution (green), ``v_curve`` the V
+    contribution (gold), ``vt`` the observed VT (blue).
     """
     if axis == "Speed":
-        grid, y = _mean_tuning(pre, "VT", cid, "Speed")          # target
-        _, uni = _mean_tuning(pre, "T_Vstatic", cid, "Speed")    # unimodal T(s)
-        cV, V = _mean_tuning(pre, "V", cid, "TF")                # cross V(f)
-        if grid is None or uni is None or V is None:
+        grid, vt = _mean_tuning(pre, "VT", cid, "Speed")         # blue (target)
+        _, t_curve = _mean_tuning(pre, "T_Vstatic", cid, "Speed")  # green, raw T(s)
+        cV, V = _mean_tuning(pre, "V", cid, "TF")               # gold = V(ḡ·s)
+        if grid is None or t_curve is None or V is None:
             return None
-        matched = np.interp(GBAR * grid, cV, V, left=np.nan, right=np.nan)
+        v_curve = np.interp(GBAR * grid, cV, V)                 # edge-clamped
+        primary, matched = t_curve, v_curve
     else:  # TF
-        grid, y = _mean_tuning(pre, "VT", cid, "TF")             # target
-        _, uni = _mean_tuning(pre, "V", cid, "TF")              # unimodal V(f)
-        cT, T = _mean_tuning(pre, "T_Vstatic", cid, "Speed")    # cross T(s)
-        if grid is None or uni is None or T is None:
+        grid, vt = _mean_tuning(pre, "VT", cid, "TF")            # blue (target)
+        _, v_curve = _mean_tuning(pre, "V", cid, "TF")          # gold, raw V(f)
+        cT, T = _mean_tuning(pre, "T_Vstatic", cid, "Speed")    # green = T(f/ḡ)
+        if grid is None or v_curve is None or T is None:
             return None
-        matched = np.interp(grid / GBAR, cT, T, left=np.nan, right=np.nan)
+        t_curve = np.interp(grid / GBAR, cT, T)                 # edge-clamped
+        primary, matched = v_curve, t_curve
 
-    a = _fit([uni], y)                    # Model A: gain+offset
-    b = _fit([uni, matched], y)           # Model B: additive (2 regressors)
+    a = _fit([primary], vt)               # Model A: gain+offset of the unimodal
+    b = _fit([primary, matched], vt)      # Model B: additive (2 regressors)
     if a is None or b is None:
         return None
-    return grid, y, a[1], a[2], b[1], b[2]
+    return {"grid": grid, "vt": vt, "t_curve": t_curve, "v_curve": v_curve,
+            "predA": a[1], "r2A": a[2], "predB": b[1], "r2B": b[2]}
 
 
 # ----------------------------------------------------------------------
@@ -142,24 +151,31 @@ def render(axis: str, clusters: list[tuple[str, int]], pres: dict) -> pd.DataFra
         if res is None:
             ax.set_visible(False)
             continue
-        grid, y, predA, r2A, predB, r2B = res
-        ax.plot(grid, y, "o", ms=3.5, color="0.25", label="VT observed")
-        ax.plot(grid, predA, "-", color="black", lw=1.6, label=f"gain+offset r²={r2A:.2f}")
-        ax.plot(grid, predB, "-", color="tab:red", lw=1.6, label=f"additive r²={r2B:.2f}")
+        g = res["grid"]
+        # Three condition tunings (data): green T, gold V, blue VT.
+        ax.plot(g, res["t_curve"], "-", color="tab:green", lw=1.3, alpha=0.9, label="T")
+        ax.plot(g, res["v_curve"], "-", color="goldenrod", lw=1.3, alpha=0.9, label="V")
+        ax.plot(g, res["vt"], "o-", color="tab:blue", ms=3, lw=1.3, label="VT")
+        # Two models of VT: A gain+offset (black), B additive (red).
+        ax.plot(g, res["predA"], "--", color="black", lw=1.6,
+                label=f"A gain+offset r²={res['r2A']:.2f}")
+        ax.plot(g, res["predB"], "-", color="tab:red", lw=1.8,
+                label=f"B additive r²={res['r2B']:.2f}")
         ax.set_title(f"{probe[:11]} cl{cid}", fontsize=8)
         ax.set_xlabel(xlabel, fontsize=7)
         ax.set_ylabel("FR (Hz)", fontsize=7)
         ax.tick_params(labelsize=6)
-        ax.legend(fontsize=5.5, loc="best")
+        ax.legend(fontsize=5.0, loc="best")
         rows.append({"probe": probe, "cluster": cid,
                      "analysis": "Speed_T_to_VT" if axis == "Speed" else "TF_V_to_VT",
-                     "r2_gain_offset": r2A, "r2_additive": r2B})
+                     "r2_gain_offset": res["r2A"], "r2_additive": res["r2B"]})
     for ax in axes[n:]:
         ax.set_visible(False)
     fig.suptitle(
         f"VF+T = VT — {axis} tuning, top {n} Speed+TF clusters (goggles)\n"
-        f"black = gain+offset (Model A) · red = additive T+V (Model B)",
-        fontsize=11, fontweight="bold",
+        f"data: green T · gold V · blue VT   |   models of VT: black -- gain+offset (A) · "
+        f"red — additive T+V (B)",
+        fontsize=10, fontweight="bold",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
