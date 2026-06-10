@@ -34,7 +34,7 @@ def createInputJson(output_file,
                     catGT_car_mode = 'gbldmx',
                     catGT_loccar_min_um = 40,
                     catGT_loccar_max_um = 160,
-                    catGT_cmd_string = '-prb_fld -out_prb_fld -aphipass=300-gfix=0.40,0.10,0.02',
+                    catGT_cmd_string = '-prb_fld -out_prb_fld -apfilter=butter,12,300,9000 -gfix=0.40,0.10,0.02',
                     noise_template_use_rf = True,
                     event_ex_param_str = 'XD=4,1,50',
                     tPrime_im_ex_list = 'SY=0,384,6,500',
@@ -61,11 +61,11 @@ def createInputJson(output_file,
                     ):
 
     # hard coded paths to code on your computer and system
-    ecephys_directory = r'C:\Users\Lee\Documents\jcolonell\ecephys_spike_sorting_np2\ecephys_spike_sorting'
+    ecephys_directory = r'C:\Users\Lab\SWC\original_pipeline\ecephys_spike_sorting\ecephys_spike_sorting'   
 
     # location of kilosor respository and kilosort version
 
-    kilosort_repository = r'C:\Users\Lee\Documents\MATLAB\kilosort2'
+    kilosort_repository = r'C:\Users\Lab\SWC\original_pipeline\Kilosort2' 
     KS2ver = '2.0'      # must equal '3.0', '2.5' or '2.0', and match the kiilosort_repository
 
     # KS 3.0 does not yet output pcs.
@@ -74,14 +74,13 @@ def createInputJson(output_file,
     else:
         include_pcs = True
 
-    npy_matlab_repository = r'C:\Users\Lee\Documents\MATLAB\npy-matlab'
-    catGTPath = r'C:\Users\Lee\Documents\jcolonell\CatGT'
-    tPrime_path=r'C:\Users\Lee\Documents\jcolonell\TPrime'
-    cWaves_path=r'C:\Users\Lee\Documents\jcolonell\C_Waves'
-
+    npy_matlab_repository = r'C:\Users\Lab\SWC\original_pipeline\npy-matlab'
+    catGTPath = r'C:\Users\Lab\SWC\CatGT-win'
+    tPrime_path=tPrime_path = r'C:\Users\Lab\SWC\TPrime-win'
+    cWaves_path = r'C:\Users\Lab\SWC\C_Waves-win'
 
     # for config files and kilosort working space
-    kilosort_output_tmp = r'D:\temp\kilosort'
+    kilosort_output_tmp = r'C:\Users\Lab\SWC\kilosort_datatemp' 
 
 
     # derived directory names

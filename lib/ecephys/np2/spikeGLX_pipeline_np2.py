@@ -60,7 +60,7 @@ catGT_stream_string = '-ap'
 # Note 1: directory naming in this script requires -prb_fld and -out_prb_fld
 # Note 2: this command line includes specification of edge extraction
 # see CatGT readme for details
-catGT_cmd_string = '-prb_fld -out_prb_fld -aphipass=300 -aplopass=9000 -gbldmx -gfix=0,0.10,0.02 -SY=0,384,0,0'
+catGT_cmd_string = '-prb_fld -out_prb_fld -apfilter=butter,12,300,9000 -gbldmx -gfix=0,0.10,0.02 '
 
 # ----------------------
 # psth_events parameters
@@ -240,6 +240,10 @@ for spec in run_specs:
         
         for module in modules:
             output_json = os.path.join(json_directory, session_id + '-' + module + '-output.json')  
+            if module == 'kilosort_helper':  
+                python_exe =r'C:\Users\Lab\miniconda3\envs\original_pipeline_312\python_exe'
+            else:
+                python_exe = sys.executable
             command = sys.executable + " -W ignore -m ecephys_spike_sorting.modules." + module + " --input_json " + input_json \
 		          + " --output_json " + output_json
             subprocess.check_call(command.split(' '))
