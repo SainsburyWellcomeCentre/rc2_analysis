@@ -33,6 +33,7 @@ def assemble_design_matrix_selected(
     *,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Assemble the design matrix from selected variable names.
@@ -91,6 +92,9 @@ def assemble_design_matrix_selected(
     if "ME_face" in selected and B_me_face is not None and B_me_face.shape[1] > 0:
         cols.append(B_me_face)
         names += [f"ME_face_{i + 1}" for i in range(B_me_face.shape[1])]
+    if "Acceleration" in selected and B_accel is not None and B_accel.shape[1] > 0:
+        cols.append(B_accel)
+        names += [f"Acceleration_{i + 1}" for i in range(B_accel.shape[1])]
 
     if "Speed_x_TF" in selected:
         for si in range(n_speed_b):
@@ -156,17 +160,21 @@ def assemble_design_matrix(
     *,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Build a fixed model matrix labelled by `model_label`.
 
     See ``assemble_design_matrix_selected`` for the History / ME_face /
-    onset-toggle keyword args. ``M0`` and ``Null`` ignore History and
-    ME_face (both are Phase-1 candidates, not in the always-on baseline).
+    Acceleration / onset-toggle keyword args. ``M0`` and ``Null`` ignore
+    History / ME_face / Acceleration (all Phase-1 candidates, not in the
+    always-on baseline).
     """
+    accel_var = ["Acceleration"] if B_accel is not None else []
     common_kwargs = dict(
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
         include_onset_kernel=include_onset_kernel,
     )
     if model_label == "M0":
@@ -181,7 +189,7 @@ def assemble_design_matrix(
     if model_label == "Additive":
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
-            ["Speed", "TF", "SF", "OR"], sf_ref_levels, or_ref_levels,
+            ["Speed", "TF", "SF", "OR"] + accel_var, sf_ref_levels, or_ref_levels,
             **common_kwargs,
         )
     if model_label == "FullInteraction":
@@ -195,7 +203,7 @@ def assemble_design_matrix(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
             ["Speed", "TF", "SF", "OR", "ME_face",
              "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
-             "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed"],
+             "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed"] + accel_var,
             sf_ref_levels, or_ref_levels,
             **common_kwargs,
         )
@@ -204,7 +212,7 @@ def assemble_design_matrix(
         keep = [v for v in ("Speed", "TF", "SF", "OR") if v != drop]
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
-            keep, sf_ref_levels, or_ref_levels,
+            keep + accel_var, sf_ref_levels, or_ref_levels,
             **common_kwargs,
         )
     raise ValueError(f"Unknown model label: {model_label}")

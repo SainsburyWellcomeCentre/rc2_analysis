@@ -462,6 +462,7 @@ def _fit_one_cluster(
             n_bases=config.n_history_bases,
             t_max_s=config.history_window_s,
             bin_width_s=config.time_bin_width,
+            kind=getattr(config, "history_basis_kind", "raised_cosine"),
         )
         B_history = convolve_history(y, trial_ids, h_basis)
     else:
@@ -498,6 +499,28 @@ def _fit_one_cluster(
             B_me_face = None
     else:
         B_me_face = None
+
+    # Acceleration basis (value-axis, like ME): z-score the signed binned
+    # 'acceleration' column over motion rows, raised-cosine-linear over
+    # accel_range. None when off / column absent → dropped as a candidate.
+    if "acceleration" in df.columns and getattr(config, "include_acceleration", False):
+        acc_raw = df["acceleration"].to_numpy(dtype=np.float64)
+        motion_rows = (df["condition"] != "stationary").to_numpy()
+        acc_motion = np.isfinite(acc_raw) & motion_rows
+        if int(acc_motion.sum()) >= 10:
+            a_mean = float(acc_raw[acc_motion].mean())
+            a_std = float(acc_raw[acc_motion].std(ddof=0)) or 1.0
+            acc_z = np.where(np.isfinite(acc_raw), (acc_raw - a_mean) / a_std, 0.0)
+            acc_z = np.clip(acc_z, config.accel_range[0], config.accel_range[1])
+            from rc2_glm.basis import raised_cosine_basis_linear
+            B_accel = raised_cosine_basis_linear(
+                acc_z, config.n_accel_bases,
+                config.accel_range[0], config.accel_range[1],
+            )
+        else:
+            B_accel = None
+    else:
+        B_accel = None
 
     offset = float(np.log(config.time_bin_width))
     fold_ids = make_trial_folds(
@@ -543,6 +566,7 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
         fold_ids_per_seed=fold_ids_per_seed,
     )
 
@@ -553,6 +577,7 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
     )
     full_int_cv, full_int_status = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
@@ -561,6 +586,7 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
     )
 
     coef_df, betas, col_names_by_model, preds, refit_status = _fit_plot_models(
@@ -572,6 +598,7 @@ def _fit_one_cluster(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
     )
 
     profile_cv_bps = _profile_cv_diagnostic(
@@ -710,6 +737,7 @@ def _cv_for_label(
     *,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
 ) -> tuple[float, str]:
     include_onset = getattr(config, "include_onset_kernel", True)
     X, _ = assemble_design_matrix(
@@ -717,6 +745,7 @@ def _cv_for_label(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
         include_onset_kernel=include_onset,
     )
     if X.shape[1] == 0:
@@ -762,6 +791,7 @@ def _fit_plot_models(
     *,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, np.ndarray],
@@ -787,11 +817,12 @@ def _fit_plot_models(
     refit_status: dict[str, str] = {}
 
     include_onset = getattr(config, "include_onset_kernel", True)
+    accel_v = ["Acceleration"] if B_accel is not None else []
     model_defs: list[tuple[str, list[str]]] = [
         ("Null", []),
         ("Selected", list(selected_vars)),
-        ("Additive", _ADDITIVE_VARS),
-        ("FullInteraction", _FULL_INTERACTION_VARS),
+        ("Additive", _ADDITIVE_VARS + accel_v),
+        ("FullInteraction", _FULL_INTERACTION_VARS + accel_v),
     ]
 
     # History smoothness prior (opt-in): rebuild the (n_lag, n_bases) basis so
@@ -804,6 +835,7 @@ def _fit_plot_models(
             n_bases=config.n_history_bases,
             t_max_s=config.history_window_s,
             bin_width_s=config.time_bin_width,
+            kind=getattr(config, "history_basis_kind", "raised_cosine"),
         )
 
     for label, vars_for_label in model_defs:
@@ -812,6 +844,7 @@ def _fit_plot_models(
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             B_history=B_history,
             B_me_face=B_me_face,
+            B_accel=B_accel,
             include_onset_kernel=include_onset,
         )
         if X.shape[1] == 0:

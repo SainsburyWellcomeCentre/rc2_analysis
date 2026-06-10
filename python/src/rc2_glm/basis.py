@@ -103,23 +103,33 @@ def onset_kernel_basis(
 
 
 def history_basis(
-    n_bases: int, t_max_s: float, bin_width_s: float,
+    n_bases: int, t_max_s: float, bin_width_s: float, kind: str = "raised_cosine",
 ) -> np.ndarray:
-    """Log-spaced raised-cosine bases over post-spike lags [Δt, t_max_s].
+    """Post-spike-lag basis over lags [Δt, t_max_s].
 
-    Each row of the returned array is one lag bin (1..n_lag_bins, where
-    ``n_lag_bins = round(t_max_s / bin_width_s)``); each column is one
-    basis function. The bases are evaluated on ``log(lag + 0.5)`` to give
-    Weber-style spacing — fine resolution near lag 0 (refractory), coarse
-    at long lags (slow adaptation). Pillow et al. 2008 convention.
+    Each row is one lag bin (1..n_lag_bins, where ``n_lag_bins =
+    round(t_max_s / bin_width_s)``); each column is one basis function.
+    Lag 0 (the *current* bin) is intentionally absent — the convolution must
+    use *past* spikes only to remain causal.
 
-    Bases at lag 0 (the *current* bin's spike) are intentionally absent —
-    the convolution must use *past* spikes only to remain causal.
+    ``kind``:
+      - ``"raised_cosine"`` (default): ``n_bases`` log-spaced raised cosines
+        (Pillow et al. 2008) — Weber-style spacing, fine near lag 0, coarse at
+        long lags. Use when there are many lag bins and you want dimensionality
+        reduction / smoothness across them.
+      - ``"identity"``: one DUMMY per lag bin (the n_lag_bins × n_lag_bins
+        identity). Use for short windows where n_lag_bins is small — raised
+        cosines over a few lags are just a rotation of the dummies and buy
+        nothing, while dummies stay interpretable (each coef = effect of a
+        spike that many bins ago). ``n_bases`` is ignored.
 
-    Returns array of shape (n_lag_bins, n_bases). Each column has unit
-    peak, like ``raised_cosine_basis``.
+    Returns array of shape (n_lag_bins, n_cols).
     """
     n_lag_bins = max(1, int(round(t_max_s / bin_width_s)))
+    if kind == "identity":
+        return np.eye(n_lag_bins, dtype=np.float64)
+    if kind != "raised_cosine":
+        raise ValueError(f"unknown history basis kind: {kind!r}")
     # Lag indices 1..n_lag_bins (lag 0 excluded for causality — see
     # convolve_history's Δt offset).
     lags = np.arange(1, n_lag_bins + 1, dtype=np.float64)

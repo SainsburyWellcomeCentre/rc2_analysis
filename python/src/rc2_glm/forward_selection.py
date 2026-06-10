@@ -97,6 +97,7 @@ def forward_select(
     *,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
     fold_ids_per_seed: list[np.ndarray] | None = None,
 ) -> SelectionResult:
     """Hardcastle-style hierarchical forward selection.
@@ -165,6 +166,7 @@ def forward_select(
     common_assembler_kwargs = dict(
         B_history=B_history if include_history else None,
         B_me_face=B_me_face,
+        B_accel=B_accel,
         include_onset_kernel=include_onset,
     )
 
@@ -196,6 +198,10 @@ def forward_select(
 
     # ----- Phase 1: main effects -----
     remaining = list(config.main_effects)
+    if "Acceleration" in remaining and B_accel is None:
+        # include_acceleration off, or no acceleration column — drop it from
+        # the candidate list (mirrors the ME_face guard below).
+        remaining.remove("Acceleration")
     if "ME_face" in remaining and B_me_face is None:
         # Camera data absent for this probe / cluster, or --no-me-face
         # was set at the pipeline level. Drop ME_face from the candidate
@@ -312,6 +318,7 @@ def _try_candidates(
     history_basis_mat: np.ndarray | None = None,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> RoundResult:
     """Evaluate each candidate under N cv-fold partitions, admit
@@ -336,6 +343,7 @@ def _try_candidates(
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             B_history=B_history,
             B_me_face=B_me_face,
+            B_accel=B_accel,
             include_onset_kernel=include_onset_kernel,
         )
         if X_test.shape[1] >= y.size:
@@ -414,6 +422,7 @@ def _cv_for_selected_per_seed(
     history_basis_mat: np.ndarray | None = None,
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
+    B_accel: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> list[CVResult]:
     X, names = assemble_design_matrix_selected(
@@ -421,6 +430,7 @@ def _cv_for_selected_per_seed(
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
         B_history=B_history,
         B_me_face=B_me_face,
+        B_accel=B_accel,
         include_onset_kernel=include_onset_kernel,
     )
     penalty = _penalty_for(names, config, history_basis_mat)

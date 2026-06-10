@@ -25,11 +25,17 @@ import pandas as pd
 
 from rc2_glm.config import GLMConfig
 from rc2_glm.io import ClusterData, ProbeData, TrialData
+from rc2_glm.masks_helpers import acceleration_from_velocity
 
 COLUMNS: list[str] = [
     "probe_id", "cluster_id", "trial_id", "profile_id", "condition",
     "speed", "tf", "sf", "orientation", "batch_gain",
     "spike_count", "time_in_trial", "time_since_onset",
+    # Per-bin SIGNED translation acceleration (cm/s², MATLAB-style
+    # acceleration_from_velocity = 100·diff(v), bin-mean over motion
+    # samples), gated by condition like speed: real in T_Vstatic/VT,
+    # 0 in V (static platform) and in the stationary prelude.
+    "acceleration",
     # Face/body camera motion energy bin-mean (raw, NOT z-scored).
     # Per prompt 06 (2026-04-30). NaN when the configured camera is
     # absent from the session, or when a bin has no camera samples.
@@ -244,10 +250,15 @@ def _bin_motion_period(
     bins_vec = sample_bin[valid]
     mmask_vec = trial.motion_mask[valid].astype(np.int64)
     absvel_vec = np.abs(trial.velocity[valid]) * mmask_vec
+    # Signed acceleration (MATLAB-style 100·diff(v)) at sample resolution,
+    # masked to motion samples — binned alongside speed.
+    acc_full = acceleration_from_velocity(np.asarray(trial.velocity, dtype=np.float64))
+    acc_vec = acc_full[valid] * mmask_vec
 
     n_samp_per_bin = np.bincount(bins_vec, minlength=n_bins)
     n_motion_per_bin = np.bincount(bins_vec, weights=mmask_vec, minlength=n_bins)
     sum_speed_per_bin = np.bincount(bins_vec, weights=absvel_vec, minlength=n_bins)
+    sum_acc_per_bin = np.bincount(bins_vec, weights=acc_vec, minlength=n_bins)
 
     good = (n_samp_per_bin > 0) & (
         n_motion_per_bin >= config.motion_fraction_threshold * n_samp_per_bin
@@ -257,6 +268,10 @@ def _bin_motion_period(
 
     good_idx = np.flatnonzero(good)
     mean_speed = sum_speed_per_bin[good_idx] / n_motion_per_bin[good_idx]
+    mean_acc = sum_acc_per_bin[good_idx] / n_motion_per_bin[good_idx]
+    # Translation acceleration is real only when the platform moves the
+    # animal (T_Vstatic / VT); 0 in V (static platform), like speed.
+    accel_v = mean_acc if trial.condition in ("T_Vstatic", "VT") else np.zeros_like(mean_acc)
     bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     time_in_trial = bin_centres[good_idx] - t_motion_start
 
@@ -282,6 +297,7 @@ def _bin_motion_period(
         "spike_count": spike_counts,
         "time_in_trial": time_in_trial,
         "time_since_onset": time_in_trial.copy(),
+        "acceleration": accel_v,
         "me_face_raw": me_per_bin,
     })
 
@@ -366,5 +382,6 @@ def _bin_stationary_prelude(
         "spike_count": counts.astype(np.int64),
         "time_in_trial": np.zeros(n),
         "time_since_onset": time_since_onset,
+        "acceleration": np.zeros(n),
         "me_face_raw": me_per_bin,
     })

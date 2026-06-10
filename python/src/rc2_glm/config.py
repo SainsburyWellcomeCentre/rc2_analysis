@@ -73,6 +73,12 @@ class GLMConfig:
     # 88 clusters at 100 ms; 5/10 selected_vars identical 88/88.
     n_history_bases: int = 5
     history_window_s: float = 0.2
+    # History basis kind: "raised_cosine" (default) or "identity" (one dummy
+    # per lag bin). For short windows with few lag bins (e.g. 20 ms bins,
+    # 80–100 ms window → 4–5 lags) raised cosines are just a rotation of the
+    # dummies — use "identity" for interpretability (coef = effect of a spike
+    # N bins ago). n_history_bases is ignored when "identity".
+    history_basis_kind: str = "raised_cosine"
     # When False (default), History interacts with nothing in Phase 2 —
     # interaction interpretations are rarely useful for spike history.
     allow_history_interactions: bool = False
@@ -130,6 +136,16 @@ class GLMConfig:
     # remaining candidates in forward_select. ME_face_x_Speed Phase-2
     # eligibility falls through automatically.
     include_me_face: bool = True
+
+    # --- Acceleration (signed translation acceleration; binned in time_binning
+    # as the 'acceleration' column, 0 in V/stationary). Value-axis Phase-1
+    # candidate like Speed/ME when include_acceleration is True AND "Acceleration"
+    # is in main_effects. Built per cluster from df['acceleration'] (z-scored,
+    # raised_cosine_basis_linear over accel_range). Default OFF — existing runs
+    # are unaffected. ---
+    include_acceleration: bool = False
+    n_accel_bases: int = 5
+    accel_range: tuple[float, float] = (-3.0, 3.0)
 
     # --- GLM fitting ---
     # Ridge on all non-intercept columns. Tuned by held-out cv_bps on

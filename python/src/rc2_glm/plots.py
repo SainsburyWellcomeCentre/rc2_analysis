@@ -282,8 +282,11 @@ def _kernel_for_var(
         if sub.empty:
             return None
         # Categorical levels — coefficient names look like "SF_0.0060".
+        # NB: these values are cycles-per-PIXEL generation tokens, not cpd.
+        # Physical SF ≈ 0.03/0.06/0.12 cpd (×9.77; screen 98.3°/960px =
+        # 0.102°/px). SF is categorical so the value is just a level ID.
         levels = sub["coefficient"].str.replace("SF_", "").astype(float).to_numpy()
-        return levels, sub["estimate"].to_numpy(), "SF (cpd)"
+        return levels, sub["estimate"].to_numpy(), "SF (cpp)"
 
     if var == "OR":
         sub = coef_rows[coef_rows["coefficient"].str.startswith("OR_")]
@@ -307,6 +310,21 @@ def _kernel_for_var(
             x_grid, config.n_me_face_bases, *config.me_face_range,
         )
         return x_grid, B @ betas, "face ME (z-score)"
+
+    if var == "Acceleration":
+        sub = coef_rows[coef_rows["coefficient"].str.match(r"^Acceleration_\d+$")]
+        if sub.empty:
+            return None
+        sub = sub.assign(
+            lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+        ).sort_values("lag")
+        betas = sub["estimate"].to_numpy()
+        from rc2_glm.basis import raised_cosine_basis_linear
+        x_grid = np.linspace(*config.accel_range, 200)
+        B = raised_cosine_basis_linear(
+            x_grid, config.n_accel_bases, *config.accel_range,
+        )
+        return x_grid, B @ betas, "acceleration (z-score)"
 
     return None
 
@@ -382,7 +400,7 @@ def _kernel_for_interaction(
 
 _FULL_VAR_COLS: tuple[str, ...] = (
     "Speed", "TF", "SF", "OR", "ME_face", "Onset",
-    "History", "Spd × TF", "MEf × Spd",
+    "History", "Acceleration", "Spd × TF", "MEf × Spd",
 )
 # 9-column candidate grid used by Additive / FullInteraction rows of
 # plot_cluster_kernels. Panels for variables not present in the active
@@ -412,6 +430,7 @@ def _selected_vars_present(coef_rows: pd.DataFrame) -> list[str]:
     has_me_face = any(re.match(r"^ME_face_\d+$", c) for c in coef_names)
     has_onset = any(re.match(r"^Onset_\d+$", c) for c in coef_names)
     has_history = any(c.startswith("History_") for c in coef_names)
+    has_accel = any(re.match(r"^Acceleration_\d+$", c) for c in coef_names)
     has_spd_x_tf = any(re.match(r"^Spd\d+_x_TF\d+$", c) for c in coef_names)
     has_mef_x_spd = any(re.match(r"^MEf\d+_x_Spd\d+$", c) for c in coef_names)
     if has_speed: present.append("Speed")
@@ -421,6 +440,7 @@ def _selected_vars_present(coef_rows: pd.DataFrame) -> list[str]:
     if has_me_face: present.append("ME_face")
     if has_onset: present.append("Onset")
     if has_history: present.append("History")
+    if has_accel: present.append("Acceleration")
     if has_spd_x_tf: present.append("Spd × TF")
     if has_mef_x_spd: present.append("MEf × Spd")
     return present
@@ -875,6 +895,10 @@ def plot_forward_selection_summary(
         comparison_df["time_selected_vars"].astype(str)
         .apply(lambda s: "ME_face" in s.split("+")).sum()
     )
+    accel_count = int(
+        comparison_df["time_selected_vars"].astype(str)
+        .apply(lambda s: "Acceleration" in s.split("+")).sum()
+    )
     me_counts = [
         int(comparison_df["time_is_speed_tuned"].sum()),
         int(comparison_df["time_is_tf_tuned"].sum()),
@@ -882,12 +906,14 @@ def plot_forward_selection_summary(
         int(comparison_df["time_is_or_tuned"].sum()),
         history_count,
         me_face_count,
+        accel_count,
         int(comparison_df["time_has_interaction"].sum()),
     ]
-    me_labels = ["Speed", "TF", "SF", "OR", "History", "ME_face", "Any Interact."]
+    me_labels = ["Speed", "TF", "SF", "OR", "History", "ME_face", "Accel", "Any Interact."]
     me_colors = [
         _COLOR_SPEED, _COLOR_TF, _COLOR_SF, _COLOR_OR,
-        _BETA_GROUP_COLORS["History"], _COLOR_ME_FACE, _COLOR_INT_BLUE,
+        _BETA_GROUP_COLORS["History"], _COLOR_ME_FACE, (0.09, 0.75, 0.81),
+        _COLOR_INT_BLUE,
     ]
     y_pos = np.arange(1, len(me_counts) + 1)
     ax.barh(y_pos, me_counts, color=me_colors, edgecolor="none")
@@ -1351,16 +1377,17 @@ def plot_tuning_curves(
     # row) vs per-condition mean predicted FR (model rows), binned over
     # 5%-quantile ME edges of the z-scored face camera signal.
     fig, axes = plt.subplots(
-        5, 5, figsize=(20, 14), sharex="col", constrained_layout=True,
+        5, 6, figsize=(24, 14), sharex="col", constrained_layout=True,
     )
     row_labels = ("Observed", "Null", "Selected", "Additive", "FullInteraction")
-    col_labels = ("Speed", "TF", "SF", "OR", "ME_face")
+    col_labels = ("Speed", "TF", "SF", "OR", "ME_face", "Acceleration")
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(f"{lbl}\nrate (Hz)", fontsize=9)
     for c, lbl in enumerate(col_labels):
         axes[0, c].set_title(lbl, fontsize=10)
     for c, xlbl in enumerate(
-        ("Speed (cm/s)", "TF (Hz)", "SF (cpd)", "Orientation (rad)", "face ME (z-score)")
+        ("Speed (cm/s)", "TF (Hz)", "SF (cpp)", "Orientation (rad)",
+         "face ME (z-score)", "acceleration (z-score)")
     ):
         axes[4, c].set_xlabel(xlbl)
 
@@ -1443,11 +1470,12 @@ def plot_tuning_curves(
         sf_plot=sf_plot, or_plot=or_plot,
         precomputed_bins=precomputed_bins,
     )
-    # ME_face Observed panel (col 4 of 5).
+    # ME_face Observed panel (col 4); Acceleration Observed panel (col 5).
     _plot_me_face_panel(
         axes[0, 4], cluster_df, config,
         per_bin_predictions=None,  # observed: bin spike counts
     )
+    _plot_accel_panel(axes[0, 5], cluster_df, config, per_bin_predictions=None)
 
     model_vars = {
         "Null": [],
@@ -1461,14 +1489,13 @@ def plot_tuning_curves(
     for row_idx, label in enumerate(MODEL_LABELS, start=1):
         row_axes = axes[row_idx, :4]
         me_ax = axes[row_idx, 4]
+        accel_ax = axes[row_idx, 5]
         beta = model_betas.get(label)
         train_names = model_col_names.get(label)
         if beta is None or train_names is None:
-            for ax in row_axes:
+            for ax in list(row_axes) + [me_ax, accel_ax]:
                 ax.text(0.5, 0.5, "not fitted", ha="center", va="center",
                         transform=ax.transAxes, color="#888", fontsize=10)
-            me_ax.text(0.5, 0.5, "not fitted", ha="center", va="center",
-                       transform=me_ax.transAxes, color="#888", fontsize=10)
             continue
         _predict_model_row(
             row_axes, label, beta, train_names, model_vars[label], config,
@@ -1492,6 +1519,8 @@ def plot_tuning_curves(
             me_ax, cluster_df, config,
             per_bin_predictions=per_bin_pred,
         )
+        _plot_accel_panel(accel_ax, cluster_df, config,
+                          per_bin_predictions=per_bin_pred)
 
     # Y-axis sharing within each column. Now 5 cols (Speed, TF, SF, OR, ME_face).
     for col in range(5):
@@ -1788,6 +1817,7 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "Time":       (0.3, 0.8, 0.8),
     "History":    (0.45, 0.20, 0.65),  # purple — distinct from stimuli + Time
     "ME_face":    (0.40, 0.20, 0.55),  # darker purple for face motion energy
+    "Acceleration": (0.09, 0.75, 0.81),  # cyan — signed translation acceleration
     "Spd x TF":   (0.6, 0.35, 0.05),
     "Spd x SF":   (0.55, 0.50, 0.05),
     "Spd x OR":   (0.50, 0.10, 0.10),
@@ -1799,11 +1829,12 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
 }
 
 # Discrete SF / OR palettes — copied verbatim from MATLAB lines 2661-2671.
+# SF levels are cycles-per-pixel tokens; physical ≈ 0.03/0.06/0.12 cpd.
 _SF_PALETTE_LEVELS: tuple[float, ...] = (0.003, 0.006, 0.012)
 _SF_PALETTE_COLORS: tuple[tuple[float, float, float], ...] = (
-    (0.2, 0.6, 0.2),   # 0.003 cpd = green
-    (0.2, 0.4, 0.9),   # 0.006 cpd = blue
-    (0.9, 0.2, 0.2),   # 0.012 cpd = red
+    (0.2, 0.6, 0.2),   # 0.003 cpp (≈0.029 cpd) = green
+    (0.2, 0.4, 0.9),   # 0.006 cpp (≈0.059 cpd) = blue
+    (0.9, 0.2, 0.2),   # 0.012 cpp (≈0.117 cpd) = red
 )
 _OR_PALETTE_LEVELS: tuple[float, ...] = (
     -np.pi / 4, 0.0, np.pi / 4, np.pi / 2,
@@ -2490,6 +2521,14 @@ def _per_bin_median_iqr(tuning: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.
     return median, q1, q3
 
 
+def _plot_accel_panel(ax, cluster_df, config, *, per_bin_predictions) -> None:
+    """Acceleration tuning panel — same value-covariate logic as ME_face,
+    binned into 20 (5%-quantile) bins per the project tuning convention."""
+    _plot_me_face_panel(ax, cluster_df, config,
+                        per_bin_predictions=per_bin_predictions,
+                        col="acceleration", name="Accel", n_bins=20)
+
+
 def _plot_me_face_panel(
     ax,
     cluster_df: pd.DataFrame,
@@ -2497,8 +2536,13 @@ def _plot_me_face_panel(
     *,
     per_bin_predictions: np.ndarray | None,
     n_bins: int = 10,
+    col: str = "me_face_raw",
+    name: str = "ME",
 ) -> None:
-    """ME_face tuning panel — works for both Observed and Model rows.
+    """ME_face / value-covariate tuning panel — works for both Observed and
+    Model rows. ``col`` selects the per-bin covariate column ('me_face_raw' or
+    'acceleration'); ``name`` is used in placeholder text; ``n_bins`` sets the
+    quantile binning (ME 10, Acceleration 20 per the tuning convention).
 
     When ``per_bin_predictions is None`` (Observed): bins observed
     spike-count/bin-width across motion bins by face ME (z-scored, then
@@ -2520,8 +2564,8 @@ def _plot_me_face_panel(
     (no-camera probe like CAA-1123244 placeholder).
     """
     bw = config.time_bin_width
-    if "me_face_raw" not in cluster_df.columns:
-        ax.text(0.5, 0.5, "no ME column", ha="center", va="center",
+    if col not in cluster_df.columns:
+        ax.text(0.5, 0.5, f"no {name} column", ha="center", va="center",
                 transform=ax.transAxes, color="#888", fontsize=9)
         ax.set_xticks([]); ax.set_yticks([])
         return
@@ -2533,10 +2577,10 @@ def _plot_me_face_panel(
         ax.set_xticks([]); ax.set_yticks([])
         return
 
-    me_raw = motion["me_face_raw"].to_numpy(dtype=np.float64)
+    me_raw = motion[col].to_numpy(dtype=np.float64)
     finite_motion = np.isfinite(me_raw)
     if int(finite_motion.sum()) < 10:
-        ax.text(0.5, 0.5, "no ME data\n(camera placeholder)",
+        ax.text(0.5, 0.5, f"no {name} data",
                 ha="center", va="center", transform=ax.transAxes,
                 color="#888", fontsize=9)
         ax.set_xticks([]); ax.set_yticks([])
@@ -2618,7 +2662,7 @@ def _plot_me_face_panel(
         )
 
     if not plotted_any:
-        ax.text(0.5, 0.5, "insufficient ME data\n(< 10 finite motion bins)",
+        ax.text(0.5, 0.5, f"insufficient {name} data\n(< {n_bins} finite motion bins)",
                 ha="center", va="center", transform=ax.transAxes,
                 color="#888", fontsize=9)
         ax.set_xticks([]); ax.set_yticks([])
