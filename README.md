@@ -472,30 +472,9 @@ Each RC2 session has a row in the `.csv`. The details that need to be inserted a
 # Preprocessing and Analysis Workflow 
 
 This section describes how to run the pipeline after installation, including:
-- preprocessing of raw data
 - spike sorting and curation
 - quality control steps
 - data formatting and analysis
-
----
-
-
-## Preprocessing data
-
->[!IMPORTANT]**Update the metadata files**
->
->Before running the pipeline, the `.meta` files from SpikeGLX need four 
->manual corrections for NP 2.0 probes. Open each `.meta` file in a text 
->editor (e.g. Notepad) and change:
->
->| Field | Old value | New value |
->|---|---|---|
->| `imDatPrb_pn` | `NP2013` | `NP2010` |
->| `imDatPrb_type` | `2013` | `24` |
->| `imroTbl` | `(2013,...)` | `(24,...)` |
->| `snsGeomMap` | `(NP2013, 4, ...)` | `(4,...)` — >remove `NP2013,` |
->
-> This needs to be done for every recording (one `.meta` file per animal per session).
 
 ---
 
@@ -556,7 +535,7 @@ c. Plot cluster information in MATLAB (e.g. at MATLAB prompt):
 ```
 <cluster_id> is an integer, not a string.
 
-Historically, we have created a new file `clusters_janelia.xlsx`, and added our judgements as separate columns (with headers 'mateo' and 'lee').
+Historically, we have created a new file `clusters_janelia.xlsx`, and added our judgements as separate columns (with headers 'reviewer1' and 'reviewer2').
 After going through the clusters labelling each cluster with:  g - green (clearly good), w - white (passable), b - brown (discard)
 
 After saving this new table as 'clusters_janelia.xlsx' we then run:
@@ -566,7 +545,7 @@ After saving this new table as 'clusters_janelia.xlsx' we then run:
 
 Which creates a file `selected_clusters.txt` in the main kilosort directory. If at least one experimenter discards a cluster (labelled 'b') the cluster is discarded.
 
-###4. Manually check the trigger
+### 4. Manually check the trigger
 
 RC2 sessions which were accidentally started (and therefore promptly stopped), appear as a sequence of triggers on the probe sync channel. However, they are not associated with a protocol. Therefore, we must remove them from protocol related analysis. To do this we can run:
 
@@ -577,7 +556,7 @@ RC2 sessions which were accidentally started (and therefore promptly stopped), a
 This opens a small gui in which you can click and drag across the triggers you want to remove and save the results.
 
 
-###5. Check LFP power profile and anatomy
+### 5. Check LFP power profile and anatomy
 
 The following should be run for each shank separately:
 ```
