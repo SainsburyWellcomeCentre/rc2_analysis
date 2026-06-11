@@ -38,8 +38,9 @@ from scripts.run_glm_current_plus_ME_20ms import make_config_me_20ms
 PROBES = ("CAA-1123243_rec1", "CAA-1123244_rec1", "CAA-1123466_rec1")
 # --bin10 → the 10 ms run's config + folder; default = 20 ms.
 BIN10 = "--bin10" in sys.argv
-OUT = drv.ROOT / "figures" / "glm" / (
-    "current_ME_hist_accel_10ms" if BIN10 else "current_plus_ME_20ms_accel")
+BIN_MS = 10 if BIN10 else 20
+RUN_NAME = "current_ME_hist_accel_10ms" if BIN10 else "current_plus_ME_20ms_accel"
+OUT = drv.ROOT / "figures" / "glm" / RUN_NAME
 STIM = ["Speed", "TF", "SF", "OR"]
 HISTORY_WINDOW = 0.04          # refractory base (20 ms run)
 
@@ -193,9 +194,9 @@ def main() -> int:
     for patch, (_, _, c) in zip(bp["boxes"], groups):
         patch.set_facecolor(c); patch.set_alpha(0.45)
     axL.axhline(0, color="0.6", lw=0.8); axL.axhline(0.005, color="0.6", lw=0.8, ls=":")
-    axL.set_ylabel("unique Δ cv-bps (full 20 ms model)")
+    axL.set_ylabel(f"unique Δ cv-bps (full {BIN_MS} ms model)")
     axL.tick_params(axis="x", labelrotation=20)
-    axL.set_title(f"Unique per predictor, 20 ms +ME +refrac-History +Accel (n={int(well.sum())})",
+    axL.set_title(f"Unique per predictor, {BIN_MS} ms +ME +refrac-History +Accel (n={int(well.sum())})",
                   fontsize=10, fontweight="bold")
 
     conds = [("none", "uSpeed_none"), ("+ME", "uSpeed_ME"),
@@ -215,7 +216,7 @@ def main() -> int:
                   f"(unique Accel median {m('unique_Accel'):+.3f})",
                   fontsize=10, fontweight="bold")
 
-    fig.suptitle("Acceleration acid test (current_plus_ME_20ms_accel; "
+    fig.suptitle(f"Acceleration acid test ({RUN_NAME}; "
                  "Speed vs Acceleration attribution)", fontsize=12, fontweight="bold")
     fig.tight_layout()
     out = out_dir / "variance_partition_accel"

@@ -26,8 +26,10 @@ import pandas as pd
 import sys
 
 _G = Path.home() / "local_data/motion_clouds/figures/glm"
-ROOT = _G / ("current_ME_hist_accel_10ms" if "--bin10" in sys.argv
-             else "current_plus_ME_20ms_accel")
+BIN10 = "--bin10" in sys.argv
+RUN_NAME = "current_ME_hist_accel_10ms" if BIN10 else "current_plus_ME_20ms_accel"
+BIN_MS = 10 if BIN10 else 20
+ROOT = _G / RUN_NAME
 CSV = ROOT / "diagnostics" / "variance_partition_accel.csv"
 
 
@@ -79,7 +81,7 @@ def main() -> int:
                   f"(cloud hugs the Speed axis)", fontsize=10, fontweight="bold")
 
     fig.suptitle("Speed vs Acceleration — acceleration is redundant; velocity is "
-                 "the carrier (current_plus_ME_20ms_accel)",
+                 f"the carrier ({RUN_NAME}, {BIN_MS} ms bins)",
                  fontsize=12, fontweight="bold")
     fig.tight_layout()
     out = ROOT / "diagnostics" / "accel_summary"
