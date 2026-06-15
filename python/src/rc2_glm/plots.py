@@ -1558,13 +1558,15 @@ def plot_tuning_curves(
     )
     _plot_accel_panel(axes[0, 5], cluster_df, config, per_bin_predictions=None)
 
+    # Derive each model's prediction vars from its ACTUAL trained columns, so the
+    # marginal reconstruction matches the fit exactly. Hardcoding these lists is
+    # what silently dropped Acceleration (added to the fit's Additive/Full models
+    # via accel_var, but absent from these hardcoded lists) → the prediction's
+    # selected_vars omitted it → assemble never built the column → zero-filled
+    # out, the 45→10 Hz baseline collapse (cluster 361/277, 2026-06-12).
     model_vars = {
-        "Null": [],
-        "Selected": _vars_from_names(model_col_names.get("Selected", [])),
-        "Additive": ["Speed", "TF", "SF", "OR"],
-        "FullInteraction": ["Speed", "TF", "SF", "OR",
-                            "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
-                            "TF_x_SF", "TF_x_OR", "SF_x_OR"],
+        label: _vars_from_names(model_col_names.get(label, []))
+        for label in ("Null", "Selected", "Additive", "FullInteraction")
     }
 
     for row_idx, label in enumerate(MODEL_LABELS, start=1):
@@ -1578,6 +1580,9 @@ def plot_tuning_curves(
                 ax.text(0.5, 0.5, "not fitted", ha="center", va="center",
                         transform=ax.transAxes, color="#888", fontsize=10)
             continue
+        # Fold History's mean contribution into the Intercept so the marginal
+        # Speed/TF sweep includes it instead of dropping it (no-op when off).
+        beta = _fold_history_into_intercept(beta, train_names, cluster_df, config)
         _predict_model_row(
             row_axes, label, beta, train_names, model_vars[label], config,
             B_onset_steady=B_onset_steady, B_onset_stat=B_onset_stat,
@@ -3130,6 +3135,51 @@ def _plot_observed_row(
     ax_or.set_xticklabels([_format_radians(v) for v in or_plot], fontsize=7)
 
 
+def _fold_history_into_intercept(
+    beta: np.ndarray, train_names: list[str],
+    cluster_df: pd.DataFrame, config: GLMConfig,
+) -> np.ndarray:
+    """Return betas with the **mean History contribution folded into the Intercept**.
+
+    The marginal Speed/TF tuning sweep reconstructs the design WITHOUT the
+    History basis — History is autoregressive (convolved past spikes), so there
+    is no fixed grid value to evaluate it at — and its columns would zero-fill
+    out of the prediction (the term silently dropped). But History is additive
+    and, with ``allow_history_interactions=False`` (the default), does not
+    interact with the swept variable, so its marginal effect is the constant
+    ``mean_motion(B_history) · β_history``. We add that constant to the Intercept
+    coefficient: the prediction's always-present Intercept column then carries
+    the History mean contribution while the zero-filled History columns stay
+    harmless. Mathematically identical to holding History at its mean.
+
+    No-op when History is off / absent. ``allow_history_interactions=True`` would
+    need the columns built per grid point — the zero-fill guard flags that case.
+    """
+    if not getattr(config, "include_history", False):
+        return beta
+    hist_idx = [i for i, n in enumerate(train_names) if n.startswith("History_")]
+    if not hist_idx or "Intercept" not in train_names:
+        return beta
+    from rc2_glm.basis import history_basis, convolve_history
+    h_basis = history_basis(
+        config.n_history_bases, config.history_window_s, config.time_bin_width,
+        kind=getattr(config, "history_basis_kind", "raised_cosine"),
+    )
+    B_hist = convolve_history(
+        cluster_df["spike_count"].to_numpy(dtype=np.float64),
+        cluster_df["trial_id"].to_numpy(),
+        h_basis,
+    )
+    motion = (cluster_df["condition"] != "stationary").to_numpy()
+    beta_hist = np.asarray(beta, dtype=np.float64)[hist_idx]
+    if not motion.any() or B_hist.shape[1] != beta_hist.shape[0]:
+        return beta
+    offset = float(B_hist[motion].mean(axis=0) @ beta_hist)
+    out = np.asarray(beta, dtype=np.float64).copy()
+    out[train_names.index("Intercept")] += offset
+    return out
+
+
 def _predict_model_row(
     row_axes,
     label: str,
@@ -4095,10 +4145,32 @@ def _predict_rate(
         B_or = np.zeros((or_vec.size, config.n_or_bases), dtype=np.float64)
         if or_fin.any():
             B_or[or_fin] = circular_basis(or_vec[or_fin], config.n_or_bases)
+    # Acceleration / ME_face are value covariates the fit z-scores (mean → 0).
+    # The marginal Speed/TF tuning holds them at their MEAN, i.e. z=0, so build
+    # their bases at 0 and let assemble add them ONLY when the model contains
+    # them. Without this they were dropped from the prediction (zero-filled on
+    # alignment); for an Acceleration-carrying model the intercept (fit LOWER
+    # because acceleration absorbs baseline) then left the Speed/TF curve far
+    # too low — cluster 361's 45→10 Hz collapse (Laura 2026-06-12). (History is
+    # off in current runs; its marginal would also need a held value if re-enabled.)
+    from rc2_glm.basis import raised_cosine_basis_linear
+    n_rows = speed_vec.size
+    B_accel = raised_cosine_basis_linear(
+        np.zeros(n_rows), config.n_accel_bases, *config.accel_range)
+    B_me = raised_cosine_basis_linear(
+        np.zeros(n_rows), config.n_me_face_bases, *config.me_face_range)
+    # Reconstruct the design to match the TRAINED model exactly — derive the
+    # term set from train_names, NOT the passed selected_vars. The marginal must
+    # include every term the fit has (so the held-constant covariates contribute
+    # their real effect); trusting selected_vars was fragile — it was being
+    # stripped of Acceleration/interactions upstream, silently dropping them from
+    # the marginal (cluster 361/277 collapse, 2026-06-12). History is folded into
+    # the Intercept upstream so it's deliberately absent from train-var detection.
+    pred_vars = _vars_from_names(list(train_names))
     X_pred, pred_names = assemble_design_matrix_selected(
-        B_speed, B_tf, onset_mat, sf_vec, or_vec, selected_vars,
+        B_speed, B_tf, onset_mat, sf_vec, or_vec, pred_vars,
         sf_ref_levels=sf_ref, or_ref_levels=or_ref,
-        B_sf=B_sf, B_or=B_or,
+        B_sf=B_sf, B_or=B_or, B_accel=B_accel, B_me_face=B_me,
     )
     X_aligned = _align_prediction_columns(X_pred, pred_names, train_names)
     if X_aligned.shape[1] != beta.size:
@@ -4123,22 +4195,46 @@ def _align_prediction_columns(
     n_rows = X_pred.shape[0]
     name_to_pred_idx = {n: i for i, n in enumerate(pred_names)}
     out = np.zeros((n_rows, len(train_names)), dtype=np.float64)
+    missing: list[str] = []
     for j, name in enumerate(train_names):
         i = name_to_pred_idx.get(name)
         if i is not None:
             out[:, j] = X_pred[:, i]
+        elif name != "Intercept" and not name.startswith("History_"):
+            # History_* columns are zero-filled on purpose: their mean
+            # contribution is folded into the Intercept upstream
+            # (_fold_history_into_intercept), since History is autoregressive
+            # with no fixed grid value. So their absence here is expected, not a
+            # dropped term — don't flag it.
+            missing.append(name)
+    # FAIL LOUD: any OTHER trained column absent from the prediction design is
+    # ALWAYS a dropped term (the predict path didn't build that basis) — never
+    # legitimate reference behaviour (held categorical levels are present-but-
+    # zero, not absent). Silent zero-filling here is what hid the SF/OR
+    # (2026-06-12) and Acceleration marginal bugs; surface it so the next one is
+    # caught at once.
+    if missing:
+        logger.warning(
+            "tuning-curve predict: %d trained column(s) absent from the prediction "
+            "design → ZERO-FILLED, so their term is dropped from this marginal: %s. "
+            "The prediction path must build the SAME bases the fit used (see "
+            "_predict_rate).",
+            len(missing), missing[:12],
+        )
     return out
 
 
 _MAIN_PREFIX: dict[str, str] = {
     "Speed": "Speed_", "TF": "TF_", "SF": "SF_", "OR": "OR_",
+    "Acceleration": "Acceleration_", "ME_face": "ME_face_",
 }
 _INTERACTION_PREFIX: dict[str, str] = {
-    "Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR",
+    "Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR", "ME_face": "MEf",
 }
 _INTERACTION_VARS: tuple[str, ...] = (
     "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
     "TF_x_SF", "TF_x_OR", "SF_x_OR",
+    "ME_face_x_Speed",  # cols are MEf{m}_x_Spd{s} (see _INTERACTION_PREFIX)
 )
 
 
