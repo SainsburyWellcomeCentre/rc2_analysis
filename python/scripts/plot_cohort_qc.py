@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpi
 from matplotlib.patches import Circle
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 COH = os.path.join(GOG, "_extract", "cohort")
 FIG = os.path.join(GOG, "_figs"); os.makedirs(FIG, exist_ok=True)
 DPP = 111.6 / 400.0

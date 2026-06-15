@@ -15,7 +15,7 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.image as mpi
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 DPP = 111.6 / 400.0
 THETAS = [(-45, "theta-0p785"), (0, "theta0p000"), (45, "theta0p785"), (90, "theta1p571")]
 # smallest-TF group (SF×VX const): per SF token its VX, + physical cpd (token/dpp)

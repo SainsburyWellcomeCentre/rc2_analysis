@@ -17,7 +17,7 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.image as mpi
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 DPP = 111.6 / 400.0
 CX, CY = 267, 237
 CLOUD = "theta0p000_Btheta0p785_sf00p032_Bsf0p005_VX0p095_BV0p100"

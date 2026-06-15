@@ -14,7 +14,7 @@ import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 DPP = 111.6 / 400.0
 
 

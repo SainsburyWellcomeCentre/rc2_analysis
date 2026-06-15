@@ -17,7 +17,7 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 RFDIR = os.path.join(GOG, "_rfs")
 DPP = 111.6 / 400.0
 CLOUD = "theta0p000_Btheta0p785_sf00p032_Bsf0p005_VX0p095_BV0p100"  # token SF 0.115, OR 0

@@ -27,7 +27,7 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.image as mpi
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 RFDIR = os.path.join(GOG, "_rfs"); OUT = os.path.join(GOG, "_extract"); os.makedirs(OUT, exist_ok=True)
 DPP = 111.6 / 400.0
 SF_WIN, OR_WIN = 25, 10

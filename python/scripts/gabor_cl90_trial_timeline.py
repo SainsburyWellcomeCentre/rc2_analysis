@@ -31,7 +31,7 @@ from rc2_formatted_data_reader.trial_conditions import GOGGLES_STIMULUS
 from rc2_glm.io import load_probe_data
 from rc2_glm.config import GLMConfig
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 MC = os.path.expanduser("~/local_data/motion_clouds")
 DPP = 111.6 / 400.0
 SF_WIN, OR_WIN, SF_MARGIN = 25, 10, 3

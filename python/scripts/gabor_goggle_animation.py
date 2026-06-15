@@ -8,7 +8,7 @@ the optimised Gabor (fine SF bank) per frame, and renders a 3-panel GIF:
 NB OR convention vs the nominal stimulus theta is NOT yet locked (pending the
 4-orientation check), so OR is shown as the raw Gabor modulation angle (a
 consistent local-orientation measure). SF is in cpd and validated on real frames.
-Frames are read from a LOCAL copy (`~/local_data/goggle_clouds/`, not iCloud).
+Frames are read from a LOCAL copy (`~/local_data/motion_clouds/saved_goggles/`, not iCloud).
 """
 from __future__ import annotations
 import argparse, glob, os, re, sys
@@ -17,7 +17,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import windowed_cloud_stat_recovery as W
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 DEFAULT_CLOUD = (sorted(d for d in os.listdir(GOG) if d.startswith("theta"))[0]
                  if os.path.isdir(GOG) else "")
 
@@ -49,7 +49,7 @@ def viterbi_or(orient_marg, or_deg, lam):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--cloud", default=DEFAULT_CLOUD, help="cloud folder name under ~/local_data/goggle_clouds")
+    p.add_argument("--cloud", default=DEFAULT_CLOUD, help="cloud folder name under ~/local_data/motion_clouds/saved_goggles")
     p.add_argument("--cx", type=int, default=303); p.add_argument("--cy", type=int, default=232)
     p.add_argument("--half", type=int, default=27, help="RF half-size in px, azimuth (~15° at 0.275°/px)")
     p.add_argument("--half-y", type=int, default=0, help="RF half-size in px, elevation (0=use --half → square bbox)")
@@ -72,7 +72,7 @@ def main():
                         "jumps ~1/3; 3e-3 over-smooths (σ→14°). Ideally auto-tuned so smoothed σ = expected σ.")
     p.add_argument("--rf-label", default="cl37 ON 15×15°")
     p.add_argument("--max-frames", type=int, default=0, help="limit frames (0=all) for quick layout checks")
-    p.add_argument("--outdir", default=os.path.expanduser("~/local_data/goggle_clouds/_figs"))
+    p.add_argument("--outdir", default=os.path.expanduser("~/local_data/motion_clouds/saved_goggles/_figs"))
     args = p.parse_args()
 
     import matplotlib; matplotlib.use("Agg")

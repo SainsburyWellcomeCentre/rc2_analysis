@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpi
 from matplotlib.patches import Circle
 
-GOG = os.path.expanduser("~/local_data/goggle_clouds")
+GOG = os.path.expanduser("~/local_data/motion_clouds/saved_goggles")
 DPP = 111.6 / 400.0
 SF_WIN, OR_WIN = 25, 10                         # deg diameters (validated recipe)
 SF_MARGIN = 3                                   # Gabor SF band = sf0 +/- SF_MARGIN*B_sf
@@ -116,8 +116,9 @@ def diagnostic_fig(out, cloud, frame0, on, off, cx, cy, sf_t, sf_exp, or_t, or_e
     aOR.legend(fontsize=6, loc="upper right")
     # first frame + overlays, visual-field orientation
     a0.imshow(frame0, cmap="gray")
-    a0.contour(on, levels=[0.5], colors="red", linewidths=1.6)
-    a0.contour(off, levels=[0.5], colors="blue", linewidths=1.6)
+    if on is not None:
+        a0.contour(on, levels=[0.5], colors="red", linewidths=1.6)
+        a0.contour(off, levels=[0.5], colors="blue", linewidths=1.6)
     a0.add_patch(Circle((cx, cy), SF_WIN / DPP / 2, fill=False, ec="lime", lw=1.6, label="SF win"))
     a0.add_patch(Circle((cx, cy), OR_WIN / DPP / 2, fill=False, ec="orange", lw=1.6, label="OR win"))
     a0.set(xticks=[], yticks=[]); a0.invert_xaxis()
@@ -139,7 +140,9 @@ def main():
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
     extdir = os.path.join(GOG, "_extract"); os.makedirs(extdir, exist_ok=True)
-    m = np.load(os.path.expanduser(a.rf_mask_npz)); on, off = m["on"], m["off"]
+    on = off = None
+    if a.rf_mask_npz and os.path.exists(os.path.expanduser(a.rf_mask_npz)):
+        m = np.load(os.path.expanduser(a.rf_mask_npz)); on, off = m["on"], m["off"]
 
     clouds = ([a.one_cloud] if a.one_cloud else
               sorted(os.path.basename(p) for p in glob.glob(os.path.join(GOG, "theta*"))
