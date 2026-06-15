@@ -199,16 +199,19 @@ def _run_pipeline_inner(
         _emit_trial_channel_report(mat_path, probe, output_dir / "diagnostics")
         _emit_stationary_motion_fr(probe, output_dir / "diagnostics")
 
+    # The stationary-vs-motion prefilter is ALWAYS computed — it's the
+    # motion-responsiveness diagnostic (→ prefilter_decision_tree.csv + the
+    # funnel summary + downstream readers). Whether it GATES the cohort is
+    # controlled by apply_prefilter. Default off → fit the whole selected
+    # cohort; a spike-count floor will gate in its place.
+    _banner("Prefilter")
+    prefilter_df = prefilter_probe(probe, config=config)
+    keep_ids = set(prefilter_df.loc[prefilter_df["should_run_glm"], "cluster_id"])
+    _log_prefilter_summary(prefilter_df, keep_ids, gating=config.apply_prefilter)
     if config.apply_prefilter:
-        _banner("Prefilter")
-        prefilter_df = prefilter_probe(probe, config=config)
-        keep_ids = set(prefilter_df.loc[prefilter_df["should_run_glm"], "cluster_id"])
-        _log_prefilter_summary(prefilter_df, keep_ids)
         clusters = [c for c in probe.clusters if c.cluster_id in keep_ids]
     else:
-        prefilter_df = pd.DataFrame()
         clusters = probe.clusters
-        logger.info("prefilter skipped (apply_prefilter=False)")
 
     _banner("Forward selection")
     logger.info("fitting %d clusters (n_jobs=%d)", len(clusters), n_jobs)
@@ -1900,8 +1903,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Include non-VISp clusters (default: VISp only)",
     )
     parser.add_argument(
+        "--prefilter", dest="prefilter", action="store_true",
+        help="Gate the cohort on the stationary/motion Wilcoxon prefilter "
+             "(default: off — fit the whole selected cohort; the prefilter "
+             "table is still written as a diagnostic)",
+    )
+    parser.add_argument(
         "--no-prefilter", dest="prefilter", action="store_false",
-        help="Skip the stationary/motion Wilcoxon prefilter before GLM",
+        help="Do not gate on the prefilter (the default)",
     )
     parser.add_argument(
         "--mc-sequence", default=env_mc_seq,
@@ -2159,7 +2168,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.set_defaults(
-        make_plots=True, prefilter=True, profile_cv_diagnostic=False,
+        make_plots=True, prefilter=False, profile_cv_diagnostic=False,
     )
     args = parser.parse_args(argv)
 

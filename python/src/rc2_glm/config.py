@@ -262,7 +262,13 @@ class GLMConfig:
     )  # -π/4, 0, π/4, π/2 (sorted)
 
     # --- Prefilter ---
-    apply_prefilter: bool = True
+    # The stationary-vs-motion Wilcoxon is now a DIAGNOSTIC, not the default
+    # selection gate: the whole selected cohort is fit, and the prefilter table
+    # is still computed/written so the motion-responsive funnel stays on record
+    # (see pipeline: compute is decoupled from gating). A spike-count floor will
+    # become the quality gate in its place. Set True to restore gating (the
+    # cohort = should_run_glm rows only).
+    apply_prefilter: bool = False
     prefilter_seed: int = 0
 
     # --- Compute backend ---
