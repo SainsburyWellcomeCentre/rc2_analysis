@@ -233,8 +233,8 @@ def test_beta_group_tag_main_effects_and_special_columns():
     assert _beta_group_tag("TF_1") == "TF"
     assert _beta_group_tag("SF_0.0030") == "SF"
     assert _beta_group_tag("OR_0.785") == "OR"
-    assert _beta_group_tag("Onset_1") == "Time"
-    assert _beta_group_tag("Time_3") == "Time"
+    assert _beta_group_tag("Onset_1") == "Onset"
+    assert _beta_group_tag("Time_3") == "Onset"
     assert _beta_group_tag("unknown_column") == "Other"
 
 

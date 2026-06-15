@@ -1802,7 +1802,7 @@ def plot_trial_level_predictions(
 # "History" added 2026-04-29 with the spike-history term — was previously
 # falling through to "Other" in the beta-swarm panel.
 _BETA_GROUP_ORDER: tuple[str, ...] = (
-    "Intercept", "Speed", "TF", "SF", "OR", "Time", "History", "ME_face",
+    "Intercept", "Speed", "TF", "SF", "OR", "Onset", "History", "ME_face",
     "Spd x TF", "Spd x SF", "Spd x OR",
     "TF x SF", "TF x OR", "SF x OR",
     "MEf x Spd",
@@ -1814,7 +1814,7 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "TF":         (1.0, 0.50, 0.05),
     "SF":         (0.95, 0.85, 0.10),
     "OR":         (0.84, 0.15, 0.16),
-    "Time":       (0.3, 0.8, 0.8),
+    "Onset":      (0.3, 0.8, 0.8),
     "History":    (0.45, 0.20, 0.65),  # purple — distinct from stimuli + Time
     "ME_face":    (0.40, 0.20, 0.55),  # darker purple for face motion energy
     "Acceleration": (0.09, 0.75, 0.81),  # cyan — signed translation acceleration
@@ -2071,7 +2071,7 @@ def _beta_group_tag(col_name: str) -> str:
     if col_name.startswith("OR_"):
         return "OR"
     if col_name.startswith(("Onset_", "Time_")):
-        return "Time"
+        return "Onset"
     if col_name.startswith("History_"):
         return "History"
     if col_name.startswith("ME_face_"):
