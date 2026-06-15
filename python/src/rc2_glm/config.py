@@ -378,4 +378,18 @@ INTERACTION_PARENTS: dict[str, tuple[str, str]] = {
     "TF_x_OR": ("TF", "OR"),
     "SF_x_OR": ("SF", "OR"),
     "ME_face_x_Speed": ("ME_face", "Speed"),
+    # Acceleration / ME_face full-pairwise set (2026-06-15): every pairwise
+    # interaction on the value/visual predictors, so each condition can carry
+    # all interactions on its non-degenerate candidates (goggles rf_sfor _all
+    # + the V / T_Vstatic splits). Acceleration is a value-axis basis like
+    # Speed/ME_face; SF/OR are categorical (tokens) or continuous (rf_local) —
+    # the design_matrix branches handle both representations.
+    "Speed_x_Acceleration": ("Speed", "Acceleration"),
+    "TF_x_ME_face": ("TF", "ME_face"),
+    "TF_x_Acceleration": ("TF", "Acceleration"),
+    "SF_x_ME_face": ("SF", "ME_face"),
+    "SF_x_Acceleration": ("SF", "Acceleration"),
+    "OR_x_ME_face": ("OR", "ME_face"),
+    "OR_x_Acceleration": ("OR", "Acceleration"),
+    "ME_face_x_Acceleration": ("ME_face", "Acceleration"),
 }

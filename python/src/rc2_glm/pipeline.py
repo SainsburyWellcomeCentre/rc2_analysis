@@ -850,6 +850,11 @@ _FULL_INTERACTION_VARS = [
     "Speed", "TF", "SF", "OR", "ME_face",
     "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
     "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed",
+    # Acceleration / ME_face full-pairwise set (2026-06-15). Inert (guarded on
+    # B_me_face / B_accel in design_matrix) for token/screens runs.
+    "Speed_x_Acceleration", "TF_x_ME_face", "TF_x_Acceleration",
+    "SF_x_ME_face", "SF_x_Acceleration", "OR_x_ME_face",
+    "OR_x_Acceleration", "ME_face_x_Acceleration",
 ]
 
 
@@ -894,12 +899,20 @@ def _fit_plot_models(
     refit_status: dict[str, str] = {}
 
     include_onset = getattr(config, "include_onset_kernel", True)
+    # Additive must be the FULL additive model and FullInteraction the true
+    # ceiling — so every enabled main effect (ME, History) belongs in both, not
+    # just Speed/TF/SF/OR/Accel. Gated on the basis being present so token/
+    # screens runs without ME/History are byte-identical (2026-06-15). ME is
+    # already hardcoded in _FULL_INTERACTION_VARS (skipped there if B_me_face is
+    # None), so it's only added to Additive here.
     accel_v = ["Acceleration"] if B_accel is not None else []
+    me_v = ["ME_face"] if B_me_face is not None else []
+    hist_v = ["History"] if B_history is not None else []
     model_defs: list[tuple[str, list[str]]] = [
         ("Null", []),
         ("Selected", list(selected_vars)),
-        ("Additive", _ADDITIVE_VARS + accel_v),
-        ("FullInteraction", _FULL_INTERACTION_VARS + accel_v),
+        ("Additive", _ADDITIVE_VARS + me_v + accel_v + hist_v),
+        ("FullInteraction", _FULL_INTERACTION_VARS + accel_v + hist_v),
     ]
 
     # History smoothness prior (opt-in): rebuild the (n_lag, n_bases) basis so
@@ -1053,6 +1066,7 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_is_or_tuned": "OR" in selected_set,
         f"{GLM_TYPE}_is_history_tuned": "History" in selected_set,
         f"{GLM_TYPE}_is_me_face_tuned": "ME_face" in selected_set,
+        f"{GLM_TYPE}_is_acceleration_tuned": "Acceleration" in selected_set,
         f"{GLM_TYPE}_has_interaction": has_int,
         f"{GLM_TYPE}_has_speed_x_tf": "Speed_x_TF" in selected_set,
         f"{GLM_TYPE}_has_speed_x_sf": "Speed_x_SF" in selected_set,
@@ -1061,6 +1075,15 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_has_tf_x_or": "TF_x_OR" in selected_set,
         f"{GLM_TYPE}_has_sf_x_or": "SF_x_OR" in selected_set,
         f"{GLM_TYPE}_has_me_face_x_speed": "ME_face_x_Speed" in selected_set,
+        # Acceleration / ME_face full-pairwise set (2026-06-15).
+        f"{GLM_TYPE}_has_speed_x_acceleration": "Speed_x_Acceleration" in selected_set,
+        f"{GLM_TYPE}_has_tf_x_me_face": "TF_x_ME_face" in selected_set,
+        f"{GLM_TYPE}_has_tf_x_acceleration": "TF_x_Acceleration" in selected_set,
+        f"{GLM_TYPE}_has_sf_x_me_face": "SF_x_ME_face" in selected_set,
+        f"{GLM_TYPE}_has_sf_x_acceleration": "SF_x_Acceleration" in selected_set,
+        f"{GLM_TYPE}_has_or_x_me_face": "OR_x_ME_face" in selected_set,
+        f"{GLM_TYPE}_has_or_x_acceleration": "OR_x_Acceleration" in selected_set,
+        f"{GLM_TYPE}_has_me_face_x_acceleration": "ME_face_x_Acceleration" in selected_set,
         # Post-hoc speed-profile CV (MATLAB glm_single_cluster_analysis.m:2246-2367).
         # Both fold schemes so panel 2 of the comparison plot can compute
         # Selected − NoSpeed under each. NaN when the diagnostic is

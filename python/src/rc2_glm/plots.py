@@ -702,24 +702,33 @@ _COLOR_TF = (1.00, 0.50, 0.05)
 _COLOR_SF = (0.95, 0.85, 0.10)
 _COLOR_OR = (0.84, 0.15, 0.16)
 _COLOR_ME_FACE = (0.40, 0.20, 0.55)  # purple — distinguishes face ME from stimuli (prompt 06)
+_COLOR_ACCEL = (0.09, 0.75, 0.81)    # teal — Acceleration value-axis main effect (2026-06-15)
 _COLOR_NULL = (0.75, 0.75, 0.75)
 _COLOR_4PLUS = (0.35, 0.35, 0.35)
 _COLOR_INT_BLUE = (0.20, 0.40, 0.80)
 
-_MAIN_EFFECT_NAMES = ("Speed", "TF", "SF", "OR", "ME_face")
+# Acceleration is a value-axis main effect (like Speed/ME_face), so it belongs
+# in _MAIN_EFFECT_NAMES — otherwise plot_forward_selection_summary panel 1
+# misclassifies a selected Acceleration as an interaction (2026-06-15).
+_MAIN_EFFECT_NAMES = ("Speed", "TF", "SF", "OR", "ME_face", "Acceleration")
 _MAIN_EFFECT_COLORS: dict[str, tuple[float, float, float]] = {
     "Speed": _COLOR_SPEED, "TF": _COLOR_TF,
     "SF": _COLOR_SF, "OR": _COLOR_OR,
-    "ME_face": _COLOR_ME_FACE,
+    "ME_face": _COLOR_ME_FACE, "Acceleration": _COLOR_ACCEL,
 }
 _MAIN_EFFECT_LABELS = {
     "Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR",
-    "ME_face": "MEf",
+    "ME_face": "MEf", "Acceleration": "Acc",
 }
 _INTERACTION_LABELS = {
     "Speed_x_TF": "SxT", "Speed_x_SF": "SxSF", "Speed_x_OR": "SxO",
     "TF_x_SF": "TxSF", "TF_x_OR": "TxO", "SF_x_OR": "SFxO",
     "ME_face_x_Speed": "MEfxS",
+    # Acceleration / ME_face full-pairwise set (2026-06-15).
+    "Speed_x_Acceleration": "SxA", "TF_x_ME_face": "TxMEf",
+    "TF_x_Acceleration": "TxA", "SF_x_ME_face": "SFxMEf",
+    "SF_x_Acceleration": "SFxA", "OR_x_ME_face": "OxMEf",
+    "OR_x_Acceleration": "OxA", "ME_face_x_Acceleration": "MEfxA",
 }
 # Keys are sorted "+"-joined main-effect lists (matches MATLAB main_key).
 # ME_face combos added 2026-04-30 (prompt 06). Lighter purples for combos
@@ -977,12 +986,16 @@ def plot_forward_selection_summary(
 
     # --- Panel 3: Interaction breakdown ---
     ax = axes[2]
-    # ME_face_x_Speed has no `time_has_*` column yet on older runs; derive
-    # from selected_vars so this works on legacy comparison CSVs too.
-    me_face_x_speed_count = int(
-        comparison_df["time_selected_vars"].astype(str)
-        .apply(lambda s: "ME_face_x_Speed" in s.split("+")).sum()
-    )
+
+    def _int_count(name: str) -> int:
+        """Count clusters with interaction ``name`` selected. Derive from
+        selected_vars (robust on legacy CSVs that lack the time_has_* column
+        for the newer interactions)."""
+        return int(
+            comparison_df["time_selected_vars"].astype(str)
+            .apply(lambda s: name in s.split("+")).sum()
+        )
+
     int_counts = [
         int(comparison_df["time_has_speed_x_tf"].sum()),
         int(comparison_df["time_has_speed_x_sf"].sum()),
@@ -990,17 +1003,31 @@ def plot_forward_selection_summary(
         int(comparison_df["time_has_tf_x_sf"].sum()),
         int(comparison_df["time_has_tf_x_or"].sum()),
         int(comparison_df["time_has_sf_x_or"].sum()),
-        me_face_x_speed_count,
+        _int_count("ME_face_x_Speed"),
+        # Acceleration / ME_face full-pairwise set (2026-06-15).
+        _int_count("Speed_x_Acceleration"),
+        _int_count("TF_x_ME_face"),
+        _int_count("TF_x_Acceleration"),
+        _int_count("SF_x_ME_face"),
+        _int_count("SF_x_Acceleration"),
+        _int_count("OR_x_ME_face"),
+        _int_count("OR_x_Acceleration"),
+        _int_count("ME_face_x_Acceleration"),
     ]
     int_labels = [
         "Spd x TF", "Spd x SF", "Spd x OR",
         "TF x SF", "TF x OR", "SF x OR",
         "MEf x Spd",
+        "Spd x Acc", "TF x MEf", "TF x Acc", "SF x MEf",
+        "SF x Acc", "OR x MEf", "OR x Acc", "MEf x Acc",
     ]
     int_colors = [
         (0.9, 0.2, 0.2), (0.8, 0.5, 0.2), (0.6, 0.2, 0.6),
         (0.5, 0.8, 0.2), (0.2, 0.5, 0.8), (0.9, 0.6, 0.6),
         _BETA_GROUP_COLORS["MEf x Spd"],
+        (0.55, 0.27, 0.07), (0.45, 0.30, 0.55), (0.40, 0.20, 0.10),
+        (0.50, 0.45, 0.60), (0.35, 0.25, 0.15), (0.55, 0.40, 0.65),
+        (0.45, 0.30, 0.20), (0.30, 0.55, 0.55),
     ]
     y_pos = np.arange(1, len(int_counts) + 1)
     ax.barh(y_pos, int_counts, color=int_colors, edgecolor="none")
@@ -1880,9 +1907,13 @@ def plot_trial_level_predictions(
 # falling through to "Other" in the beta-swarm panel.
 _BETA_GROUP_ORDER: tuple[str, ...] = (
     "Intercept", "Speed", "TF", "SF", "OR", "Onset", "History", "ME_face",
+    "Acceleration",
     "Spd x TF", "Spd x SF", "Spd x OR",
     "TF x SF", "TF x OR", "SF x OR",
     "MEf x Spd",
+    # Acceleration / ME_face full-pairwise set (2026-06-15).
+    "Spd x Acc", "TF x MEf", "TF x Acc", "SF x MEf",
+    "SF x Acc", "OR x MEf", "OR x Acc", "MEf x Acc",
     "Other",
 )
 _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
@@ -1902,6 +1933,14 @@ _BETA_GROUP_COLORS: dict[str, tuple[float, float, float]] = {
     "TF x OR":    (0.75, 0.20, 0.15),
     "SF x OR":    (0.55, 0.25, 0.35),
     "MEf x Spd":  (0.30, 0.45, 0.30),  # green-purple blend for ME × Speed
+    "Spd x Acc":  (0.55, 0.27, 0.07),
+    "TF x MEf":   (0.45, 0.30, 0.55),
+    "TF x Acc":   (0.40, 0.20, 0.10),
+    "SF x MEf":   (0.50, 0.45, 0.60),
+    "SF x Acc":   (0.35, 0.25, 0.15),
+    "OR x MEf":   (0.55, 0.40, 0.65),
+    "OR x Acc":   (0.45, 0.30, 0.20),
+    "MEf x Acc":  (0.30, 0.55, 0.55),
     "Other":      (0.7, 0.7, 0.7),
 }
 
@@ -2152,6 +2191,25 @@ def _beta_group_tag(col_name: str) -> str:
             return "SF x OR"
         if left.startswith("MEf") and right.startswith("Spd"):
             return "MEf x Spd"
+        # Acceleration / ME_face full-pairwise set (2026-06-15). Acc is always
+        # the right operand; ME_face (MEf) is right for TF/SF/OR and left only
+        # in MEf x Acc — matches the design_matrix column naming.
+        if left.startswith("Spd") and right.startswith("Acc"):
+            return "Spd x Acc"
+        if left.startswith("TF") and right.startswith("MEf"):
+            return "TF x MEf"
+        if left.startswith("TF") and right.startswith("Acc"):
+            return "TF x Acc"
+        if left.startswith("SF") and right.startswith("MEf"):
+            return "SF x MEf"
+        if left.startswith("SF") and right.startswith("Acc"):
+            return "SF x Acc"
+        if left.startswith("OR") and right.startswith("MEf"):
+            return "OR x MEf"
+        if left.startswith("OR") and right.startswith("Acc"):
+            return "OR x Acc"
+        if left.startswith("MEf") and right.startswith("Acc"):
+            return "MEf x Acc"
         return "Other"
     if col_name.startswith("Speed_"):
         return "Speed"
@@ -2167,6 +2225,8 @@ def _beta_group_tag(col_name: str) -> str:
         return "History"
     if col_name.startswith("ME_face_"):
         return "ME_face"
+    if col_name.startswith("Acceleration_"):
+        return "Acceleration"
     return "Other"
 
 

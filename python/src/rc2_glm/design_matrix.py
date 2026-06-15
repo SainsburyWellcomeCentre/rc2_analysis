@@ -186,6 +186,83 @@ def assemble_design_matrix_selected(
                 cols.append((B_me_face[:, mi] * B_speed[:, si]).reshape(-1, 1))
                 names.append(f"MEf{mi + 1}_x_Spd{si + 1}")
 
+    # --- Acceleration / ME_face full-pairwise interactions (2026-06-15) ---
+    # Row-wise products mirroring the conventions above: value-axis bases
+    # (Speed/TF/ME_face/Acceleration) multiply column-for-column; SF/OR use the
+    # continuous RF-local basis (``B_sf``/``B_or``) when present, else the
+    # reference-coded dummies. Each guard requires the value basis (B_accel /
+    # B_me_face) to be present, exactly like ME_face_x_Speed.
+    n_accel_b = B_accel.shape[1] if B_accel is not None else 0
+    n_me_b = B_me_face.shape[1] if B_me_face is not None else 0
+    if "Speed_x_Acceleration" in selected and n_accel_b > 0:
+        for si in range(n_speed_b):
+            for ai in range(n_accel_b):
+                cols.append((B_speed[:, si] * B_accel[:, ai]).reshape(-1, 1))
+                names.append(f"Spd{si + 1}_x_Acc{ai + 1}")
+    if "TF_x_ME_face" in selected and n_me_b > 0:
+        for ti in range(n_tf_b):
+            for mi in range(n_me_b):
+                cols.append((B_tf[:, ti] * B_me_face[:, mi]).reshape(-1, 1))
+                names.append(f"TF{ti + 1}_x_MEf{mi + 1}")
+    if "TF_x_Acceleration" in selected and n_accel_b > 0:
+        for ti in range(n_tf_b):
+            for ai in range(n_accel_b):
+                cols.append((B_tf[:, ti] * B_accel[:, ai]).reshape(-1, 1))
+                names.append(f"TF{ti + 1}_x_Acc{ai + 1}")
+    if "SF_x_ME_face" in selected and n_me_b > 0:
+        if B_sf is not None:
+            for j in range(B_sf.shape[1]):
+                for mi in range(n_me_b):
+                    cols.append((B_sf[:, j] * B_me_face[:, mi]).reshape(-1, 1))
+                    names.append(f"SF_{j + 1}_x_MEf{mi + 1}")
+        else:
+            for level in sf_levels:
+                d = _dummy(sf_vals, level)
+                for mi in range(n_me_b):
+                    cols.append((d * B_me_face[:, mi]).reshape(-1, 1))
+                    names.append(f"SF{level:.4f}_x_MEf{mi + 1}")
+    if "SF_x_Acceleration" in selected and n_accel_b > 0:
+        if B_sf is not None:
+            for j in range(B_sf.shape[1]):
+                for ai in range(n_accel_b):
+                    cols.append((B_sf[:, j] * B_accel[:, ai]).reshape(-1, 1))
+                    names.append(f"SF_{j + 1}_x_Acc{ai + 1}")
+        else:
+            for level in sf_levels:
+                d = _dummy(sf_vals, level)
+                for ai in range(n_accel_b):
+                    cols.append((d * B_accel[:, ai]).reshape(-1, 1))
+                    names.append(f"SF{level:.4f}_x_Acc{ai + 1}")
+    if "OR_x_ME_face" in selected and n_me_b > 0:
+        if B_or is not None:
+            for j in range(B_or.shape[1]):
+                for mi in range(n_me_b):
+                    cols.append((B_or[:, j] * B_me_face[:, mi]).reshape(-1, 1))
+                    names.append(f"OR_{j + 1}_x_MEf{mi + 1}")
+        else:
+            for level in or_levels:
+                d = _dummy(or_vals, level)
+                for mi in range(n_me_b):
+                    cols.append((d * B_me_face[:, mi]).reshape(-1, 1))
+                    names.append(f"OR{level:.3f}_x_MEf{mi + 1}")
+    if "OR_x_Acceleration" in selected and n_accel_b > 0:
+        if B_or is not None:
+            for j in range(B_or.shape[1]):
+                for ai in range(n_accel_b):
+                    cols.append((B_or[:, j] * B_accel[:, ai]).reshape(-1, 1))
+                    names.append(f"OR_{j + 1}_x_Acc{ai + 1}")
+        else:
+            for level in or_levels:
+                d = _dummy(or_vals, level)
+                for ai in range(n_accel_b):
+                    cols.append((d * B_accel[:, ai]).reshape(-1, 1))
+                    names.append(f"OR{level:.3f}_x_Acc{ai + 1}")
+    if "ME_face_x_Acceleration" in selected and n_me_b > 0 and n_accel_b > 0:
+        for mi in range(n_me_b):
+            for ai in range(n_accel_b):
+                cols.append((B_me_face[:, mi] * B_accel[:, ai]).reshape(-1, 1))
+                names.append(f"MEf{mi + 1}_x_Acc{ai + 1}")
+
     X = np.hstack(cols).astype(np.float64, copy=False)
 
     is_prediction = sf_ref_levels is not None or or_ref_levels is not None
@@ -249,11 +326,19 @@ def assemble_design_matrix(
         # Branches in assemble_design_matrix_selected guard on
         # B_me_face is not None, so legacy callers without a B_me_face
         # arg still produce the pre-2026-04-30 design.
+        # The Acceleration / ME_face full-pairwise set (2026-06-15) is listed
+        # too so FullInteraction stays the true ceiling when those bases are
+        # present; the assemble_design_matrix_selected branches guard on
+        # B_me_face / B_accel, so token/screens runs (no ME, no accel) stay
+        # byte-identical.
         return assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals,
             ["Speed", "TF", "SF", "OR", "ME_face",
              "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
-             "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed"] + accel_var,
+             "TF_x_SF", "TF_x_OR", "SF_x_OR", "ME_face_x_Speed",
+             "Speed_x_Acceleration", "TF_x_ME_face", "TF_x_Acceleration",
+             "SF_x_ME_face", "SF_x_Acceleration", "OR_x_ME_face",
+             "OR_x_Acceleration", "ME_face_x_Acceleration"] + accel_var,
             sf_ref_levels, or_ref_levels,
             **common_kwargs,
         )

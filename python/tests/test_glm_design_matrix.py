@@ -100,3 +100,83 @@ def test_prediction_mode_keeps_zero_variance_columns():
         sf_ref_levels=sf_ref,
     )
     assert sum(1 for n in names if n.startswith("SF_")) == sf_ref.size - 1
+
+
+# --------------------------------------------------------------------------- #
+# Acceleration / ME_face full-pairwise interaction set (2026-06-15)
+# --------------------------------------------------------------------------- #
+
+_NEW_PAIRWISE = (
+    "Speed_x_Acceleration", "TF_x_ME_face", "TF_x_Acceleration",
+    "SF_x_ME_face", "SF_x_Acceleration", "OR_x_ME_face",
+    "OR_x_Acceleration", "ME_face_x_Acceleration",
+)
+
+
+def _me_accel_bases(n, seed=7):
+    rng = np.random.default_rng(seed)
+    me_z = rng.normal(0.0, 1.0, n)
+    acc_z = rng.normal(0.0, 1.0, n)
+    B_me_face = raised_cosine_basis_linear(me_z, 5, -2.0, 3.0)
+    B_accel = raised_cosine_basis_linear(acc_z, 5, -3.0, 3.0)
+    return B_me_face, B_accel
+
+
+def test_new_pairwise_interactions_built_when_bases_present():
+    """Each of the 8 new interactions produces its own correctly-named
+    product columns when the value bases are supplied (prediction mode so no
+    zero-variance pruning hides a column)."""
+    B_speed, B_tf, B_onset, sf_vals, or_vals = _toy_inputs()
+    n = B_speed.shape[0]
+    B_me_face, B_accel = _me_accel_bases(n)
+    sf_ref = np.array([0.001, 0.003, 0.006, 0.012])
+    or_ref = np.array([-np.pi / 4, 0.0, np.pi / 4, np.pi / 2])
+    n_sf = sf_ref.size - 1   # 3 dummies
+    n_or = or_ref.size - 1   # 3 dummies
+    _, names = assemble_design_matrix_selected(
+        B_speed, B_tf, B_onset, sf_vals, or_vals, list(_NEW_PAIRWISE),
+        sf_ref_levels=sf_ref, or_ref_levels=or_ref,
+        B_me_face=B_me_face, B_accel=B_accel,
+    )
+    counts = {
+        "Spd_x_Acc": sum(n.startswith("Spd") and "_x_Acc" in n for n in names),
+        "TF_x_MEf": sum(n.startswith("TF") and "_x_MEf" in n for n in names),
+        "TF_x_Acc": sum(n.startswith("TF") and "_x_Acc" in n for n in names),
+        "SF_x_MEf": sum(n.startswith("SF") and "_x_MEf" in n for n in names),
+        "SF_x_Acc": sum(n.startswith("SF") and "_x_Acc" in n for n in names),
+        "OR_x_MEf": sum(n.startswith("OR") and "_x_MEf" in n for n in names),
+        "OR_x_Acc": sum(n.startswith("OR") and "_x_Acc" in n for n in names),
+        "MEf_x_Acc": sum(n.startswith("MEf") and "_x_Acc" in n for n in names),
+    }
+    assert counts["Spd_x_Acc"] == 5 * 5
+    assert counts["TF_x_MEf"] == 5 * 5
+    assert counts["TF_x_Acc"] == 5 * 5
+    assert counts["MEf_x_Acc"] == 5 * 5
+    assert counts["SF_x_MEf"] == n_sf * 5
+    assert counts["SF_x_Acc"] == n_sf * 5
+    assert counts["OR_x_MEf"] == n_or * 5
+    assert counts["OR_x_Acc"] == n_or * 5
+
+
+def test_new_interactions_inert_without_value_bases():
+    """Selecting the new interactions with no ME / accel basis (the token /
+    screens path) must add NO columns — keeps those runs byte-identical."""
+    B_speed, B_tf, B_onset, sf_vals, or_vals = _toy_inputs()
+    _, names = assemble_design_matrix_selected(
+        B_speed, B_tf, B_onset, sf_vals, or_vals, list(_NEW_PAIRWISE),
+        B_me_face=None, B_accel=None,
+    )
+    assert not any("_x_Acc" in n for n in names)
+    assert not any("_x_MEf" in n for n in names)
+
+
+def test_full_interaction_label_inert_without_me_accel():
+    """The FullInteraction ceiling lists the new interactions, but with no
+    ME/accel basis it must reduce to the legacy stimulus-only design."""
+    B_speed, B_tf, B_onset, sf_vals, or_vals = _toy_inputs()
+    _, names = assemble_design_matrix(
+        B_speed, B_tf, B_onset, sf_vals, or_vals, "FullInteraction",
+    )
+    assert not any("_x_Acc" in n for n in names)
+    assert not any("_x_MEf" in n for n in names)
+    assert not any(n.startswith("Acceleration_") for n in names)

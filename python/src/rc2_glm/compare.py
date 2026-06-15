@@ -1044,6 +1044,10 @@ def _render_aggregate_forward_selection(
         "selected_vars", "is_speed_tuned", "is_tf_tuned", "is_sf_tuned",
         "is_or_tuned", "has_interaction", "has_speed_x_tf", "has_speed_x_sf",
         "has_speed_x_or", "has_tf_x_sf", "has_tf_x_or", "has_sf_x_or",
+        # Acceleration / ME_face full-pairwise set (2026-06-15).
+        "is_acceleration_tuned", "has_speed_x_acceleration", "has_tf_x_me_face",
+        "has_tf_x_acceleration", "has_sf_x_me_face", "has_sf_x_acceleration",
+        "has_or_x_me_face", "has_or_x_acceleration", "has_me_face_x_acceleration",
         "delta_selected_vs_null", "delta_additive_vs_null",
         "delta_selected_vs_additive", "delta_interaction",
     )

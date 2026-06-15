@@ -358,3 +358,18 @@ def test_save_figure_both_formats(tmp_path):
     assert suffixes == [".pdf", ".png"]
     for p in written:
         assert p.exists()
+
+
+def test_beta_group_tag_new_pairwise_interactions():
+    """The Acceleration / ME_face full-pairwise columns get their own group,
+    never 'Other' (display-contract point 3). Column names follow the
+    design_matrix convention (continuous and categorical SF/OR forms)."""
+    assert _beta_group_tag("Spd1_x_Acc1") == "Spd x Acc"
+    assert _beta_group_tag("TF3_x_MEf2") == "TF x MEf"
+    assert _beta_group_tag("TF1_x_Acc5") == "TF x Acc"
+    assert _beta_group_tag("SF_1_x_MEf2") == "SF x MEf"        # rf_local SF
+    assert _beta_group_tag("SF0.0030_x_MEf1") == "SF x MEf"    # token SF
+    assert _beta_group_tag("SF_2_x_Acc3") == "SF x Acc"
+    assert _beta_group_tag("OR_1_x_MEf4") == "OR x MEf"        # rf_local OR
+    assert _beta_group_tag("OR0.785_x_Acc1") == "OR x Acc"     # token OR
+    assert _beta_group_tag("MEf2_x_Acc4") == "MEf x Acc"
