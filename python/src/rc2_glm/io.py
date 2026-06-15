@@ -35,6 +35,13 @@ class TrialData:
     sf: float = float("nan")
     orientation: float = float("nan")
     batch_gain: float = float("nan")
+    # Motion-cloud folder name for this trial (from StimulusLookup), e.g.
+    # "theta0p000_..._sf00p016_..._VX0p191_BV0p200". None when no lookup is
+    # provided. Used only by the RF-local SF/OR path to join a trial to its
+    # cloud's extracted SF(t)/OR(t) (matched on the theta/sf/VX tokens — the
+    # BV bandwidth token may differ between the presentation metadata and the
+    # rendered-frame folders, and is irrelevant to spatial SF/OR).
+    cloud_name: str | None = None
     excluded: bool = False
     # Speed-profile id (1 or 2) — which of the two reproduced velocity
     # trajectories this trial belongs to. Mirrors MATLAB
@@ -270,12 +277,14 @@ def _load_trial(
     sf = orient = gain = float("nan")
     excluded = False
     profile_id = 0
+    cloud_name = None
     if stimulus_lookup is not None:
         params = stimulus_lookup.stimulus_params(trial_id)
         sf = float(params["sf"])
         orient = float(params["orientation"])
         gain = float(params["batch_gain"])
         excluded = bool(params["excluded"])
+        cloud_name = params.get("cloud_name")
         profile_id = int(stimulus_lookup.trial_profile_id(trial_id))
 
     return TrialData(
@@ -291,6 +300,7 @@ def _load_trial(
         sf=sf,
         orientation=orient,
         batch_gain=gain,
+        cloud_name=cloud_name,
         excluded=excluded,
         profile_id=profile_id,
     )

@@ -34,6 +34,8 @@ def assemble_design_matrix_selected(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Assemble the design matrix from selected variable names.
@@ -53,6 +55,12 @@ def assemble_design_matrix_selected(
     - ``include_onset_kernel``: when False, the Onset basis is OMITTED
       from the design matrix entirely. Used by the prompt-03 ablation
       experiment. Default True for parity-preserving baseline behaviour.
+    - ``B_sf`` / ``B_or``: per-bin RF-local SF / OR value bases
+      ``(n_bins, n_sf_bases)`` / ``(n_bins, n_or_bases)`` (config
+      ``sf_or_source="rf_local"``). When provided, ``SF`` / ``OR`` (and any
+      interaction touching them) are built from these continuous columns
+      instead of the categorical reference dummies — SF as ``SF_1..k``, OR as
+      ``OR_1..k``. ``None`` (default) → the token-dummy path, unchanged.
     """
     n = B_speed.shape[0]
     n_speed_b = B_speed.shape[1]
@@ -82,13 +90,21 @@ def assemble_design_matrix_selected(
         cols.append(B_tf)
         names += [f"TF_{i + 1}" for i in range(n_tf_b)]
     if "SF" in selected:
-        for level in sf_levels:
-            cols.append(_dummy(sf_vals, level).reshape(-1, 1))
-            names.append(f"SF_{level:.4f}")
+        if B_sf is not None:
+            cols.append(B_sf)
+            names += [f"SF_{i + 1}" for i in range(B_sf.shape[1])]
+        else:
+            for level in sf_levels:
+                cols.append(_dummy(sf_vals, level).reshape(-1, 1))
+                names.append(f"SF_{level:.4f}")
     if "OR" in selected:
-        for level in or_levels:
-            cols.append(_dummy(or_vals, level).reshape(-1, 1))
-            names.append(f"OR_{level:.3f}")
+        if B_or is not None:
+            cols.append(B_or)
+            names += [f"OR_{i + 1}" for i in range(B_or.shape[1])]
+        else:
+            for level in or_levels:
+                cols.append(_dummy(or_vals, level).reshape(-1, 1))
+                names.append(f"OR_{level:.3f}")
     if "ME_face" in selected and B_me_face is not None and B_me_face.shape[1] > 0:
         cols.append(B_me_face)
         names += [f"ME_face_{i + 1}" for i in range(B_me_face.shape[1])]
@@ -102,36 +118,66 @@ def assemble_design_matrix_selected(
                 cols.append((B_speed[:, si] * B_tf[:, ti]).reshape(-1, 1))
                 names.append(f"Spd{si + 1}_x_TF{ti + 1}")
     if "Speed_x_SF" in selected:
-        for si in range(n_speed_b):
-            for level in sf_levels:
-                d = _dummy(sf_vals, level)
-                cols.append((B_speed[:, si] * d).reshape(-1, 1))
-                names.append(f"Spd{si + 1}_x_SF{level:.4f}")
+        if B_sf is not None:
+            for si in range(n_speed_b):
+                for j in range(B_sf.shape[1]):
+                    cols.append((B_speed[:, si] * B_sf[:, j]).reshape(-1, 1))
+                    names.append(f"Spd{si + 1}_x_SF_{j + 1}")
+        else:
+            for si in range(n_speed_b):
+                for level in sf_levels:
+                    d = _dummy(sf_vals, level)
+                    cols.append((B_speed[:, si] * d).reshape(-1, 1))
+                    names.append(f"Spd{si + 1}_x_SF{level:.4f}")
     if "Speed_x_OR" in selected:
-        for si in range(n_speed_b):
-            for level in or_levels:
-                d = _dummy(or_vals, level)
-                cols.append((B_speed[:, si] * d).reshape(-1, 1))
-                names.append(f"Spd{si + 1}_x_OR{level:.3f}")
+        if B_or is not None:
+            for si in range(n_speed_b):
+                for j in range(B_or.shape[1]):
+                    cols.append((B_speed[:, si] * B_or[:, j]).reshape(-1, 1))
+                    names.append(f"Spd{si + 1}_x_OR_{j + 1}")
+        else:
+            for si in range(n_speed_b):
+                for level in or_levels:
+                    d = _dummy(or_vals, level)
+                    cols.append((B_speed[:, si] * d).reshape(-1, 1))
+                    names.append(f"Spd{si + 1}_x_OR{level:.3f}")
     if "TF_x_SF" in selected:
-        for ti in range(n_tf_b):
-            for level in sf_levels:
-                d = _dummy(sf_vals, level)
-                cols.append((B_tf[:, ti] * d).reshape(-1, 1))
-                names.append(f"TF{ti + 1}_x_SF{level:.4f}")
+        if B_sf is not None:
+            for ti in range(n_tf_b):
+                for j in range(B_sf.shape[1]):
+                    cols.append((B_tf[:, ti] * B_sf[:, j]).reshape(-1, 1))
+                    names.append(f"TF{ti + 1}_x_SF_{j + 1}")
+        else:
+            for ti in range(n_tf_b):
+                for level in sf_levels:
+                    d = _dummy(sf_vals, level)
+                    cols.append((B_tf[:, ti] * d).reshape(-1, 1))
+                    names.append(f"TF{ti + 1}_x_SF{level:.4f}")
     if "TF_x_OR" in selected:
-        for ti in range(n_tf_b):
-            for level in or_levels:
-                d = _dummy(or_vals, level)
-                cols.append((B_tf[:, ti] * d).reshape(-1, 1))
-                names.append(f"TF{ti + 1}_x_OR{level:.3f}")
+        if B_or is not None:
+            for ti in range(n_tf_b):
+                for j in range(B_or.shape[1]):
+                    cols.append((B_tf[:, ti] * B_or[:, j]).reshape(-1, 1))
+                    names.append(f"TF{ti + 1}_x_OR_{j + 1}")
+        else:
+            for ti in range(n_tf_b):
+                for level in or_levels:
+                    d = _dummy(or_vals, level)
+                    cols.append((B_tf[:, ti] * d).reshape(-1, 1))
+                    names.append(f"TF{ti + 1}_x_OR{level:.3f}")
     if "SF_x_OR" in selected:
-        for sf_level in sf_levels:
-            d_sf = _dummy(sf_vals, sf_level)
-            for or_level in or_levels:
-                d_or = _dummy(or_vals, or_level)
-                cols.append((d_sf * d_or).reshape(-1, 1))
-                names.append(f"SF{sf_level:.4f}_x_OR{or_level:.3f}")
+        if B_sf is not None and B_or is not None:
+            for i in range(B_sf.shape[1]):
+                for j in range(B_or.shape[1]):
+                    cols.append((B_sf[:, i] * B_or[:, j]).reshape(-1, 1))
+                    names.append(f"SF_{i + 1}_x_OR_{j + 1}")
+        else:
+            for sf_level in sf_levels:
+                d_sf = _dummy(sf_vals, sf_level)
+                for or_level in or_levels:
+                    d_or = _dummy(or_vals, or_level)
+                    cols.append((d_sf * d_or).reshape(-1, 1))
+                    names.append(f"SF{sf_level:.4f}_x_OR{or_level:.3f}")
     if "ME_face_x_Speed" in selected and B_me_face is not None and B_me_face.shape[1] > 0:
         # 5 ME bases × 5 Speed bases = 25 interaction columns.
         # Same row-wise product convention as Speed_x_TF above.
@@ -161,6 +207,8 @@ def assemble_design_matrix(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Build a fixed model matrix labelled by `model_label`.
@@ -175,6 +223,8 @@ def assemble_design_matrix(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
         include_onset_kernel=include_onset_kernel,
     )
     if model_label == "M0":

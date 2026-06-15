@@ -45,11 +45,15 @@ COLUMNS: list[str] = [
 ]
 
 
-def bin_probe(probe: ProbeData) -> pd.DataFrame:
-    """Bin every (cluster, trial) pair in `probe` and return one DataFrame."""
+def bin_probe(probe: ProbeData, rf_lookup=None) -> pd.DataFrame:
+    """Bin every (cluster, trial) pair in `probe` and return one DataFrame.
+
+    ``rf_lookup`` (an ``rc2_glm.rf_sf_or.RFLookup`` or None) activates the
+    RF-local SF/OR path — see ``bin_cluster``.
+    """
     frames = []
     for cluster in probe.clusters:
-        df = bin_cluster(probe, cluster)
+        df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
         if not df.empty:
             frames.append(df)
     if not frames:
@@ -57,14 +61,25 @@ def bin_probe(probe: ProbeData) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True, copy=False)
 
 
-def bin_cluster(probe: ProbeData, cluster: ClusterData) -> pd.DataFrame:
+def bin_cluster(probe: ProbeData, cluster: ClusterData, rf_lookup=None) -> pd.DataFrame:
+    """Bin one cluster's trials.
+
+    When ``rf_lookup`` is provided (config ``sf_or_source="rf_local"``), the
+    ``sf`` / ``orientation`` columns on V and VT motion bins are populated with
+    this cluster's RF-local SF(t)/OR(t) — the per-frame Gabor extraction mapped
+    onto the bins through the velocity-locked cloud-frame clock — instead of the
+    trial's categorical stimulus tokens. T_Vstatic (grey screen) and stationary
+    bins keep NaN, as before. ``None`` (default) → the token path, unchanged.
+    """
     config = probe.config
     me_signal = _resolve_me_signal(probe)
     rows: list[pd.DataFrame] = []
     for trial in probe.trials:
         if trial.excluded:
             continue
-        df = _bin_trial_for_cluster(probe, trial, cluster, config, me_signal=me_signal)
+        df = _bin_trial_for_cluster(
+            probe, trial, cluster, config, me_signal=me_signal, rf_lookup=rf_lookup
+        )
         if not df.empty:
             rows.append(df)
     if not rows:
@@ -196,6 +211,7 @@ def _bin_trial_for_cluster(
     cluster: ClusterData,
     config: GLMConfig,
     me_signal: tuple[np.ndarray, np.ndarray] | None = None,
+    rf_lookup=None,
 ) -> pd.DataFrame:
     motion_idx = np.flatnonzero(trial.motion_mask)
     if motion_idx.size == 0:
@@ -209,7 +225,8 @@ def _bin_trial_for_cluster(
         return pd.DataFrame(columns=COLUMNS)
 
     motion_df = _bin_motion_period(
-        trial, cluster, t_motion_start, t_motion_end, config, me_signal=me_signal
+        trial, cluster, t_motion_start, t_motion_end, config,
+        me_signal=me_signal, rf_lookup=rf_lookup,
     )
 
     stat_df = _bin_stationary_prelude(
@@ -235,6 +252,7 @@ def _bin_motion_period(
     t_motion_end: float,
     config: GLMConfig,
     me_signal: tuple[np.ndarray, np.ndarray] | None = None,
+    rf_lookup=None,
 ) -> pd.DataFrame:
     bin_edges = np.arange(
         t_motion_start, t_motion_end + 1e-12, config.time_bin_width, dtype=np.float64
@@ -281,6 +299,53 @@ def _bin_motion_period(
 
     n_good = good_idx.size
     speed_v, tf_v, sf_v, or_v, gain_v = _condition_vectors(trial, mean_speed)
+
+    # RF-local SF/OR override (config sf_or_source="rf_local"). Replace the
+    # categorical token sf/or on V & VT visual bins with this cluster's RF's
+    # per-frame local SF(t)/OR(t), mapped onto the bins via the velocity-locked
+    # cloud-frame clock (frame = 10·∫|v|dt — POSITION-locked, 10 frames/cm; the
+    # cloud advances with distance travelled and is held at frame 0 during the
+    # prelude). |velocity| here is the treadmill velocity in VT and the replayed
+    # velocity in V — both drive the cloud, both live in trial.velocity. SF is
+    # averaged and OR circular-averaged over each bin's motion samples (same
+    # support as mean_speed). T_Vstatic stays NaN (grey screen, no cloud).
+    if rf_lookup is not None and trial.condition in ("V", "VT"):
+        cloud_nm = getattr(trial, "cloud_name", None)
+        rf = rf_lookup.get(cluster.cluster_id, cloud_nm)
+        if rf is None:
+            # No identifiable RF. Default: NaN (cluster excluded upstream). In
+            # "_all" mode (rf_sf_or_nominal_fallback) stand in this cloud's
+            # cohort NOMINAL SF/OR, constant per trial — the continuous
+            # "imitate the dummy values" path so the cluster can still be fit.
+            nom = (rf_lookup.nominal(cloud_nm)
+                   if getattr(config, "rf_sf_or_nominal_fallback", False) else None)
+            if nom is None:
+                sf_v = np.full(n_good, np.nan)
+                or_v = np.full(n_good, np.nan)
+            else:
+                sf_v = np.full(n_good, nom[0])
+                or_v = np.full(n_good, nom[1])
+        else:
+            rf_sf, rf_or = rf
+            n_fr = rf_sf.size
+            vabs = np.abs(np.asarray(trial.velocity, dtype=np.float64))
+            dt_full = np.gradient(np.asarray(trial.probe_t, dtype=np.float64))
+            dist = np.cumsum(vabs * trial.motion_mask.astype(np.float64) * dt_full)
+            frame_full = np.clip(np.round(10.0 * dist).astype(int), 0, n_fr - 1)
+            sf_samp = rf_sf[frame_full][valid]
+            or_samp = rf_or[frame_full][valid]
+            w = mmask_vec.astype(np.float64)  # average over motion samples only
+            sf_fin = np.where(np.isfinite(sf_samp), sf_samp, 0.0)
+            two = np.radians(2.0 * np.where(np.isfinite(or_samp), or_samp, 0.0))
+            sum_sf = np.bincount(bins_vec, weights=sf_fin * w, minlength=n_bins)
+            sum_c = np.bincount(bins_vec, weights=np.cos(two) * w, minlength=n_bins)
+            sum_s = np.bincount(bins_vec, weights=np.sin(two) * w, minlength=n_bins)
+            denom = n_motion_per_bin.astype(np.float64)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                sf_bin = np.where(denom > 0, sum_sf / denom, np.nan)
+                or_bin = np.degrees(np.arctan2(sum_s, sum_c) / 2.0) % 180.0
+            sf_v = sf_bin[good_idx]
+            or_v = or_bin[good_idx]
 
     if me_signal is not None:
         me_per_bin = _bin_continuous_to_edges(me_signal[0], me_signal[1], bin_edges)[good_idx]

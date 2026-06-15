@@ -208,6 +208,15 @@ def plot_basis_functions(config: GLMConfig) -> Figure:
 # --------------------------------------------------------------------------- #
 
 
+def _rf_sf_or_tag(config) -> str:
+    """SF/OR axis-label tag, honest about where the values come from. Plain
+    'RF-local' for the RF-only cohort; 'RF-local/nominal' when no-RF clusters
+    carry the per-cloud nominal stand-in (rf_sf_or_nominal_fallback) — so a
+    no-RF cluster's SF/OR is never read as a real receptive-field measurement."""
+    return ("RF-local/nominal"
+            if getattr(config, "rf_sf_or_nominal_fallback", False) else "RF-local")
+
+
 def _kernel_for_var(
     coef_rows: pd.DataFrame,
     var: str,
@@ -278,6 +287,21 @@ def _kernel_for_var(
         return x_grid, B @ betas, "t since onset (s)"
 
     if var == "SF":
+        if getattr(config, "sf_or_source", "tokens") == "rf_local":
+            # Continuous RF-local SF: coefficients are SF_1..k (a raised-cosine
+            # basis over cpd). Reconstruct the tuning curve like Speed/TF.
+            # NB the exact ^SF_\d+$ match excludes interaction columns
+            # (SF_1_x_OR_1) that also start with "SF_".
+            sub = coef_rows[coef_rows["coefficient"].str.match(r"^SF_\d+$")]
+            if sub.empty:
+                return None
+            sub = sub.assign(
+                idx=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+            ).sort_values("idx")
+            from rc2_glm.basis import raised_cosine_basis_linear
+            x_grid = np.linspace(*config.sf_cpd_range, 200)
+            B = raised_cosine_basis_linear(x_grid, config.n_sf_bases, *config.sf_cpd_range)
+            return x_grid, B @ sub["estimate"].to_numpy(), f"SF (cpd, {_rf_sf_or_tag(config)})"
         sub = coef_rows[coef_rows["coefficient"].str.startswith("SF_")]
         if sub.empty:
             return None
@@ -289,6 +313,19 @@ def _kernel_for_var(
         return levels, sub["estimate"].to_numpy(), "SF (cpp)"
 
     if var == "OR":
+        if getattr(config, "sf_or_source", "tokens") == "rf_local":
+            # Continuous RF-local OR: coefficients OR_1..k (circular basis over
+            # [0,180)°). Reconstruct the orientation tuning curve.
+            sub = coef_rows[coef_rows["coefficient"].str.match(r"^OR_\d+$")]
+            if sub.empty:
+                return None
+            sub = sub.assign(
+                idx=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
+            ).sort_values("idx")
+            from rc2_glm.basis import circular_basis
+            x_grid = np.linspace(0.0, 180.0, 200)
+            B = circular_basis(x_grid, config.n_or_bases)
+            return x_grid, B @ sub["estimate"].to_numpy(), f"orientation (deg, {_rf_sf_or_tag(config)})"
         sub = coef_rows[coef_rows["coefficient"].str.startswith("OR_")]
         if sub.empty:
             return None
@@ -620,7 +657,13 @@ def _render_kernel_panel(
         return
     x, kernel, xlabel = kdata
     colour = _BETA_GROUP_COLORS.get(var, (0.2, 0.2, 0.2))
-    if var in ("SF", "OR"):
+    # Categorical SF/OR draw as discrete bars; RF-local SF/OR are continuous
+    # tuning curves (200-point grid) → draw as a line like Speed/TF.
+    sf_or_categorical = (
+        var in ("SF", "OR")
+        and getattr(config, "sf_or_source", "tokens") != "rf_local"
+    )
+    if sf_or_categorical:
         bar_w = (x.max() - x.min()) / max(len(x), 1) * 0.4 if len(x) > 1 else 0.5
         ax.bar(x, kernel, color=colour, edgecolor="black",
                linewidth=0.5, width=bar_w)
@@ -1546,6 +1589,40 @@ def plot_tuning_curves(
     fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=9,
                frameon=False, bbox_to_anchor=(0.5, -0.02))
 
+    # RF-local SF/OR: replace the categorical SF/OR columns (2, 3) with
+    # continuous tuning rendered exactly like the ME_face / Acceleration
+    # value-covariate panels — 20 equal-count (5%-quantile) bins, per-trial
+    # mean per bin, then median + IQR across trials WITH error bars, per
+    # condition (the MATLAB tuning convention). Observed row bins spike
+    # counts; model rows bin each model's per-bin predicted FR. (Laura
+    # 2026-06-12.) The categorical render above ran harmlessly; redraw 2 & 3.
+    if getattr(config, "sf_or_source", "tokens") == "rf_local":
+        for col, vcol, name, xlbl in (
+            (2, "sf", "SF", f"SF (cpd, {_rf_sf_or_tag(config)})"),
+            (3, "orientation", "OR", f"orientation (deg, {_rf_sf_or_tag(config)})"),
+        ):
+            axes[0, col].clear()
+            _plot_me_face_panel(
+                axes[0, col], cluster_df, config, per_bin_predictions=None,
+                col=vcol, name=name, n_bins=20, zscore=False,
+            )
+            for r, label in enumerate(MODEL_LABELS, start=1):
+                axes[r, col].clear()
+                pbp = model_predictions.get(label) if model_predictions else None
+                _plot_me_face_panel(
+                    axes[r, col], cluster_df, config, per_bin_predictions=pbp,
+                    col=vcol, name=name, n_bins=20, zscore=False,
+                )
+            axes[0, col].set_title(name, fontsize=10)
+            axes[4, col].set_xlabel(xlbl)
+        # Share y within each redrawn column so Observed vs models compare.
+        for col in (2, 3):
+            hi = max([axes[r, col].get_ylim()[1] for r in range(5)
+                      if np.isfinite(axes[r, col].get_ylim()[1])] + [0.0])
+            if hi > 0:
+                for r in range(5):
+                    axes[r, col].set_ylim(0.0, hi * 1.05)
+
     sel_names = model_col_names.get("Selected", [])
     sel_vars = _vars_from_names(sel_names)
     fig.suptitle(
@@ -1927,22 +2004,36 @@ def plot_cluster_model_overview(
                                config.speed_range)
         _plot_vt_tf_scatter(row_axes[3], motion_df, obs_fr_motion, preds,
                             config.tf_range)
-        _plot_vt_level_scatter(
-            row_axes[4], motion_df, obs_fr_motion, preds,
-            value_col="sf", levels=np.asarray(_SF_PALETTE_LEVELS),
-            palette=[np.asarray(c) for c in _SF_PALETTE_COLORS],
-            reference_levels=np.asarray(_SF_PALETTE_LEVELS),
-            axis_title="SF", legend_fmt=lambda v: f"{v:.3f}",
-            tol=1e-4,
-        )
-        _plot_vt_level_scatter(
-            row_axes[5], motion_df, obs_fr_motion, preds,
-            value_col="orientation", levels=np.asarray(_OR_PALETTE_LEVELS),
-            palette=[np.asarray(c) for c in _OR_PALETTE_COLORS],
-            reference_levels=np.asarray(_OR_PALETTE_LEVELS),
-            axis_title="OR", legend_fmt=lambda v: f"{int(round(np.degrees(v)))}°",
-            tol=1e-3,
-        )
+        if getattr(config, "sf_or_source", "tokens") == "rf_local":
+            # RF-local SF/OR are continuous → binned pred-vs-obs scatter like
+            # the Speed/TF panels, not discrete-level coloring.
+            _plot_value_binned_scatter(
+                row_axes[4], motion_df, obs_fr_motion, preds,
+                value_col="sf", config_range=config.sf_cpd_range,
+                title_prefix="SF",
+            )
+            _plot_value_binned_scatter(
+                row_axes[5], motion_df, obs_fr_motion, preds,
+                value_col="orientation", config_range=(0.0, 180.0),
+                title_prefix="OR",
+            )
+        else:
+            _plot_vt_level_scatter(
+                row_axes[4], motion_df, obs_fr_motion, preds,
+                value_col="sf", levels=np.asarray(_SF_PALETTE_LEVELS),
+                palette=[np.asarray(c) for c in _SF_PALETTE_COLORS],
+                reference_levels=np.asarray(_SF_PALETTE_LEVELS),
+                axis_title="SF", legend_fmt=lambda v: f"{v:.3f}",
+                tol=1e-4,
+            )
+            _plot_vt_level_scatter(
+                row_axes[5], motion_df, obs_fr_motion, preds,
+                value_col="orientation", levels=np.asarray(_OR_PALETTE_LEVELS),
+                palette=[np.asarray(c) for c in _OR_PALETTE_COLORS],
+                reference_levels=np.asarray(_OR_PALETTE_LEVELS),
+                axis_title="OR", legend_fmt=lambda v: f"{int(round(np.degrees(v)))}°",
+                tol=1e-3,
+            )
         _apply_row_style(row_axes, label, is_winner, n_coefs=len(col_names))
 
     for ax in axes[:, 1:].ravel():
@@ -2257,6 +2348,38 @@ def _plot_vt_speed_scatter(
     )
 
 
+def _plot_value_binned_scatter(
+    ax,
+    motion_df: pd.DataFrame,
+    obs_fr: np.ndarray,
+    preds: np.ndarray,
+    value_col: str,
+    config_range: tuple[float, float],
+    title_prefix: str,
+) -> None:
+    """Binned predicted-vs-observed scatter for a continuous regressor (SF/OR).
+
+    The RF-local SF/OR analogue of ``_plot_vt_speed_scatter``: bins over the
+    rows where the value is defined (the visual conditions V + VT) instead of
+    VT-only, since SF/OR exist in both.
+    """
+    v = motion_df[value_col].to_numpy(dtype=np.float64)
+    m = np.isfinite(v)
+    if int(m.sum()) < 3:
+        ax.text(0.5, 0.5, "no SF/OR data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=7, color="#888")
+        return
+    x = v[m]
+    bin_edges, bin_centres = _adaptive_bin_edges(x, config_range)
+    _plot_binned_scatter(
+        ax, x, obs_fr[m], preds[m],
+        motion_df["trial_id"].to_numpy()[m],
+        bin_edges, bin_centres,
+        cmap=plt.get_cmap("viridis"),
+        title_prefix=title_prefix, colorbar=True,
+    )
+
+
 def _plot_vt_tf_scatter(
     ax,
     motion_df: pd.DataFrame,
@@ -2538,6 +2661,7 @@ def _plot_me_face_panel(
     n_bins: int = 10,
     col: str = "me_face_raw",
     name: str = "ME",
+    zscore: bool = True,
 ) -> None:
     """ME_face / value-covariate tuning panel — works for both Observed and
     Model rows. ``col`` selects the per-bin covariate column ('me_face_raw' or
@@ -2586,9 +2710,14 @@ def _plot_me_face_panel(
         ax.set_xticks([]); ax.set_yticks([])
         return
 
-    me_mean = float(me_raw[finite_motion].mean())
-    me_std = float(me_raw[finite_motion].std(ddof=0)) or 1.0
-    me_z_motion = np.where(finite_motion, (me_raw - me_mean) / me_std, np.nan)
+    if zscore:
+        me_mean = float(me_raw[finite_motion].mean())
+        me_std = float(me_raw[finite_motion].std(ddof=0)) or 1.0
+        me_z_motion = np.where(finite_motion, (me_raw - me_mean) / me_std, np.nan)
+    else:
+        # Continuous regressors (RF-local SF/OR): keep the raw axis (cpd / deg)
+        # so the quantile bins and x-ticks are physically meaningful.
+        me_z_motion = np.where(finite_motion, me_raw, np.nan)
 
     # Per-bin signal we're plotting: observed FR for the Observed row,
     # model-predicted FR for the model rows.
@@ -2668,8 +2797,10 @@ def _plot_me_face_panel(
         ax.set_xticks([]); ax.set_yticks([])
         return
 
-    # Light reference grid + zero line for z-scored axis
-    ax.axvline(0.0, color="grey", linestyle=":", alpha=0.4, linewidth=0.6)
+    # Light reference grid + zero line for z-scored axis (only meaningful
+    # when the x-axis is z-scored; raw SF/OR axes skip it).
+    if zscore:
+        ax.axvline(0.0, color="grey", linestyle=":", alpha=0.4, linewidth=0.6)
 
 
 def _plot_observed_row(
@@ -3805,9 +3936,28 @@ def _predict_rate(
     """
     B_speed = raised_cosine_basis(speed_vec, config.n_speed_bases, *config.speed_range)
     B_tf = raised_cosine_basis(tf_vec, config.n_tf_bases, *config.tf_range)
+    # RF-local SF/OR: build the SAME continuous bases the fit used so the
+    # prediction columns (SF_1.., OR_1..) align with the trained model. Without
+    # this the categorical SF/OR dummies don't match the continuous trained
+    # columns, get zero-filled on alignment, and the SF/OR contribution is
+    # silently dropped from EVERY predicted marginal — which made the VT Speed
+    # tuning (SF/OR present) collapse onto the T_Vstatic one (Laura 2026-06-12).
+    B_sf = B_or = None
+    if getattr(config, "sf_or_source", "tokens") == "rf_local":
+        from rc2_glm.basis import raised_cosine_basis_linear, circular_basis
+        sf_fin = np.isfinite(sf_vec)
+        B_sf = np.zeros((sf_vec.size, config.n_sf_bases), dtype=np.float64)
+        if sf_fin.any():
+            B_sf[sf_fin] = raised_cosine_basis_linear(
+                sf_vec[sf_fin], config.n_sf_bases, *config.sf_cpd_range)
+        or_fin = np.isfinite(or_vec)
+        B_or = np.zeros((or_vec.size, config.n_or_bases), dtype=np.float64)
+        if or_fin.any():
+            B_or[or_fin] = circular_basis(or_vec[or_fin], config.n_or_bases)
     X_pred, pred_names = assemble_design_matrix_selected(
         B_speed, B_tf, onset_mat, sf_vec, or_vec, selected_vars,
         sf_ref_levels=sf_ref, or_ref_levels=or_ref,
+        B_sf=B_sf, B_or=B_or,
     )
     X_aligned = _align_prediction_columns(X_pred, pred_names, train_names)
     if X_aligned.shape[1] != beta.size:

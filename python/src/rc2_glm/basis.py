@@ -77,6 +77,40 @@ def value_basis(
     raise ValueError(f"unknown basis spacing {spacing!r}; use 'log' or 'linear'")
 
 
+def circular_basis(
+    theta_deg: np.ndarray, n_bases: int, period_deg: float = 180.0
+) -> np.ndarray:
+    """Von Mises bumps over a circular value axis (default: orientation).
+
+    For RF-local orientation, which is **π-periodic** (0° ≡ 180°): the value
+    axis wraps at ``period_deg``. We map ``theta`` onto a doubled angle so the
+    period maps to 2π (``phi = 2π·(theta mod period)/period``) and place
+    ``n_bases`` von Mises bumps at evenly spaced centres around the circle.
+    Each column peaks at 1.0 at its centre and decays smoothly; the
+    concentration κ is set so adjacent centres sit at the bumps' half-maximum,
+    giving smooth, overlapping coverage (an approximate partition of unity).
+    The analogue of ``raised_cosine_basis`` for a cyclic variable.
+
+    NaNs propagate (the caller zeroes rows where OR is undefined, e.g. the
+    grey-screen T_Vstatic / stationary bins). Returns shape (len(theta),
+    n_bases).
+    """
+    theta = np.asarray(theta_deg, dtype=np.float64).ravel()
+    phi = 2.0 * np.pi * (np.mod(theta, period_deg) / period_deg)
+    if n_bases < 1:
+        return np.zeros((theta.size, 0), dtype=np.float64)
+    centers = np.linspace(0.0, 2.0 * np.pi, n_bases, endpoint=False)
+    if n_bases == 1:
+        kappa = 0.0  # single bump → flat cosine ridge, never undefined
+    else:
+        spacing = 2.0 * np.pi / n_bases
+        # κ so the value at one spacing from a centre is exactly 0.5 (the
+        # neighbouring centre sits at half-max): exp(κ(cos Δ − 1)) = 0.5.
+        kappa = np.log(2.0) / (1.0 - np.cos(spacing))
+    # cos(·) − 1 ∈ [−2, 0] keeps the peak at 1.0 and avoids overflow.
+    return np.exp(kappa * (np.cos(phi[:, None] - centers[None, :]) - 1.0))
+
+
 def onset_kernel_basis(
     t_since_onset: np.ndarray, n_bases: int, t_max: float
 ) -> np.ndarray:

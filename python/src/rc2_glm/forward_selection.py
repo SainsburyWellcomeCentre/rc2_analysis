@@ -98,6 +98,8 @@ def forward_select(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
     fold_ids_per_seed: list[np.ndarray] | None = None,
 ) -> SelectionResult:
     """Hardcastle-style hierarchical forward selection.
@@ -167,6 +169,8 @@ def forward_select(
         B_history=B_history if include_history else None,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
         include_onset_kernel=include_onset,
     )
 
@@ -319,6 +323,8 @@ def _try_candidates(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> RoundResult:
     """Evaluate each candidate under N cv-fold partitions, admit
@@ -344,6 +350,8 @@ def _try_candidates(
             B_history=B_history,
             B_me_face=B_me_face,
             B_accel=B_accel,
+            B_sf=B_sf,
+            B_or=B_or,
             include_onset_kernel=include_onset_kernel,
         )
         if X_test.shape[1] >= y.size:
@@ -423,6 +431,8 @@ def _cv_for_selected_per_seed(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> list[CVResult]:
     X, names = assemble_design_matrix_selected(
@@ -431,6 +441,8 @@ def _cv_for_selected_per_seed(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
         include_onset_kernel=include_onset_kernel,
     )
     penalty = _penalty_for(names, config, history_basis_mat)

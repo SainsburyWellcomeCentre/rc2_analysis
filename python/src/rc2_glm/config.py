@@ -261,6 +261,55 @@ class GLMConfig:
         default_factory=lambda: (-0.7853981633974483, 0.0, 0.7853981633974483, 1.5707963267948966)
     )  # -π/4, 0, π/4, π/2 (sorted)
 
+    # --- RF-local SF/OR (goggles, opt-in; 2026-06-12) ---
+    # How the SF and OR regressors are built:
+    #   "tokens" (default): the categorical stimulus generation tokens
+    #     (sf_levels / or_levels), reference-coded dummies — the MATLAB-
+    #     parity behaviour. ALL screens and existing goggles token runs use
+    #     this; leaving the default here keeps them byte-identical.
+    #   "rf_local": the per-cluster, per-bin *local* SF (cpd) and OR (deg)
+    #     read from each cluster's receptive field on the motion cloud
+    #     (Gabor best-match extraction, gabor_extract_gpu.py → the cohort
+    #     parquet). SF becomes a continuous log-Weber raised-cosine basis and
+    #     OR a circular (π-periodic) basis — like Speed/TF, NOT dummies. Only
+    #     the goggles cohort has RFs + cloud frames, so this is goggles-only.
+    #     Requires rf_sf_or_parquet_dir; clusters without an RF fall out of
+    #     the cohort (see rc2_glm.rf_sf_or + pipeline cohort intersection).
+    # The continuous-basis code path (B_sf / B_or) only activates under
+    # "rf_local"; "tokens" never touches it.
+    sf_or_source: str = "tokens"
+    # Directory of per-cloud parquet files written by gabor_extract_gpu.py
+    # (cols: probe, cluster, rf_type, cx, cy, frame, sf_cpd, or_deg,
+    # concentration, edge, cloud). Default points at the local cohort mirror;
+    # only read when sf_or_source == "rf_local".
+    rf_sf_or_parquet_dir: str = (
+        "~/local_data/motion_clouds/saved_goggles/_extract/cohort"
+    )
+    # SF continuous basis: log-Weber raised cosines over the observed local-SF
+    # range (extraction spans ~0.021–0.072 cpd; widen for headroom). OR
+    # continuous basis: circular bumps over [0, 180) deg (orientation is
+    # π-periodic — 0° ≡ 180°). Modest knot counts: per cluster the local SF
+    # clusters near ~3 tokens and OR near ~4, so few knots avoid over-
+    # parameterising a near-discrete variable.
+    n_sf_bases: int = 4
+    # Covers the pooled per-bin local-SF span (observed ~0.023–0.139 cpd across
+    # the 36 clouds once the velocity-locked frame fluctuation is included), so
+    # the high-SF tail isn't clipped onto the top knot.
+    sf_cpd_range: tuple[float, float] = (0.02, 0.15)
+    n_or_bases: int = 6
+    # Drop an RF whose median Gabor concentration (peak/mean energy, a
+    # reliability proxy) is below this. 0.0 = keep all; the goggle cohort
+    # sits ~3–5 so this is non-binding, but it guards future noisier RFs.
+    rf_min_concentration: float = 0.0
+    # rf_local "_all" mode: instead of EXCLUDING clusters without a clean RF,
+    # keep them in the cohort and give their SF/OR the per-cloud NOMINAL value
+    # (cohort-mean SF cpd + circular-mean OR deg over all RF clusters/frames for
+    # that cloud) — constant per trial, the continuous "imitate the dummy
+    # values" stand-in. RF clusters are unchanged. Only read when rf_local.
+    # Default False = the RF-only cohort (excludes no-RF clusters), so existing
+    # rf_local runs are byte-identical.
+    rf_sf_or_nominal_fallback: bool = False
+
     # --- Prefilter ---
     # The stationary-vs-motion Wilcoxon is now a DIAGNOSTIC, not the default
     # selection gate: the whole selected cohort is fit, and the prefilter table

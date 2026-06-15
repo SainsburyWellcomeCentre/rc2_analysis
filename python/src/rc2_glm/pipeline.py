@@ -213,6 +213,36 @@ def _run_pipeline_inner(
     else:
         clusters = probe.clusters
 
+    # RF-local SF/OR (config sf_or_source="rf_local"): load this probe's RF
+    # SF(t)/OR(t) extraction and restrict the cohort to clusters that HAVE an
+    # RF (only those have a local SF/OR to feed the GLM). Goggles-only; token
+    # mode leaves rf_lookup=None and changes nothing.
+    rf_lookup = None
+    if getattr(config, "sf_or_source", "tokens") == "rf_local":
+        from rc2_glm.rf_sf_or import load_rf_sf_or
+        rf_lookup = load_rf_sf_or(
+            config.rf_sf_or_parquet_dir, probe.probe_id,
+            min_concentration=getattr(config, "rf_min_concentration", 0.0),
+        )
+        before = len(clusters)
+        if getattr(config, "rf_sf_or_nominal_fallback", False):
+            # "_all" mode: keep the whole prefilter cohort. No-RF clusters get
+            # the per-cloud nominal SF/OR (constant) in time_binning instead of
+            # being dropped — so the cohort covers every cluster, not just RFs.
+            n_rf = sum(c.cluster_id in rf_lookup.clusters for c in clusters)
+            logger.info(
+                "sf_or_source=rf_local (_all): %d clusters kept for %s "
+                "(%d with RF, %d with nominal-fallback SF/OR)",
+                before, probe.probe_id, n_rf, before - n_rf,
+            )
+        else:
+            clusters = [c for c in clusters if c.cluster_id in rf_lookup.clusters]
+            logger.info(
+                "sf_or_source=rf_local: %d RF clusters loaded for %s; cohort "
+                "%d → %d (kept clusters that have an RF)",
+                len(rf_lookup.clusters), probe.probe_id, before, len(clusters),
+            )
+
     _banner("Forward selection")
     logger.info("fitting %d clusters (n_jobs=%d)", len(clusters), n_jobs)
     comparison_rows: list[dict] = []
@@ -226,7 +256,7 @@ def _run_pipeline_inner(
     # Drop empties / too-short runs up-front so joblib dispatches real work only.
     fit_tasks: list[tuple[int, int, pd.DataFrame]] = []
     for idx, cluster in enumerate(clusters, start=1):
-        df = bin_cluster(probe, cluster)
+        df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
         if getattr(config, "fit_condition", None):
             df = _subset_to_condition(df, config.fit_condition)
         if df.empty:
@@ -525,6 +555,32 @@ def _fit_one_cluster(
     else:
         B_accel = None
 
+    # RF-local SF/OR value bases (config sf_or_source="rf_local"). sf_vals /
+    # or_vals already carry the per-bin RF-local values from time_binning (the
+    # Gabor-extracted local SF(t)/OR(t) at this cluster's RF). Encode SF as a
+    # LINEAR raised-cosine basis over the local-SF cpd range — the log-Weber
+    # basis' +0.5 epsilon collapses at cpd magnitudes ≪0.5 — and OR as a
+    # circular (π-periodic) basis, like Speed/TF. Zero on rows where SF/OR are
+    # undefined (T_Vstatic / stationary → NaN), matching the token dummies
+    # (which are 0 off the visual conditions). None in token mode → the
+    # categorical-dummy path in assemble_design_matrix.
+    if getattr(config, "sf_or_source", "tokens") == "rf_local":
+        from rc2_glm.basis import raised_cosine_basis_linear, circular_basis
+        n_rows = sf_vals.size
+        sf_fin = np.isfinite(sf_vals)
+        B_sf = np.zeros((n_rows, config.n_sf_bases), dtype=np.float64)
+        if sf_fin.any():
+            B_sf[sf_fin] = raised_cosine_basis_linear(
+                sf_vals[sf_fin], config.n_sf_bases, *config.sf_cpd_range
+            )
+        or_fin = np.isfinite(or_vals)
+        B_or = np.zeros((n_rows, config.n_or_bases), dtype=np.float64)
+        if or_fin.any():
+            B_or[or_fin] = circular_basis(or_vals[or_fin], config.n_or_bases)
+    else:
+        B_sf = None
+        B_or = None
+
     offset = float(np.log(config.time_bin_width))
     fold_ids = make_trial_folds(
         trial_ids,
@@ -570,6 +626,8 @@ def _fit_one_cluster(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
         fold_ids_per_seed=fold_ids_per_seed,
     )
 
@@ -581,6 +639,8 @@ def _fit_one_cluster(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
     )
     full_int_cv, full_int_status = _cv_for_label(
         "FullInteraction", B_speed, B_tf, B_onset, sf_vals, or_vals,
@@ -590,6 +650,8 @@ def _fit_one_cluster(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
     )
 
     coef_df, betas, col_names_by_model, preds, refit_status = _fit_plot_models(
@@ -602,6 +664,8 @@ def _fit_one_cluster(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
     )
 
     profile_cv_bps = _profile_cv_diagnostic(
@@ -615,6 +679,7 @@ def _fit_one_cluster(
         y=y, offset=offset, backend=backend,
         cluster_id=cluster_id,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_sf=B_sf, B_or=B_or,
     )
 
     return ClusterFit(
@@ -648,6 +713,8 @@ def _profile_cv_diagnostic(
     cluster_id: int,
     sf_ref_levels: list[float] | None,
     or_ref_levels: list[float] | None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Post-hoc speed-profile CV on Null / Selected / Selected-without-Speed.
 
@@ -705,6 +772,7 @@ def _profile_cv_diagnostic(
         X, _ = assemble_design_matrix_selected(
             B_speed, B_tf, B_onset, sf_vals, or_vals, vars_,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+            B_sf=B_sf, B_or=B_or,
         )
         if X.shape[1] == 0 or X.shape[1] >= y.size:
             return float("nan")
@@ -741,6 +809,8 @@ def _cv_for_label(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
 ) -> tuple[float, str]:
     include_onset = getattr(config, "include_onset_kernel", True)
     X, _ = assemble_design_matrix(
@@ -749,6 +819,8 @@ def _cv_for_label(
         B_history=B_history,
         B_me_face=B_me_face,
         B_accel=B_accel,
+        B_sf=B_sf,
+        B_or=B_or,
         include_onset_kernel=include_onset,
     )
     if X.shape[1] == 0:
@@ -795,6 +867,8 @@ def _fit_plot_models(
     B_history: np.ndarray | None = None,
     B_me_face: np.ndarray | None = None,
     B_accel: np.ndarray | None = None,
+    B_sf: np.ndarray | None = None,
+    B_or: np.ndarray | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, np.ndarray],
@@ -848,6 +922,8 @@ def _fit_plot_models(
             B_history=B_history,
             B_me_face=B_me_face,
             B_accel=B_accel,
+            B_sf=B_sf,
+            B_or=B_or,
             include_onset_kernel=include_onset,
         )
         if X.shape[1] == 0:
