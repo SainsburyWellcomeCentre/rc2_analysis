@@ -1,7 +1,7 @@
-function [th, start_window, period, n_events, fc] = get_parameters_for_photodiode(animal_id, session_type)
+function [th, start_window, period, fc] = get_parameters_for_photodiode(animal_id, session_type)
 %%GET_PARAMETERS_FOR_PHOTODIODE Get parameters to extract starting times from photodiode signal
 %
-%   [TH, START_WINDOW, PERIOD, N_EVENTS, FC] = get_parameters_for_photodiode(ANIMAL_ID, SESSION_TYPE)
+%   [TH, START_WINDOW, PERIOD, FC] = get_parameters_for_photodiode(ANIMAL_ID, SESSION_TYPE)
 %   A function to get pre-selected parameters useful to find strarting times 
 %   of the photodiode signal. The optimal parameters depend on the experiment, 
 %   which is identified with ANIMAL_ID. 
@@ -14,7 +14,6 @@ function [th, start_window, period, n_events, fc] = get_parameters_for_photodiod
 %   - TH: threshold to be applied to the band-passed signal
 %   - START_WINDOW: initial part of the experiment before the sequence of stimuli starts
 %   - PERIOD: minimum duration of a stimulus
-%   - N_EVENTS: number of stimuli in session
 %   - FC: cutoff frequency
 
 
@@ -47,7 +46,6 @@ if session_type == "sparse_noise"
         th = 10; 
     end
     period = 0.23 * 10e3;
-    n_events = 2500;
     fc = 8;
      
 elseif session_type == "sf_tf"
@@ -63,7 +61,6 @@ elseif session_type == "sf_tf"
     end
     start_window = 1.2e5:1.22e5;
     period = 0.1 * 10e4;
-    n_events = 128 * reps;
     fc = 5;
 
 elseif session_type == "sparse_noise_goggles"
@@ -76,7 +73,6 @@ elseif session_type == "sparse_noise_goggles"
         th = 4;   % default - verify by plotting 20*filtfilt signal for new animals
     end
     period   = 0.23 * 10e3;
-    n_events = 5000;
     fc       = 8;
 
 elseif session_type == "sparse_noise_screens"
@@ -89,6 +85,5 @@ elseif session_type == "sparse_noise_screens"
         th = 150;   % default - verify by plotting 20*filtfilt signal for new animals
     end
     period   = 0.23 * 10e3;
-    n_events = 5000;
     fc       = 8;
 end
