@@ -264,11 +264,16 @@ def _kernel_for_var(
             lag=sub["coefficient"].str.extract(r"(\d+)$").astype(int).iloc[:, 0]
         ).sort_values("lag")
         betas = sub["estimate"].to_numpy()
-        # Reconstruct the lag-bin grid the basis was evaluated on
+        # Reconstruct the lag-bin grid the basis was evaluated on — using the
+        # SAME basis kind the fit used. With "identity" (the short-window
+        # default: 2 lags at 20 ms) this is np.eye, so kernel == the raw lag
+        # coefficients; rebuilding without kind= defaulted to raised_cosine and
+        # mixed the dummies into a spurious smooth/"cosine" line (2026-06-15).
         n_lag_bins = max(int(round(config.history_window_s / config.time_bin_width)), 1)
         n_bases = sub.shape[0]
         h_basis = history_basis(
             n_bases, config.history_window_s, config.time_bin_width,
+            kind=getattr(config, "history_basis_kind", "raised_cosine"),
         )
         # Lag in milliseconds (lag bin 1..N → time post-spike)
         x_grid = np.arange(1, n_lag_bins + 1) * config.time_bin_width * 1000.0
@@ -663,7 +668,13 @@ def _render_kernel_panel(
         var in ("SF", "OR")
         and getattr(config, "sf_or_source", "tokens") != "rf_local"
     )
-    if sf_or_categorical:
+    # Identity-basis History is a set of discrete lag coefficients, not a smooth
+    # filter — draw it as bars (one per lag) so it can't be misread as a curve.
+    history_discrete = (
+        var == "History"
+        and getattr(config, "history_basis_kind", "raised_cosine") == "identity"
+    )
+    if sf_or_categorical or history_discrete:
         bar_w = (x.max() - x.min()) / max(len(x), 1) * 0.4 if len(x) > 1 else 0.5
         ax.bar(x, kernel, color=colour, edgecolor="black",
                linewidth=0.5, width=bar_w)
@@ -1987,10 +1998,18 @@ def plot_cluster_model_overview(
     render "N/A" in every panel of that row. Mirrors MATLAB
     ``scripts/glm_single_cluster_analysis.m`` lines 2727-3290.
     """
-    fig, axes = plt.subplots(4, 6, figsize=(18, 11), constrained_layout=True)
+    fig, axes = plt.subplots(4, 9, figsize=(26, 11), constrained_layout=True)
 
     motion_mask = cluster_df["condition"] != "stationary"
     motion_df = cluster_df.loc[motion_mask].reset_index(drop=True)
+    # Per-bin "recent history" axis for the History column: the previous
+    # bin's firing rate within the same trial (NaN at each trial's first
+    # motion bin). Lets the overview show the autoregressive dependence even
+    # when History is turned off as a regressor.
+    if not motion_df.empty:
+        motion_df = motion_df.assign(
+            _hist_lag1=_lag1_rate_per_trial(motion_df, config.time_bin_width)
+        )
     if motion_df.empty:
         fig.suptitle(
             f"No motion bins for {probe_id} cluster {cluster_id}", fontsize=12,
@@ -2073,6 +2092,16 @@ def plot_cluster_model_overview(
                 axis_title="OR", legend_fmt=lambda v: f"{int(round(np.degrees(v)))}°",
                 tol=1e-3,
             )
+        # Columns 6-8: the remaining regressors — Acceleration and ME_face
+        # (value covariates) and History (the lag-1 firing rate axis). Shown
+        # for every cluster even when off, so the overview is complete and you
+        # can see the obs-vs-pred relationship the model does/doesn't capture.
+        _plot_covariate_scatter(row_axes[6], motion_df, obs_fr_motion, preds,
+                                value_col="acceleration", title_prefix="Accel")
+        _plot_covariate_scatter(row_axes[7], motion_df, obs_fr_motion, preds,
+                                value_col="me_face_raw", title_prefix="ME")
+        _plot_covariate_scatter(row_axes[8], motion_df, obs_fr_motion, preds,
+                                value_col="_hist_lag1", title_prefix="Hist")
         _apply_row_style(row_axes, label, is_winner, n_coefs=len(col_names))
 
     for ax in axes[:, 1:].ravel():
@@ -2436,6 +2465,58 @@ def _plot_value_binned_scatter(
         motion_df["trial_id"].to_numpy()[m],
         bin_edges, bin_centres,
         cmap=plt.get_cmap("viridis"),
+        title_prefix=title_prefix, colorbar=True,
+    )
+
+
+def _lag1_rate_per_trial(motion_df: pd.DataFrame, bin_width: float) -> np.ndarray:
+    """Previous-bin firing rate (Hz) within each trial — a scalar 'recent
+    history' axis for the overview's History column. NaN at each trial's first
+    motion bin (no predecessor). Bins are ordered by time_in_trial per trial.
+    """
+    out = np.full(len(motion_df), np.nan, dtype=np.float64)
+    sc = motion_df["spike_count"].to_numpy(dtype=np.float64)
+    tid = motion_df["trial_id"].to_numpy()
+    tcol = motion_df["time_in_trial"].to_numpy(dtype=np.float64)
+    for t in np.unique(tid):
+        idx = np.flatnonzero(tid == t)
+        order = idx[np.argsort(tcol[idx])]
+        out[order[1:]] = sc[order[:-1]] / bin_width
+    return out
+
+
+def _plot_covariate_scatter(
+    ax, motion_df: pd.DataFrame, obs_fr: np.ndarray, preds: np.ndarray,
+    value_col: str, title_prefix: str, n_bins: int = 10,
+) -> None:
+    """Binned predicted-vs-observed scatter for a per-bin covariate
+    (Acceleration / ME_face / History lag-1 rate), equal-count quantile bins.
+
+    Rendered for every cluster even when the regressor is OFF, so the overview
+    shows the obs-vs-pred relationship the model does or doesn't capture.
+    Placeholder when the column is absent or mostly NaN (e.g. ME on a
+    no-camera probe).
+    """
+    if value_col not in motion_df.columns:
+        ax.text(0.5, 0.5, f"no {title_prefix}", ha="center", va="center",
+                transform=ax.transAxes, fontsize=7, color="#888")
+        return
+    v = motion_df[value_col].to_numpy(dtype=np.float64)
+    m = np.isfinite(v)
+    if int(m.sum()) < n_bins:
+        ax.text(0.5, 0.5, f"no {title_prefix} data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=7, color="#888")
+        return
+    edges = np.unique(np.nanquantile(v[m], np.linspace(0.0, 1.0, n_bins + 1)))
+    if edges.size < 3:
+        ax.text(0.5, 0.5, f"degenerate {title_prefix}", ha="center",
+                va="center", transform=ax.transAxes, fontsize=7, color="#888")
+        return
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    _plot_binned_scatter(
+        ax, v[m], obs_fr[m], preds[m],
+        motion_df["trial_id"].to_numpy()[m],
+        edges, centres, cmap=plt.get_cmap("viridis"),
         title_prefix=title_prefix, colorbar=True,
     )
 
