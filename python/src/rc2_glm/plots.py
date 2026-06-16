@@ -523,6 +523,16 @@ def plot_cluster_kernels(
     obs = observed_tuning or {}
     var_cols = _FULL_VAR_COLS
 
+    # In history_in_baseline mode History is a controlled-for baseline term, not
+    # an interpreted kernel — drop its coefficient rows AND its column from the
+    # Additive/FullInteraction grid so it renders in no panel (its mean is still
+    # folded into the intercept for the marginal).
+    if getattr(config, "history_in_baseline", False):
+        coef_df_cluster = coef_df_cluster[
+            ~coef_df_cluster["coefficient"].astype(str).str.match(r"^History_\d+$")
+        ]
+        var_cols = tuple(v for v in var_cols if v != "History")
+
     sel_rows = coef_df_cluster[coef_df_cluster["model"] == "Selected"]
     selected_present = _selected_vars_present(sel_rows)
     selected_label = "+".join(selected_present) if selected_present else "—"
@@ -979,6 +989,15 @@ def plot_forward_selection_summary(
         _BETA_GROUP_COLORS["History"], _COLOR_ME_FACE, (0.09, 0.75, 0.81),
         _COLOR_INT_BLUE,
     ]
+    # In history_in_baseline mode History is never a selected variable — drop
+    # its (always-zero, meaningless) inclusion bar entirely.
+    if "time_history_mode" in comparison_df.columns and (
+        comparison_df["time_history_mode"].astype(str) == "baseline"
+    ).any():
+        h = me_labels.index("History")
+        del me_counts[h]
+        del me_labels[h]
+        del me_colors[h]
     y_pos = np.arange(1, len(me_counts) + 1)
     ax.barh(y_pos, me_counts, color=me_colors, edgecolor="none")
     ax.set_yticks(y_pos)
@@ -2062,7 +2081,10 @@ def plot_cluster_model_overview(
             _apply_row_style(row_axes, label, is_winner, n_coefs=None)
             continue
 
-        _plot_beta_swarm(row_axes[0], np.asarray(beta), list(col_names))
+        _plot_beta_swarm(
+            row_axes[0], np.asarray(beta), list(col_names),
+            hide_history=getattr(config, "history_in_baseline", False),
+        )
         _plot_condition_scatter(row_axes[1], motion_df, obs_fr_motion, preds)
         _plot_vt_speed_scatter(row_axes[2], motion_df, obs_fr_motion, preds)
         _plot_vt_tf_scatter(row_axes[3], motion_df, obs_fr_motion, preds)
@@ -2102,8 +2124,13 @@ def plot_cluster_model_overview(
                                 value_col="acceleration", title_prefix="Accel")
         _plot_covariate_scatter(row_axes[7], motion_df, obs_fr_motion, preds,
                                 value_col="me_face_raw", title_prefix="ME")
-        _plot_covariate_scatter(row_axes[8], motion_df, obs_fr_motion, preds,
-                                value_col="_hist_lag1", title_prefix="Hist")
+        # History column: suppressed in history_in_baseline mode (History is a
+        # controlled-for baseline term, not shown), else the lag-1 rate scatter.
+        if getattr(config, "history_in_baseline", False):
+            row_axes[8].axis("off")
+        else:
+            _plot_covariate_scatter(row_axes[8], motion_df, obs_fr_motion, preds,
+                                    value_col="_hist_lag1", title_prefix="Hist")
         _apply_row_style(row_axes, label, is_winner, n_coefs=len(col_names))
 
     for ax in axes[:, 1:].ravel():
@@ -2141,13 +2168,25 @@ def _apply_row_style(
         swarm_ax.set_title(title_str, fontsize=8)
 
 
-def _plot_beta_swarm(ax, beta: np.ndarray, col_names: list[str]) -> None:
+def _plot_beta_swarm(
+    ax, beta: np.ndarray, col_names: list[str], hide_history: bool = False,
+) -> None:
     """Grouped β swarm: basis-number text labels + group-mean lines.
 
     Groups match MATLAB ``compute_grouped_params`` (line 6328). Basis
     number extraction matches ``extract_basis_label`` (line 6391): main
     effect → last digits of the name; interaction → ``"{i}-{j}"``.
+
+    ``hide_history``: drop ``History_*`` columns (history_in_baseline mode —
+    History is a suppressed baseline term).
     """
+    if hide_history:
+        keep = [
+            i for i, cn in enumerate(col_names)
+            if not str(cn).startswith("History_")
+        ]
+        beta = np.asarray(beta)[keep]
+        col_names = [col_names[i] for i in keep]
     groups: dict[str, list[tuple[float, str]]] = {g: [] for g in _BETA_GROUP_ORDER}
     for b, cn in zip(beta, col_names):
         tag = _beta_group_tag(cn)
@@ -3166,8 +3205,17 @@ def _fold_history_into_intercept(
 
     No-op when History is off / absent. ``allow_history_interactions=True`` would
     need the columns built per grid point — the zero-fill guard flags that case.
+
+    Fires for BOTH History modes: the legacy ``include_history`` candidate mode
+    and ``history_in_baseline`` (always-on baseline term) — in either case the
+    History columns are in the fitted design but zero-filled out of the marginal,
+    so their mean must be folded into the Intercept or the prediction silently
+    drops the History contribution.
     """
-    if not getattr(config, "include_history", False):
+    if not (
+        getattr(config, "include_history", False)
+        or getattr(config, "history_in_baseline", False)
+    ):
         return beta
     hist_idx = [i for i, n in enumerate(train_names) if n.startswith("History_")]
     if not hist_idx or "Intercept" not in train_names:

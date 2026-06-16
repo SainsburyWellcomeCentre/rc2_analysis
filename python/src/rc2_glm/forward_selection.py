@@ -120,6 +120,11 @@ class SelectionResult:
     # The admission rule that produced this selection (added 2026-06-16), so
     # downstream CSV rows self-describe the gate without re-reading config.
     selection_rule: str = "delta_bps_threshold"
+    # How the History term was handled (added 2026-06-16): "off" (no history),
+    # "candidate" (legacy include_history forward-selection candidate), or
+    # "baseline" (history_in_baseline — always-on nuisance, never selected,
+    # not displayed). Lets CSV rows self-describe without re-reading config.
+    history_mode: str = "off"
 
 
 def forward_select(
@@ -171,14 +176,25 @@ def forward_select(
     """
     config = config or GLMConfig()
     include_onset = getattr(config, "include_onset_kernel", True)
+    history_in_baseline = getattr(config, "history_in_baseline", False)
+    if history_in_baseline and B_history is None:
+        raise ValueError(
+            "config.history_in_baseline=True but B_history is None — the "
+            "spike-history basis must be built (pipeline builds it when "
+            "include_history OR history_in_baseline)."
+        )
+    # History is a forward-selection CANDIDATE only in the legacy include_history
+    # mode; in history_in_baseline mode it is an always-on baseline term, never
+    # a candidate. ``history_present`` = History columns appear in the design.
     include_history = (
         getattr(config, "include_history", False) and B_history is not None
     )
+    history_present = (include_history or history_in_baseline) and B_history is not None
 
     # Rebuild the (n_lag, n_bases) history basis for the smoothness penalty.
     # Same args as pipeline's convolve_history input, so columns align.
     history_basis_mat = None
-    if getattr(config, "history_smooth_lambda", None) is not None and include_history:
+    if getattr(config, "history_smooth_lambda", None) is not None and history_present:
         from rc2_glm.basis import history_basis
         history_basis_mat = history_basis(
             n_bases=config.n_history_bases,
@@ -215,12 +231,13 @@ def forward_select(
         )
 
     common_assembler_kwargs = dict(
-        B_history=B_history if include_history else None,
+        B_history=B_history if history_present else None,
         B_me_face=B_me_face,
         B_accel=B_accel,
         B_sf=B_sf,
         B_or=B_or,
         include_onset_kernel=include_onset,
+        history_in_baseline=history_in_baseline,
     )
 
     # Null model: intercept (+ onset kernel if include_onset_kernel)
@@ -262,7 +279,10 @@ def forward_select(
         # selection_history reflects only candidates we actually had data
         # for).
         remaining.remove("ME_face")
-    if include_history:
+    if include_history and not history_in_baseline:
+        # History is a Phase-1 candidate only in the legacy mode; in
+        # history_in_baseline mode it is an always-on baseline term (already in
+        # common_assembler_kwargs), never offered to forward selection.
         remaining.append("History")
     while remaining:
         round_num += 1
@@ -363,6 +383,10 @@ def forward_select(
         final_cv=final_cv,
         final_vs_null_pval=final_vs_null_pval,
         selection_rule=selection_rule,
+        history_mode=(
+            "baseline" if history_in_baseline
+            else ("candidate" if include_history else "off")
+        ),
     )
 
 
@@ -394,6 +418,7 @@ def _try_candidates(
     B_sf: np.ndarray | None = None,
     B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
+    history_in_baseline: bool = False,
 ) -> RoundResult:
     """Evaluate each candidate under the cv-fold partition(s) and admit by
     ``config.selection_rule``:
@@ -433,6 +458,7 @@ def _try_candidates(
             B_sf=B_sf,
             B_or=B_or,
             include_onset_kernel=include_onset_kernel,
+            history_in_baseline=history_in_baseline,
         )
         if X_test.shape[1] >= y.size:
             tested[cand] = -np.inf
@@ -534,6 +560,7 @@ def _cv_for_selected_per_seed(
     B_sf: np.ndarray | None = None,
     B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
+    history_in_baseline: bool = False,
 ) -> list[CVResult]:
     X, names = assemble_design_matrix_selected(
         B_speed, B_tf, B_onset, sf_vals, or_vals, list(selected),
@@ -544,6 +571,7 @@ def _cv_for_selected_per_seed(
         B_sf=B_sf,
         B_or=B_or,
         include_onset_kernel=include_onset_kernel,
+        history_in_baseline=history_in_baseline,
     )
     penalty = _penalty_for(names, config, history_basis_mat)
     return [

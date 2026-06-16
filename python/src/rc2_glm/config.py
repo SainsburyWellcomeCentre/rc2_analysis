@@ -82,6 +82,18 @@ class GLMConfig:
     # When False (default), History interacts with nothing in Phase 2 —
     # interaction interpretations are rarely useful for spike history.
     allow_history_interactions: bool = False
+    # History-in-baseline mode (2026-06-16). When True, the spike-history term
+    # is ALWAYS present as a baseline/nuisance regressor — in the null model and
+    # every fitted model, exactly like the onset kernel — but is NOT a
+    # forward-selection candidate and is NOT displayed in any figure. It still
+    # absorbs refractory/autocorrelation structure and its mean is folded into
+    # the intercept for the marginal prediction; it is controlled-for, not
+    # interpreted. Forces History on (B_history is built regardless of
+    # include_history), keeps History out of selected_vars, and implies
+    # allow_history_interactions=False (no candidate parent). Independent of
+    # include_history (the legacy candidate mode), so existing runs that leave
+    # this False are byte-identical.
+    history_in_baseline: bool = False
     # Onset kernel inclusion (default OFF since 2026-04-29; default ON since 2026-04-30).
     #
     # Default flipped from True to False on 2026-04-29 after the prompt-03

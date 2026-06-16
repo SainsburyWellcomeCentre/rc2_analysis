@@ -37,6 +37,7 @@ def assemble_design_matrix_selected(
     B_sf: np.ndarray | None = None,
     B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
+    history_in_baseline: bool = False,
 ) -> tuple[np.ndarray, list[str]]:
     """Assemble the design matrix from selected variable names.
 
@@ -55,6 +56,11 @@ def assemble_design_matrix_selected(
     - ``include_onset_kernel``: when False, the Onset basis is OMITTED
       from the design matrix entirely. Used by the prompt-03 ablation
       experiment. Default True for parity-preserving baseline behaviour.
+    - ``history_in_baseline``: when True, the History basis is ALWAYS appended
+      (independent of ``selected_vars``), exactly like the onset kernel — it
+      becomes a baseline/nuisance term rather than a selected variable. Requires
+      ``B_history``. Default False (legacy: History appended only when
+      ``"History"`` is in ``selected_vars``).
     - ``B_sf`` / ``B_or``: per-bin RF-local SF / OR value bases
       ``(n_bins, n_sf_bases)`` / ``(n_bins, n_or_bases)`` (config
       ``sf_or_source="rf_local"``). When provided, ``SF`` / ``OR`` (and any
@@ -79,7 +85,8 @@ def assemble_design_matrix_selected(
 
     selected = set(selected_vars)
 
-    if "History" in selected and B_history is not None and B_history.shape[1] > 0:
+    if (("History" in selected) or history_in_baseline) and \
+            B_history is not None and B_history.shape[1] > 0:
         cols.append(B_history)
         names += [f"History_{i + 1}" for i in range(B_history.shape[1])]
 
@@ -287,13 +294,16 @@ def assemble_design_matrix(
     B_sf: np.ndarray | None = None,
     B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
+    history_in_baseline: bool = False,
 ) -> tuple[np.ndarray, list[str]]:
     """Build a fixed model matrix labelled by `model_label`.
 
     See ``assemble_design_matrix_selected`` for the History / ME_face /
-    Acceleration / onset-toggle keyword args. ``M0`` and ``Null`` ignore
-    History / ME_face / Acceleration (all Phase-1 candidates, not in the
-    always-on baseline).
+    Acceleration / onset-toggle keyword args. ``M0`` is always the bare
+    intercept. ``Null`` ignores ME_face / Acceleration (Phase-1 candidates) —
+    and ignores History too UNLESS ``history_in_baseline`` is True, in which
+    case History is part of the always-on baseline and Null/Additive/Full all
+    carry it.
     """
     accel_var = ["Acceleration"] if B_accel is not None else []
     common_kwargs = dict(
@@ -303,6 +313,7 @@ def assemble_design_matrix(
         B_sf=B_sf,
         B_or=B_or,
         include_onset_kernel=include_onset_kernel,
+        history_in_baseline=history_in_baseline,
     )
     if model_label == "M0":
         n = B_speed.shape[0]

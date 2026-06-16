@@ -513,10 +513,13 @@ def _fit_one_cluster(
     B_onset = onset_kernel_basis(
         onset, config.n_onset_bases, config.onset_range[1]
     )
-    # Per-cluster spike-history features (causal, trial-aware). Built
-    # only when config.include_history is True (prompt 03 opt-in);
+    # Per-cluster spike-history features (causal, trial-aware). Built when
+    # config.include_history (prompt 03 opt-in, History as a candidate) OR
+    # config.history_in_baseline (History as an always-on baseline term);
     # otherwise None — every downstream caller treats None as "no history".
-    if getattr(config, "include_history", False):
+    if getattr(config, "include_history", False) or getattr(
+        config, "history_in_baseline", False
+    ):
         from rc2_glm.basis import history_basis, convolve_history
         h_basis = history_basis(
             n_bases=config.n_history_bases,
@@ -840,6 +843,7 @@ def _cv_for_label(
     B_or: np.ndarray | None = None,
 ) -> tuple[float, str]:
     include_onset = getattr(config, "include_onset_kernel", True)
+    history_in_baseline = getattr(config, "history_in_baseline", False)
     X, _ = assemble_design_matrix(
         B_speed, B_tf, B_onset, sf_vals, or_vals, label,
         sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
@@ -849,6 +853,7 @@ def _cv_for_label(
         B_sf=B_sf,
         B_or=B_or,
         include_onset_kernel=include_onset,
+        history_in_baseline=history_in_baseline,
     )
     if X.shape[1] == 0:
         logger.warning(
@@ -926,15 +931,22 @@ def _fit_plot_models(
     refit_status: dict[str, str] = {}
 
     include_onset = getattr(config, "include_onset_kernel", True)
+    history_in_baseline = getattr(config, "history_in_baseline", False)
     # Additive must be the FULL additive model and FullInteraction the true
     # ceiling — so every enabled main effect (ME, History) belongs in both, not
     # just Speed/TF/SF/OR/Accel. Gated on the basis being present so token/
     # screens runs without ME/History are byte-identical (2026-06-15). ME is
     # already hardcoded in _FULL_INTERACTION_VARS (skipped there if B_me_face is
     # None), so it's only added to Additive here.
+    # In history_in_baseline mode History is NOT a named model variable — it is
+    # appended to EVERY model (incl. Null) via history_in_baseline=True below —
+    # so hist_v stays empty (keeping "History" out of the model var lists also
+    # keeps it out of the plots, where it is a suppressed baseline term).
     accel_v = ["Acceleration"] if B_accel is not None else []
     me_v = ["ME_face"] if B_me_face is not None else []
-    hist_v = ["History"] if B_history is not None else []
+    hist_v = (
+        ["History"] if (B_history is not None and not history_in_baseline) else []
+    )
     model_defs: list[tuple[str, list[str]]] = [
         ("Null", []),
         ("Selected", list(selected_vars)),
@@ -965,6 +977,7 @@ def _fit_plot_models(
             B_sf=B_sf,
             B_or=B_or,
             include_onset_kernel=include_onset,
+            history_in_baseline=history_in_baseline,
         )
         if X.shape[1] == 0:
             logger.warning(
@@ -1099,7 +1112,15 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_is_tf_tuned": "TF" in selected_set,
         f"{GLM_TYPE}_is_sf_tuned": "SF" in selected_set,
         f"{GLM_TYPE}_is_or_tuned": "OR" in selected_set,
-        f"{GLM_TYPE}_is_history_tuned": "History" in selected_set,
+        # In history_in_baseline mode History is a controlled-for baseline term,
+        # not a tuning verdict — say nothing (NaN), and let history_mode carry
+        # the self-description.
+        f"{GLM_TYPE}_history_mode": getattr(sel, "history_mode", "off"),
+        f"{GLM_TYPE}_is_history_tuned": (
+            float("nan")
+            if getattr(sel, "history_mode", "off") == "baseline"
+            else ("History" in selected_set)
+        ),
         f"{GLM_TYPE}_is_me_face_tuned": "ME_face" in selected_set,
         f"{GLM_TYPE}_is_acceleration_tuned": "Acceleration" in selected_set,
         f"{GLM_TYPE}_has_interaction": has_int,
@@ -2135,6 +2156,17 @@ def main(argv: list[str] | None = None) -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--history-in-baseline", dest="history_in_baseline", action="store_true",
+        help=(
+            "Always include the spike-history term as a BASELINE/nuisance "
+            "regressor (in the null model and every fitted model, like the "
+            "onset kernel) but NEVER as a forward-selection candidate and "
+            "NEVER displayed in any figure. Forces History on (no need for "
+            "--include-history). History reports no tuning verdict in this "
+            "mode (is_history_tuned=NaN; see the history_mode column)."
+        ),
+    )
+    parser.add_argument(
         "--with-onset-kernel", dest="include_onset_kernel", action="store_true",
         help=(
             "Re-enable the onset kernel (default OFF since 2026-04-29). "
@@ -2183,6 +2215,7 @@ def main(argv: list[str] | None = None) -> int:
     # ``rc2-glm <probe> <out>`` call uses the new world without surprises.
     parser.set_defaults(
         include_history=False,
+        history_in_baseline=False,
         include_onset_kernel=True,
         include_me_face=True,
     )
@@ -2350,6 +2383,7 @@ def main(argv: list[str] | None = None) -> int:
         "tuning_curve_mode": args.tuning_curve_mode,
         "tuning_curve_uncertainty": args.tuning_curve_uncertainty,
         "include_history": args.include_history,
+        "history_in_baseline": args.history_in_baseline,
         "include_onset_kernel": args.include_onset_kernel,
         "include_me_face": args.include_me_face,
         "cv_strategy": args.cv_strategy,
