@@ -18,19 +18,50 @@ candidate is admitted iff at least ``selection_threshold_count`` of N
 exceed ``delta_bps_threshold``. The "best" candidate of a passing
 round is the admitted one with the highest mean Δ across partitions.
 N=1 (the default) reduces exactly to single-seed behaviour.
+
+Signed-rank admission (added 2026-06-16). When
+``config.selection_rule == "signed_rank"`` a candidate is admitted iff a
+one-sided Wilcoxon signed-rank test on the PER-FOLD paired Δ bits/spike
+(candidate minus current model, across the n_folds folds of a single
+partition) gives p < ``config.selection_alpha`` — Hardcastle et al. 2017,
+Neuron. This replaces the fixed Δ-bps threshold with a per-fold
+significance test and is mutually exclusive with multi-seed voting
+(the folds ARE the test sample, so N must be 1).
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
+from scipy.stats import wilcoxon
 
 from rc2_glm.config import GLMConfig, INTERACTION_PARENTS
 from rc2_glm.cross_validation import CVResult, cross_validate_glm
 from rc2_glm.design_matrix import assemble_design_matrix_selected
 from rc2_glm.penalty import build_penalty_matrix
+
+logger = logging.getLogger(__name__)
+
+
+def _signed_rank_greater(per_fold_delta: np.ndarray) -> float:
+    """One-sided Wilcoxon signed-rank p-value for H1: median per-fold Δ > 0.
+
+    The Hardcastle et al. 2017 admission statistic. NaN folds (zero held-out
+    spikes) are dropped. Returns 1.0 when the test is undefined (all
+    differences ~0, or too few non-zero paired differences for scipy)."""
+    d = np.asarray(per_fold_delta, dtype=np.float64)
+    d = d[np.isfinite(d)]
+    if d.size < 1 or np.allclose(d, 0.0):
+        return 1.0
+    try:
+        _, p = wilcoxon(d, alternative="greater", zero_method="wilcox")
+    except ValueError:
+        # scipy raises when every difference is zero or n is too small.
+        return 1.0
+    return float(p)
 
 
 def _penalty_for(
@@ -69,6 +100,9 @@ class RoundResult:
     delta_bps_per_seed: dict[str, list[float]] = field(default_factory=dict)
     admitted_count: dict[str, int] = field(default_factory=dict)
     n_seeds: int = 1
+    # Per-candidate one-sided signed-rank p-value (added 2026-06-16). NaN for
+    # the legacy delta_bps_threshold rule; populated only under signed_rank.
+    pval: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -79,6 +113,13 @@ class SelectionResult:
     final_cv_bps: float
     null_cv: CVResult           # canonical (seed-0) null CV result
     final_cv: CVResult | None   # canonical (seed-0) final CV result
+    # Signed-rank p-value of the assembled final model vs the null, under the
+    # single fold partition (added 2026-06-16). NaN for the legacy rule or an
+    # empty selection.
+    final_vs_null_pval: float = float("nan")
+    # The admission rule that produced this selection (added 2026-06-16), so
+    # downstream CSV rows self-describe the gate without re-reading config.
+    selection_rule: str = "delta_bps_threshold"
 
 
 def forward_select(
@@ -165,6 +206,14 @@ def forward_select(
             )
     n_seeds = len(seeds)
 
+    selection_rule = getattr(config, "selection_rule", "delta_bps_threshold")
+    if selection_rule == "signed_rank" and n_seeds > 1:
+        raise ValueError(
+            "selection_rule='signed_rank' requires a single fold partition "
+            f"(n_selection_seeds=1); got n_seeds={n_seeds}. The folds are the "
+            "signed-rank test sample, so multi-seed voting is redundant."
+        )
+
     common_assembler_kwargs = dict(
         B_history=B_history if include_history else None,
         B_me_face=B_me_face,
@@ -221,7 +270,7 @@ def forward_select(
             remaining, selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
             y, offset, seeds, current_bps_per_seed,
             phase=1, round_num=round_num, backend=backend, config=config,
-            threshold_count=threshold_count,
+            threshold_count=threshold_count, current_cv_list=current_cv_per_seed,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             history_basis_mat=history_basis_mat,
             **common_assembler_kwargs,
@@ -258,7 +307,7 @@ def forward_select(
             eligible, selected, B_speed, B_tf, B_onset, sf_vals, or_vals,
             y, offset, seeds, current_bps_per_seed,
             phase=2, round_num=round_num, backend=backend, config=config,
-            threshold_count=threshold_count,
+            threshold_count=threshold_count, current_cv_list=current_cv_per_seed,
             sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
             history_basis_mat=history_basis_mat,
             **common_assembler_kwargs,
@@ -287,6 +336,22 @@ def forward_select(
         else float(current_bps_per_seed[0])
     )
 
+    # Hardcastle final-vs-null check: the assembled model must clear the
+    # signed-rank test against the null. Forward steps each passed vs the
+    # running model, but signed-rank is not transitive, so we record (and
+    # warn on) the final-vs-null p-value without auto-clearing the selection.
+    final_vs_null_pval = float("nan")
+    if selection_rule == "signed_rank" and selected and final_cv is not None:
+        final_vs_null_pval = _signed_rank_greater(
+            final_cv.fold_bits_per_spike - null_cv.fold_bits_per_spike
+        )
+        if final_vs_null_pval >= config.selection_alpha:
+            logger.warning(
+                "signed_rank: final model %s does NOT clear signed-rank vs "
+                "null (p=%.3g ≥ alpha=%.3g) despite per-step admission",
+                selected, final_vs_null_pval, config.selection_alpha,
+            )
+
     return SelectionResult(
         selected_vars=selected,
         history=history,
@@ -296,6 +361,8 @@ def forward_select(
         final_cv_bps=final_bps,
         null_cv=null_cv,
         final_cv=final_cv,
+        final_vs_null_pval=final_vs_null_pval,
+        selection_rule=selection_rule,
     )
 
 
@@ -317,6 +384,7 @@ def _try_candidates(
     backend: str,
     config: GLMConfig,
     threshold_count: int,
+    current_cv_list: Sequence[CVResult],
     sf_ref_levels: list[float] | None = None,
     or_ref_levels: list[float] | None = None,
     history_basis_mat: np.ndarray | None = None,
@@ -327,20 +395,32 @@ def _try_candidates(
     B_or: np.ndarray | None = None,
     include_onset_kernel: bool = True,
 ) -> RoundResult:
-    """Evaluate each candidate under N cv-fold partitions, admit
-    candidates that pass threshold_count of N, pick the passing
-    candidate with the highest mean Δ.
+    """Evaluate each candidate under the cv-fold partition(s) and admit by
+    ``config.selection_rule``:
 
-    Reduces to single-seed when ``len(fold_ids_list) == 1`` and
-    ``threshold_count == 1``.
+    - ``"delta_bps_threshold"`` (legacy): admit candidates whose Δ cv_bps
+      clears ``delta_bps_threshold`` in ≥ ``threshold_count`` of N partitions;
+      "best" = highest mean Δ. Reduces to single-seed when N == 1.
+    - ``"signed_rank"`` (Hardcastle): a single partition; admit candidates
+      whose per-fold paired Δ bits/spike (vs ``current_cv_list[0]``) is
+      significant by a one-sided Wilcoxon signed-rank test at
+      ``config.selection_alpha``; "best" = highest **median** per-fold Δ.
     """
     threshold = config.delta_bps_threshold
+    selection_rule = getattr(config, "selection_rule", "delta_bps_threshold")
     n_seeds = len(fold_ids_list)
+    current_fold_bps = (
+        current_cv_list[0].fold_bits_per_spike
+        if selection_rule == "signed_rank" and len(current_cv_list) > 0
+        else None
+    )
 
     tested: dict[str, float] = {}
     deltas_mean: dict[str, float] = {}
     delta_bps_per_seed: dict[str, list[float]] = {}
     admitted_count: dict[str, int] = {}
+    pvals: dict[str, float] = {}
+    rank_key: dict[str, float] = {}     # the value the "best" pick maximises
 
     for cand in candidates:
         test_vars = list(already_selected) + [cand]
@@ -359,17 +439,22 @@ def _try_candidates(
             deltas_mean[cand] = -np.inf
             delta_bps_per_seed[cand] = [-np.inf] * n_seeds
             admitted_count[cand] = 0
+            pvals[cand] = 1.0
+            rank_key[cand] = -np.inf
             continue
 
         penalty = _penalty_for(test_names, config, history_basis_mat)
         cv_bps_per_seed: list[float] = []
         deltas_for_cand: list[float] = []
+        cand_cv_seed0: CVResult | None = None
         for seed_idx, seed_folds in enumerate(fold_ids_list):
             cv = cross_validate_glm(
                 X_test, y, offset, seed_folds,
                 lambda_ridge=config.lambda_ridge, backend=backend,
                 penalty_matrix=penalty,
             )
+            if seed_idx == 0:
+                cand_cv_seed0 = cv
             cv_bps_per_seed.append(cv.cv_bits_per_spike)
             deltas_for_cand.append(
                 cv.cv_bits_per_spike - float(current_bps_per_seed[seed_idx])
@@ -380,14 +465,28 @@ def _try_candidates(
         delta_bps_per_seed[cand] = deltas_for_cand
         admitted_count[cand] = int(sum(d > threshold for d in deltas_for_cand))
 
-    # Admit only candidates that clear threshold in ≥k of N seeds.
-    # Among those, pick the one with the highest mean Δ.
-    passing = [
-        c for c in candidates
-        if admitted_count.get(c, 0) >= threshold_count
-    ]
+        if selection_rule == "signed_rank" and current_fold_bps is not None:
+            per_fold_delta = cand_cv_seed0.fold_bits_per_spike - current_fold_bps
+            pvals[cand] = _signed_rank_greater(per_fold_delta)
+            valid = per_fold_delta[np.isfinite(per_fold_delta)]
+            rank_key[cand] = float(np.median(valid)) if valid.size else -np.inf
+        else:
+            pvals[cand] = float("nan")
+            rank_key[cand] = deltas_mean[cand]
+
+    # Admission depends on the rule. Among passing candidates, pick the one
+    # that maximises rank_key (mean Δ for the legacy rule; median per-fold Δ
+    # for signed_rank).
+    if selection_rule == "signed_rank":
+        alpha = config.selection_alpha
+        passing = [c for c in candidates if pvals.get(c, 1.0) < alpha]
+    else:
+        passing = [
+            c for c in candidates
+            if admitted_count.get(c, 0) >= threshold_count
+        ]
     if passing:
-        best_candidate: str | None = max(passing, key=lambda c: deltas_mean[c])
+        best_candidate: str | None = max(passing, key=lambda c: rank_key[c])
         best_delta = deltas_mean[best_candidate]
         added = True
         cv_after = tested[best_candidate]
@@ -409,6 +508,7 @@ def _try_candidates(
         delta_bps_per_seed=delta_bps_per_seed,
         admitted_count=admitted_count,
         n_seeds=n_seeds,
+        pval=pvals,
     )
 
 

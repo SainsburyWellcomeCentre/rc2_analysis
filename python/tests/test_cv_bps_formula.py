@@ -117,3 +117,41 @@ def test_cv_bps_scales_with_bin_width_convention():
     coarse = bps(y_coarse, mu_coarse)
     # If bps were bin-width invariant these would be equal; they are not.
     assert not np.isclose(fine, coarse, atol=0.1), (fine, coarse)
+
+
+def test_fold_spikes_and_per_fold_bps_reconcile_to_pooled():
+    """The per-fold spike totals and per-fold bits/spike (added for the
+    Hardcastle signed-rank rule) must reconcile to the pooled cv_bits_per_spike:
+    pooled bps = sum(fold_ll) / sum(fold_spikes) / log(2), and the per-fold bps
+    is a spike-weighted decomposition of it.
+    """
+    rng = np.random.default_rng(0)
+    n = 60
+    X = np.column_stack([np.ones(n), rng.normal(0, 1, n)])
+    y = rng.poisson(0.5, n).astype(float)
+    offset = np.zeros(n)
+    fold_ids = np.repeat(np.arange(5), n // 5)
+
+    cv = cross_validate_glm(X, y, offset, fold_ids, lambda_ridge=0.0)
+
+    # fold_spikes aligns with fold_log_likelihood and sums to total spikes.
+    assert cv.fold_spikes.shape == cv.fold_log_likelihood.shape
+    assert np.isclose(cv.fold_spikes.sum(), y.sum())
+
+    # Per-fold bps = (fold_ll / fold_spikes) / log(2), spike-weighted mean = pooled.
+    fb = cv.fold_bits_per_spike
+    valid = cv.fold_spikes > 0
+    assert np.all(np.isfinite(fb[valid]))
+    weighted = np.sum(fb[valid] * cv.fold_spikes[valid]) / cv.fold_spikes[valid].sum()
+    assert np.isclose(weighted, cv.cv_bits_per_spike, atol=1e-12), (
+        weighted, cv.cv_bits_per_spike,
+    )
+
+
+def test_fold_bits_per_spike_nan_when_unpopulated():
+    """A legacy/empty CVResult with no fold_spikes yields all-NaN per-fold bps
+    (back-compat: nothing crashes if fold_spikes was never set)."""
+    from rc2_glm.cross_validation import CVResult
+
+    cv = CVResult(0.0, 0.0, np.array([-1.0, -2.0]), np.zeros(2))
+    assert np.all(np.isnan(cv.fold_bits_per_spike))

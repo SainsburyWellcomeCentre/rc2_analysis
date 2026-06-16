@@ -240,6 +240,21 @@ class GLMConfig:
     )
     delta_bps_threshold: float = 0.005
 
+    # --- Forward-selection admission rule ---
+    # "delta_bps_threshold" (default, legacy + MATLAB parity): admit a
+    #   candidate iff its mean Δ cv_bps clears delta_bps_threshold (optionally
+    #   in ≥selection_threshold_count of n_selection_seeds partitions).
+    # "signed_rank": Hardcastle et al. 2017 — admit iff a one-sided Wilcoxon
+    #   signed-rank test on the PER-FOLD paired Δ bits/spike (candidate minus
+    #   current model, across the n_folds folds of a SINGLE partition) gives
+    #   p < selection_alpha. Among passing candidates the "best" is the one
+    #   with the highest median per-fold Δ. The final selected model must also
+    #   beat the null by the same signed-rank test. Requires n_selection_seeds
+    #   == 1 (the folds ARE the test sample — multi-seed voting is redundant).
+    #   Intended with cv_strategy="condition-stratified" and n_folds=10.
+    selection_rule: str = "delta_bps_threshold"
+    selection_alpha: float = 0.05
+
     # --- Forward-selection robustness (multi-seed admission) ---
     # Admit a candidate at a forward-selection round iff its Δ cv_bps
     # clears delta_bps_threshold in at least selection_threshold_count of

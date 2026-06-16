@@ -15,7 +15,7 @@ Hardcastle bits-per-spike improvement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.special import gammaln
@@ -29,6 +29,27 @@ class CVResult:
     cv_bits_per_spike: float
     fold_log_likelihood: np.ndarray
     cv_predicted_count: np.ndarray
+    # Per-fold held-out spike totals, aligned with ``fold_log_likelihood``.
+    # Enables a per-fold bits/spike value for the Hardcastle signed-rank
+    # admission rule (forward_selection), which needs paired per-fold scores
+    # rather than only the pooled ``cv_bits_per_spike``.
+    fold_spikes: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
+    @property
+    def fold_bits_per_spike(self) -> np.ndarray:
+        """Per-fold bits/spike = (fold_ll / fold_spikes) / log(2).
+
+        NaN for any fold with zero held-out spikes (or empty/legacy results
+        where ``fold_spikes`` was not populated).
+        """
+        ll = np.asarray(self.fold_log_likelihood, dtype=np.float64)
+        sp = np.asarray(self.fold_spikes, dtype=np.float64)
+        if sp.shape != ll.shape or sp.size == 0:
+            return np.full(ll.shape, np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out = (ll / sp) / np.log(2)
+        out[sp <= 0] = np.nan
+        return out
 
 
 def make_trial_folds(
@@ -137,6 +158,7 @@ def cross_validate_glm(
 
     folds = np.unique(fold_ids)
     fold_ll = np.zeros(folds.size)
+    fold_spikes = np.zeros(folds.size)
     cv_predicted = np.full(y.size, np.nan)
     total_ll = 0.0
     total_spikes = 0.0
@@ -162,6 +184,7 @@ def cross_validate_glm(
         y_test = y[test_idx]
         ll_test = float(np.sum(y_test * np.log(mu) - mu - gammaln(y_test + 1.0)))
         fold_ll[fi] = ll_test
+        fold_spikes[fi] = float(y_test.sum())
         total_ll += ll_test
         total_spikes += float(y_test.sum())
 
@@ -171,4 +194,5 @@ def cross_validate_glm(
         cv_bits_per_spike=bps,
         fold_log_likelihood=fold_ll,
         cv_predicted_count=cv_predicted,
+        fold_spikes=fold_spikes,
     )

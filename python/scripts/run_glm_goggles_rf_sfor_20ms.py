@@ -118,18 +118,23 @@ def make_config() -> GLMConfig:
         include_history=False,
         include_onset_kernel=True,
         lambda_ridge=1.0,
-        # Speed-profile split CV: forward selection cross-validates on the
-        # held-out velocity TRAJECTORY (train on one reproduced profile, test on
-        # the other) — the stringent test of whether Speed is genuinely captured
-        # vs the onset/time confound (update3). profile_id is velocity-derived
-        # (profile_from_velocity=True, GLMConfig default). The 10-seed admission
-        # is a NO-OP under speed-profile folds (deterministic on profile_id), so
-        # single-seed — which is also ~10× faster. The post-hoc profile
-        # diagnostic is redundant when the primary CV is already speed-profile.
-        cv_strategy="speed-profile",
+        # Selection gate = Hardcastle (2026-06-16). Forward selection admits a
+        # variable iff a one-sided Wilcoxon signed-rank test on the PER-FOLD
+        # paired Δ bits/spike (vs the running model) clears alpha, over a
+        # 10-fold condition-stratified partition — the field-standard rule with
+        # real per-fold power (10 folds; a fixed Δ-bps threshold has none). The
+        # speed-profile trajectory split is demoted to the POST-HOC diagnostic
+        # (profile_cv_diagnostic=True → speed_profile_cv_comparison in
+        # diagnostics/), the "does Speed transfer across velocity trajectory"
+        # supplementary, no longer the gate. signed_rank requires a single fold
+        # partition (the folds are the test sample) → n_selection_seeds=1.
+        cv_strategy="condition-stratified",
+        n_folds=10,
+        selection_rule="signed_rank",
+        selection_alpha=0.05,
         n_selection_seeds=1,
         selection_threshold_count=1,
-        profile_cv_diagnostic=False,
+        profile_cv_diagnostic=True,
         apply_prefilter=False,  # whole selected cohort; prefilter is a diagnostic only
     )
 

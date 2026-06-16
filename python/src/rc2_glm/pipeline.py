@@ -1072,6 +1072,14 @@ def _comparison_row(probe_id: str, df: pd.DataFrame, fit: ClusterFit) -> dict:
         f"{GLM_TYPE}_selected_vars": "+".join(selected) if selected else "Null",
         f"{GLM_TYPE}_n_selected_vars": len(selected),
         f"{GLM_TYPE}_selection_rounds": len(sel.history),
+        # Admission rule + (signed_rank only) the final-model-vs-null p-value,
+        # so the CSV self-describes which gate produced the selection.
+        f"{GLM_TYPE}_selection_rule": getattr(
+            sel, "selection_rule", "delta_bps_threshold"
+        ),
+        f"{GLM_TYPE}_final_vs_null_pval": getattr(
+            sel, "final_vs_null_pval", float("nan")
+        ),
         f"{GLM_TYPE}_Null_cv_bps": sel.null_cv_bps,
         f"{GLM_TYPE}_Selected_cv_bps": sel.final_cv_bps,
         f"{GLM_TYPE}_Additive_cv_bps": fit.additive_cv_bps,
@@ -1133,6 +1141,7 @@ def _history_rows(probe_id: str, fit: ClusterFit) -> list[dict]:
             "phase": r.phase,
             "best_candidate": r.best_candidate or "",
             "delta_bps": r.best_delta_bps,
+            "pval": r.pval.get(r.best_candidate, float("nan")) if r.best_candidate else float("nan"),
             "added": r.added,
             "cv_bps_after": r.cv_bps_after,
         }
@@ -1170,6 +1179,7 @@ def _history_rows_full(probe_id: str, fit: ClusterFit) -> list[dict]:
                 "delta_bps_mean": float(delta_mean),
                 "delta_bps_std": std_value,
                 "delta_bps_per_seed": ";".join(f"{x:.10g}" for x in per_seed),
+                "pval": float(r.pval.get(cand, float("nan"))),
                 "admitted_count": adm,
                 "n_seeds": int(getattr(r, "n_seeds", len(per_seed))),
                 "is_best_this_round": cand == r.best_candidate,
@@ -1841,17 +1851,25 @@ def _write_all_plots(
     ):
         logger.info("wrote %s", path.relative_to(figs_dir.parent))
 
-    # Speed-profile CV comparison: only populated when the pipeline ran
-    # with --profile-cv-diagnostic. The plot function renders an
-    # explanatory stub when columns are all-NaN, so this call is safe
-    # to make unconditionally.
+    # Speed-profile CV comparison ("does Speed transfer across velocity
+    # trajectory" — panel 2 is the speed unique contribution under the
+    # train-on-one-trajectory / test-on-the-other split). Only populated
+    # when the pipeline ran with --profile-cv-diagnostic. The plot function
+    # renders an explanatory stub when columns are all-NaN, so this is safe
+    # to call unconditionally. Written to both figs/ (back-compat) and the
+    # per-probe diagnostics/ dir (the speed-transfer verification lives with
+    # the other diagnostics, mirroring the root diagnostics/ output).
     if config.profile_cv_diagnostic:
-        for path in plots.save_figure(
-            plots.plot_speed_profile_cv_comparison(comparison_df),
-            figs_dir / "speed_profile_cv_comparison",
-            fmt=plot_format,
-        ):
-            logger.info("wrote %s", path.relative_to(figs_dir.parent))
+        diag_dir = figs_dir.parent / "diagnostics"
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        for stem in (figs_dir / "speed_profile_cv_comparison",
+                     diag_dir / "speed_profile_cv_comparison"):
+            for path in plots.save_figure(
+                plots.plot_speed_profile_cv_comparison(comparison_df),
+                stem,
+                fmt=plot_format,
+            ):
+                logger.info("wrote %s", path.relative_to(figs_dir.parent))
 
     fits_to_plot = (
         cluster_fits if plot_clusters is None else cluster_fits[:plot_clusters]
@@ -2528,11 +2546,11 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
     # selected each variable" plot at the 4-probe level.
     agg_cmp_path = out_root / "glm_model_comparison.csv"
     if agg_cmp_path.is_file():
+        agg_df = pd.read_csv(agg_cmp_path)
+        figs_dir = out_root / "figs"
+        figs_dir.mkdir(exist_ok=True)
         try:
             from rc2_glm.plots import plot_forward_selection_summary
-            agg_df = pd.read_csv(agg_cmp_path)
-            figs_dir = out_root / "figs"
-            figs_dir.mkdir(exist_ok=True)
             fig = plot_forward_selection_summary(agg_df)
             fig.suptitle(
                 f"Forward-selection summary — {len(sorted(runs_root.iterdir()))} probes, "
@@ -2547,6 +2565,34 @@ def _aggregate_probe_runs(runs_root: Path, out_root: Path) -> None:
                         (figs_dir / "forward_selection_summary.pdf").relative_to(out_root))
         except Exception as exc:
             logger.warning("aggregate forward-selection summary failed: %s", exc)
+
+        # Speed-transfer diagnostic at the cohort level: render the
+        # speed-profile CV comparison (Speed unique contribution under
+        # train-on-one-trajectory / test-on-the-other) to the root
+        # diagnostics/ dir whenever the profile-CV diagnostic actually ran
+        # (i.e. the profile_cv_bps_* columns carry data).
+        psel_col = next(
+            (c for c in ("time_profile_cv_bps_Selected", "profile_cv_bps_Selected")
+             if c in agg_df.columns),
+            None,
+        )
+        if psel_col is not None and agg_df[psel_col].notna().any():
+            try:
+                from rc2_glm.plots import plot_speed_profile_cv_comparison
+                fig = plot_speed_profile_cv_comparison(agg_df)
+                fig.suptitle(
+                    "Speed transfer across velocity trajectory — "
+                    f"{len(sorted(runs_root.iterdir()))} probes, {len(agg_df)} clusters",
+                    fontsize=11,
+                )
+                fig.savefig(diag / "speed_profile_cv_comparison.pdf")
+                fig.savefig(diag / "speed_profile_cv_comparison.png", dpi=150)
+                import matplotlib.pyplot as _plt
+                _plt.close(fig)
+                logger.info("wrote aggregate %s",
+                            (diag / "speed_profile_cv_comparison.pdf").relative_to(out_root))
+            except Exception as exc:
+                logger.warning("aggregate speed-transfer diagnostic failed: %s", exc)
 
 
 def _find_env_file() -> str | None:
