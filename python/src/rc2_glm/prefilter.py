@@ -278,3 +278,41 @@ def prefilter_probe(
             row[f"{cond}_n"] = t.n_trials if t else 0
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+# --- Spike-count quality floor (2026-06-15) --------------------------------
+# The cohort gate that replaces the stationary-vs-motion prefilter (now a
+# diagnostic, see GLMConfig.apply_prefilter). A cluster too sparse in the data
+# being fit yields an uninterpretable per-spike cv-bps, so it is dropped before
+# fitting. Operates on the BINNED cluster table (time_binning.bin_cluster
+# output), so one call serves pooled AND per-condition (split) fits — it counts
+# spikes in whatever subset the run passes in. A principled exclusion, NOT a
+# clip on an anomalous value (project_motion_clouds_cvbps_stability_defaults).
+
+def spike_floor_stats(binned: pd.DataFrame) -> tuple[int, float]:
+    """(total spikes, fraction of trials with >=1 spike) for a binned cluster.
+
+    Both are read from the binned table the GLM actually fits, so for a
+    per-condition (split) run they reflect that condition's spikes only. The
+    total matches the ``*_n_spikes`` column the pipeline already reports
+    (``int(spike_count.sum())`` over the whole binned table).
+    """
+    y = binned["spike_count"].to_numpy()
+    total = int(y.sum())
+    if "trial_id" not in binned.columns or len(binned) == 0:
+        return total, 0.0
+    per_trial = binned.groupby("trial_id")["spike_count"].sum().to_numpy()
+    occupancy = float(np.mean(per_trial > 0)) if per_trial.size else 0.0
+    return total, occupancy
+
+
+def passes_spike_floor(
+    binned: pd.DataFrame, min_spikes: int = 50, min_trial_frac: float = 0.5
+) -> bool:
+    """Whether a binned cluster clears the spike-count quality floor.
+
+    A ``min_spikes`` / ``min_trial_frac`` of 0 disables the respective check, so
+    ``passes_spike_floor(df, 0, 0.0)`` reproduces the unfiltered legacy cohort.
+    """
+    total, occupancy = spike_floor_stats(binned)
+    return total >= min_spikes and occupancy >= min_trial_frac

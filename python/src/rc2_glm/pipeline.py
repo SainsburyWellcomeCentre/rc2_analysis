@@ -43,7 +43,7 @@ from rc2_glm.design_matrix import assemble_design_matrix, assemble_design_matrix
 from rc2_glm.fitting import fit_poisson_glm
 from rc2_glm.forward_selection import SelectionResult, forward_select
 from rc2_glm.io import ProbeData, load_probe_data
-from rc2_glm.prefilter import per_trial_firing_rate, prefilter_probe
+from rc2_glm.prefilter import per_trial_firing_rate, prefilter_probe, spike_floor_stats
 from rc2_glm.time_binning import bin_cluster
 
 
@@ -255,6 +255,7 @@ def _run_pipeline_inner(
     # Phase 1: bin every cluster on the main thread (cheap, touches `probe`).
     # Drop empties / too-short runs up-front so joblib dispatches real work only.
     fit_tasks: list[tuple[int, int, pd.DataFrame]] = []
+    excluded_floor: list[int] = []
     for idx, cluster in enumerate(clusters, start=1):
         df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
         if getattr(config, "fit_condition", None):
@@ -267,7 +268,29 @@ def _run_pipeline_inner(
             logger.info("[%d/%d] cluster %d: fewer than 10 bins, skipped",
                         idx, len(clusters), cluster.cluster_id)
             continue
+        # Spike-count quality floor (the cohort gate that replaces the
+        # prefilter): too few spikes / too few trials with a spike → the
+        # per-spike cv-bps is uninterpretable, so exclude BEFORE fitting.
+        # Excluded ids are logged, never silently dropped. Both config knobs
+        # at 0 disable it (legacy unfiltered cohort).
+        floor = getattr(config, "min_spikes_floor", 0)
+        occ_floor = getattr(config, "min_trial_occupancy", 0.0)
+        if floor > 0 or occ_floor > 0:
+            n_spk, occ = spike_floor_stats(df)
+            if n_spk < floor or occ < occ_floor:
+                logger.info("[%d/%d] cluster %d: below spike floor "
+                            "(%d spk, %.0f%% trials w/ spike) — excluded",
+                            idx, len(clusters), cluster.cluster_id, n_spk, 100 * occ)
+                excluded_floor.append(cluster.cluster_id)
+                continue
         fit_tasks.append((idx, cluster.cluster_id, df))
+
+    if excluded_floor:
+        logger.info(
+            "spike floor (>=%d spk, >=%.0f%% trials w/ spike) excluded %d/%d cluster(s): %s",
+            getattr(config, "min_spikes_floor", 0),
+            100 * getattr(config, "min_trial_occupancy", 0.0),
+            len(excluded_floor), len(clusters), sorted(excluded_floor))
 
     # Phase 2: fit (serial or process-parallel via joblib loky).
     # Processes avoid BLAS thread oversubscription on Accelerate / OpenBLAS

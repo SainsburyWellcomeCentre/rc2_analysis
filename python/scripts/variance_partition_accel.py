@@ -28,12 +28,14 @@ from rc2_glm.basis import (convolve_history, history_basis, onset_kernel_basis,
 from rc2_glm.cross_validation import cross_validate_glm, make_trial_folds
 from rc2_glm.design_matrix import assemble_design_matrix_selected
 from rc2_glm.io import load_probe_data
+from rc2_glm.prefilter import passes_spike_floor
 from rc2_glm.time_binning import bin_cluster
 
 import sys
 
 import scripts.run_glm_split_by_condition as drv
 from scripts.run_glm_current_plus_ME_20ms import make_config_me_20ms
+from scripts.plot_acid_vs_selection import plot_spike_count_diagnostics
 
 PROBES = ("CAA-1123243_rec1", "CAA-1123244_rec1", "CAA-1123466_rec1")
 # --bin10 → the 10 ms run's config + folder; default = 20 ms.
@@ -118,11 +120,21 @@ def partition(df, cfg, B_sf=None, B_or=None, *, stim=None,
         hb = history_basis(cfg.n_history_bases, cfg.history_window_s, cfg.time_bin_width,
                            kind=cfg.history_basis_kind)
         B_hist = convolve_history(y, trial_ids, hb)
+    # LOO / attribution CV: relaxed condition-stratified k-fold (5 folds → more
+    # training data per fold → low-variance unique estimates; the 2-fold
+    # speed-profile split is biased + noisy under spike-lopsidedness, sim
+    # 2026-06-15 → project_motion_clouds_cvbps_stability_defaults). Forward
+    # SELECTION keeps speed-profile (the cross-trajectory gate) in the driver
+    # config; only the ACID-TEST attribution is relaxed here. The speed-profile
+    # Speed-survival is still reported alongside as the uSpeed_*_sp columns.
     folds = make_trial_folds(trial_ids, cfg.n_folds, cfg.cv_seed,
                              condition_labels_per_bin=cond,
-                             strategy="speed-profile", profile_ids_per_bin=profile_ids)
+                             strategy="condition-stratified")
+    folds_sp = make_trial_folds(trial_ids, cfg.n_folds, cfg.cv_seed,
+                                condition_labels_per_bin=cond,
+                                strategy="speed-profile", profile_ids_per_bin=profile_ids)
 
-    def cv(vars_, me_on, hist_on, accel_on, onset_on=True):
+    def cv(vars_, me_on, hist_on, accel_on, onset_on=True, folds=folds):
         # assemble only activates B_me_face/B_history when the NAME is in the
         # selected list — must add them, not just pass the basis.
         sel = list(vars_)
@@ -167,6 +179,22 @@ def partition(df, cfg, B_sf=None, B_or=None, *, stim=None,
         if g == "Speed":
             continue
         out[f"unique_{g}"] = cv_full - cv([v for v in stim if v != g], me, hi, ac)
+    # Speed-survival under the stringent SPEED-PROFILE CV, kept ALONGSIDE the
+    # relaxed condition-stratified sequence above (informational): the cross-
+    # trajectory generalisation test the headline Speed claim rests on, so we
+    # report BOTH CV schemes rather than replace one. NaN when no Speed.
+    if has_speed:
+        cvf_sp = cv(stim, me, hi, ac, folds=folds_sp)
+        out["uSpeed_none_sp"] = (cv(stim, False, False, False, folds=folds_sp)
+                                 - cv(noSpeed, False, False, False, folds=folds_sp))
+        out["uSpeed_ME_sp"] = ((cv(stim, True, False, False, folds=folds_sp)
+                                - cv(noSpeed, True, False, False, folds=folds_sp)) if me else nan)
+        out["uSpeed_MEH_sp"] = ((cv(stim, True, True, False, folds=folds_sp)
+                                 - cv(noSpeed, True, True, False, folds=folds_sp)) if (me and hi) else nan)
+        out["uSpeed_all_sp"] = cvf_sp - cv(noSpeed, me, hi, ac, folds=folds_sp)
+    else:
+        for _k in ("uSpeed_none_sp", "uSpeed_ME_sp", "uSpeed_MEH_sp", "uSpeed_all_sp"):
+            out[_k] = nan
     return out
 
 
@@ -206,10 +234,21 @@ def plot_partition_figure(df, well, out, *, bin_ms, suptitle):
         x = np.arange(len(conds))
         for row in M:
             axR.plot(x, row, color="tab:green", alpha=0.12, lw=0.8)
-        axR.plot(x, np.median(M, axis=0), color="black", lw=2.4, marker="o")
+        axR.plot(x, np.median(M, axis=0), color="black", lw=2.4, marker="o",
+                 label="condition-stratified 5-fold (LOO)")
         for xi, med in zip(x, np.median(M, axis=0)):
             axR.annotate(f"{med:+.3f}", (xi, med), textcoords="offset points",
                          xytext=(0, 8), ha="center", fontsize=9, fontweight="bold")
+        # Overlay the stringent speed-profile Speed-survival (informational), so
+        # both CV schemes show side by side — the headline cross-trajectory Speed
+        # claim rests on the speed-profile one (kept, not replaced).
+        conds_sp = [(lab, c + "_sp") for lab, c in conds]
+        if all(c in df.columns for _, c in conds_sp) and \
+                df.loc[well, [c for _, c in conds_sp]].notna().any().any():
+            Msp = np.column_stack([df.loc[well, c].to_numpy() for _, c in conds_sp])
+            axR.plot(x, np.nanmedian(Msp, axis=0), color="tab:gray", lw=2.0,
+                     ls="--", marker="s", label="speed-profile 2-fold (stringent)")
+            axR.legend(fontsize=7.5, frameon=False, loc="best")
         axR.axhline(0, color="0.6", lw=0.8)
         axR.set_xticks(x); axR.set_xticklabels([c for c, _ in conds])
         axR.set_ylabel("unique Speed (Δ cv-bps)")
@@ -233,6 +272,7 @@ def main() -> int:
     cfg = _make_cfg()
     lookup = StimulusLookup(str(drv.MC_SEQUENCE), str(drv.MC_FOLDERS))
     rows = []
+    spike_rows = []
     for probe in PROBES:
         cohort = drv.load_cohort(probe)
         pdata = load_probe_data(drv.FORMATTED_DIR / f"{probe}.mat", config=cfg,
@@ -240,7 +280,20 @@ def main() -> int:
         for cl in pdata.clusters:
             if cl.cluster_id not in cohort:
                 continue
-            res = partition(bin_cluster(pdata, cl), cfg)
+            df = bin_cluster(pdata, cl)
+            per_trial = df.groupby("trial_id")["spike_count"].sum().to_numpy(float)
+            q = (np.percentile(per_trial, [0, 25, 50, 75, 100])
+                 if per_trial.size else np.zeros(5))
+            passed = passes_spike_floor(df, cfg.min_spikes_floor, cfg.min_trial_occupancy)
+            spike_rows.append(dict(
+                probe_id=probe, cluster_id=int(cl.cluster_id),
+                n_spikes=int(per_trial.sum()), n_trials=int(per_trial.size),
+                trial_occupancy=float((per_trial > 0).mean()) if per_trial.size else 0.0,
+                passed_floor=bool(passed),
+                pt_min=q[0], pt_q1=q[1], pt_med=q[2], pt_q3=q[3], pt_max=q[4]))
+            if not passed:
+                continue
+            res = partition(df, cfg)
             if res is None:
                 continue
             res.update(probe_id=probe, cluster_id=int(cl.cluster_id))
@@ -248,8 +301,14 @@ def main() -> int:
         print(f"{probe}: {sum(r['probe_id']==probe for r in rows)} clusters")
 
     df = pd.DataFrame(rows)
+    spike_df = pd.DataFrame(spike_rows)
     out_dir = OUT / "diagnostics"; out_dir.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_dir / "variance_partition_accel.csv", index=False)
+    if len(spike_df):
+        spike_df.to_csv(out_dir / "spike_stats.csv", index=False)
+        plot_spike_count_diagnostics(
+            spike_df, out_dir / "spike_count_diagnostics",
+            min_spikes=cfg.min_spikes_floor, min_trial_frac=cfg.min_trial_occupancy)
     well = df["total_full"] > 0.005
 
     def m(k):

@@ -320,6 +320,20 @@ class GLMConfig:
     apply_prefilter: bool = False
     prefilter_seed: int = 0
 
+    # --- Spike-count quality floor (the gate that replaces the prefilter; 2026-06-15) ---
+    # A cluster is dropped from the cohort BEFORE fitting unless, in the data the
+    # run actually fits (per-condition for the split runs), it has at least
+    # ``min_spikes_floor`` total spikes AND fires in at least
+    # ``min_trial_occupancy`` of its trials. Below this the per-spike cv-bps is
+    # too noisy to interpret (sim: SD ~0.17 bps at 50 spikes, ~0.35 at 15; the
+    # cluster-105 goggles outlier had 30 spikes — see
+    # project_motion_clouds_cvbps_stability_defaults). Defaults ON for ALL runs;
+    # set both to 0 to reproduce the unfiltered legacy cohort. This is a
+    # PRINCIPLED EXCLUSION (too few spikes to estimate the quantity), not a clip
+    # on an anomalous value. Gate: prefilter.passes_spike_floor.
+    min_spikes_floor: int = 50
+    min_trial_occupancy: float = 0.5
+
     # --- Compute backend ---
     device: str = "auto"  # "auto" | "cpu" | "gpu"
 
