@@ -69,15 +69,17 @@ def auto_lambda(omarg, or_deg):
     return best
 
 
-def load_rfs():
+def load_rfs(rf_dir=RF_DIR):
     rfs = []
-    for fp in sorted(glob.glob(os.path.join(RF_DIR, "*_rf_metrics.csv"))):
+    for fp in sorted(glob.glob(os.path.join(os.path.expanduser(rf_dir), "*_rf_metrics.csv"))):
         probe = os.path.basename(fp).split("_")[0]
         for r in csv.DictReader(open(fp)):
             try:
                 cx = float(r["centroid_azimuth_pixels"]); cy = float(r["centroid_elevation_pixels"])
             except (KeyError, ValueError):
                 continue
+            if not (np.isfinite(cx) and np.isfinite(cy)):
+                continue  # nofit / un-imputable rows carry NaN centroids
             rfs.append(dict(probe=probe, cluster=r["cluster_id"], rf_type=r["rf_type"],
                             cx=int(round(cx)), cy=int(round(cy))))
     return rfs
@@ -87,21 +89,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cloud-index", type=int, default=int(os.environ.get("SLURM_ARRAY_TASK_ID", 0)))
     ap.add_argument("--outdir", default="/ceph/margrie/laura/goggle_gabor/out")
+    ap.add_argument("--rf-dir", default=RF_DIR,
+                    help="dir of <probe>_rf_metrics.csv RF centres (ceph default; "
+                         "point at the merged dir for the 1.5-sigma + imputed cohort)")
+    ap.add_argument("--cloud-root", default=CLOUD_ROOT,
+                    help="dir of theta* cloud-frame folders (ceph default; "
+                         "local saved_goggles works too)")
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--cpu", action="store_true")
     a = ap.parse_args()
+    cloud_root = os.path.expanduser(a.cloud_root)
     os.makedirs(a.outdir, exist_ok=True)
     import torch
     dev = torch.device("cpu" if a.cpu or not torch.cuda.is_available() else "cuda")
 
-    clouds = sorted(os.path.basename(p) for p in glob.glob(os.path.join(CLOUD_ROOT, "theta*"))
+    clouds = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cloud_root, "theta*"))
                     if os.path.isdir(p))
     cloud = clouds[a.cloud_index]
     sftok = re.search(r"_sf(\d+p\d+)_", cloud).group(1).replace("p", ".")
     sf0 = float(sftok) / DPP; bsf = 0.005 / DPP
     print(f"[{a.cloud_index}] {cloud}  dev={dev}", flush=True)
 
-    fs = sorted(glob.glob(os.path.join(CLOUD_ROOT, cloud, "*.png")))[::a.stride]
+    fs = sorted(glob.glob(os.path.join(cloud_root, cloud, "*.png")))[::a.stride]
     frames = np.stack([np.asarray(Image.open(f).convert("L"), np.float32) / 255.0 for f in fs])
     T, H, W = frames.shape
     hS, GES, GOS, orsS, sfsS = build_bank(SF_WIN, sf0, bsf)
@@ -119,7 +128,7 @@ def main():
         re = torch.einsum("kij,tij->tk", GE, patch); iv = torch.einsum("kij,tij->tk", GO, patch)
         return re * re + iv * iv
 
-    rfs = load_rfs()
+    rfs = load_rfs(a.rf_dir)
     rows = []
     for rf in rfs:
         cx, cy = rf["cx"], rf["cy"]
