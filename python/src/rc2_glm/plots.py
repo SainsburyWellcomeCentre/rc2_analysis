@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -2063,22 +2064,18 @@ def plot_cluster_model_overview(
 
         _plot_beta_swarm(row_axes[0], np.asarray(beta), list(col_names))
         _plot_condition_scatter(row_axes[1], motion_df, obs_fr_motion, preds)
-        _plot_vt_speed_scatter(row_axes[2], motion_df, obs_fr_motion, preds,
-                               config.speed_range)
-        _plot_vt_tf_scatter(row_axes[3], motion_df, obs_fr_motion, preds,
-                            config.tf_range)
+        _plot_vt_speed_scatter(row_axes[2], motion_df, obs_fr_motion, preds)
+        _plot_vt_tf_scatter(row_axes[3], motion_df, obs_fr_motion, preds)
         if getattr(config, "sf_or_source", "tokens") == "rf_local":
             # RF-local SF/OR are continuous → binned pred-vs-obs scatter like
             # the Speed/TF panels, not discrete-level coloring.
             _plot_value_binned_scatter(
                 row_axes[4], motion_df, obs_fr_motion, preds,
-                value_col="sf", config_range=config.sf_cpd_range,
-                title_prefix="SF",
+                value_col="sf", title_prefix="SF",
             )
             _plot_value_binned_scatter(
                 row_axes[5], motion_df, obs_fr_motion, preds,
-                value_col="orientation", config_range=(0.0, 180.0),
-                title_prefix="OR",
+                value_col="orientation", title_prefix="OR",
             )
         else:
             _plot_vt_level_scatter(
@@ -2386,34 +2383,36 @@ def _plot_condition_scatter(
     ax.legend(loc="best", fontsize=4, frameon=True)
 
 
-def _adaptive_bin_edges(
-    x: np.ndarray, config_range: tuple[float, float], n_bins: int = 10,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Pick speed/TF bin edges that actually span the data.
+def _pooled_quantile_edges(
+    values: np.ndarray, n_bins: int = 20,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """The project tuning-bin convention: 5%-equal-count (quantile) edges,
+    computed GLOBALLY over the pooled values a panel shows.
 
-    The basis functions use ``config_range`` (e.g. (0, 50) cm/s for speed)
-    but real recordings often occupy a small subset of that range (mice
-    rarely hit 50 cm/s). Falling back to fixed config-range bins leaves
-    9 of 10 bins empty and R² nan. Use the data range instead when it is
-    meaningfully tighter than the config range.
+    Two properties, both load-bearing (Laura 2026-06-16):
+
+    - **Equal-count, not equal-width.** Edges are the ``n_bins`` quantiles of
+      the data (default 20 → 5% bins), so each bin holds ~the same number of
+      samples — the same convention the SF/OR/ME/Accel tuning panels use.
+    - **Pooled / global.** The caller passes *all* the values the panel will
+      display (pooled across conditions), so bin ``k`` spans the same value
+      range for every condition — bin 1 of T_Vstatic, V and VT are the same
+      interval. Per-condition edges (the old behaviour) made bins
+      incomparable across conditions.
+
+    Returns ``(edges, centres)``; ``edges`` may hold fewer than ``n_bins+1``
+    entries when quantiles collide (``np.unique`` drops zero-width bins, e.g.
+    near-discrete SF). Returns ``(None, None)`` when there are too few finite
+    values (< ``n_bins``) or the bins degenerate (< 2 bins) — the caller then
+    renders a placeholder.
     """
-    good = x[~np.isnan(x)]
-    if good.size == 0:
-        edges = np.linspace(config_range[0], config_range[1], n_bins + 1)
-        return edges, 0.5 * (edges[:-1] + edges[1:])
-    data_lo = float(good.min())
-    data_hi = float(good.max())
-    cfg_span = config_range[1] - config_range[0]
-    data_span = data_hi - data_lo
-    if data_span <= 0:
-        edges = np.linspace(config_range[0], config_range[1], n_bins + 1)
-    elif data_span < 0.3 * cfg_span:
-        pad = 0.05 * data_span
-        edges = np.linspace(max(config_range[0], data_lo - pad),
-                            min(config_range[1], data_hi + pad),
-                            n_bins + 1)
-    else:
-        edges = np.linspace(config_range[0], config_range[1], n_bins + 1)
+    v = np.asarray(values, dtype=np.float64)
+    v = v[np.isfinite(v)]
+    if v.size < n_bins:
+        return None, None
+    edges = np.unique(np.nanquantile(v, np.linspace(0.0, 1.0, n_bins + 1)))
+    if edges.size < 3:
+        return None, None
     centres = 0.5 * (edges[:-1] + edges[1:])
     return edges, centres
 
@@ -2423,16 +2422,20 @@ def _plot_vt_speed_scatter(
     motion_df: pd.DataFrame,
     obs_fr: np.ndarray,
     preds: np.ndarray,
-    config_range: tuple[float, float],
 ) -> None:
-    """VT-only predicted vs observed scatter across speed bins."""
+    """VT-only predicted vs observed scatter across speed bins (5%-equal-count
+    pooled bins, the project tuning convention)."""
     vt_mask = motion_df["condition"].to_numpy() == "VT"
     if not vt_mask.any():
         ax.text(0.5, 0.5, "no VT bins", ha="center", va="center",
                 transform=ax.transAxes, fontsize=7, color="#888")
         return
     x = motion_df.loc[vt_mask, "speed"].to_numpy(dtype=np.float64)
-    bin_edges, bin_centres = _adaptive_bin_edges(x, config_range)
+    bin_edges, bin_centres = _pooled_quantile_edges(x)
+    if bin_edges is None:
+        ax.text(0.5, 0.5, "no Spd data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=7, color="#888")
+        return
     _plot_binned_scatter(
         ax, x, obs_fr[vt_mask], preds[vt_mask],
         motion_df.loc[vt_mask, "trial_id"].to_numpy(),
@@ -2448,23 +2451,23 @@ def _plot_value_binned_scatter(
     obs_fr: np.ndarray,
     preds: np.ndarray,
     value_col: str,
-    config_range: tuple[float, float],
     title_prefix: str,
 ) -> None:
     """Binned predicted-vs-observed scatter for a continuous regressor (SF/OR).
 
     The RF-local SF/OR analogue of ``_plot_vt_speed_scatter``: bins over the
     rows where the value is defined (the visual conditions V + VT) instead of
-    VT-only, since SF/OR exist in both.
+    VT-only, since SF/OR exist in both. 5%-equal-count pooled bins (the project
+    tuning convention) over those pooled V+VT rows.
     """
     v = motion_df[value_col].to_numpy(dtype=np.float64)
     m = np.isfinite(v)
-    if int(m.sum()) < 3:
+    x = v[m]
+    bin_edges, bin_centres = _pooled_quantile_edges(x)
+    if bin_edges is None:
         ax.text(0.5, 0.5, "no SF/OR data", ha="center", va="center",
                 transform=ax.transAxes, fontsize=7, color="#888")
         return
-    x = v[m]
-    bin_edges, bin_centres = _adaptive_bin_edges(x, config_range)
     _plot_binned_scatter(
         ax, x, obs_fr[m], preds[m],
         motion_df["trial_id"].to_numpy()[m],
@@ -2508,16 +2511,11 @@ def _plot_covariate_scatter(
         return
     v = motion_df[value_col].to_numpy(dtype=np.float64)
     m = np.isfinite(v)
-    if int(m.sum()) < n_bins:
+    edges, centres = _pooled_quantile_edges(v[m], n_bins=n_bins)
+    if edges is None:
         ax.text(0.5, 0.5, f"no {title_prefix} data", ha="center", va="center",
                 transform=ax.transAxes, fontsize=7, color="#888")
         return
-    edges = np.unique(np.nanquantile(v[m], np.linspace(0.0, 1.0, n_bins + 1)))
-    if edges.size < 3:
-        ax.text(0.5, 0.5, f"degenerate {title_prefix}", ha="center",
-                va="center", transform=ax.transAxes, fontsize=7, color="#888")
-        return
-    centres = 0.5 * (edges[:-1] + edges[1:])
     _plot_binned_scatter(
         ax, v[m], obs_fr[m], preds[m],
         motion_df["trial_id"].to_numpy()[m],
@@ -2531,16 +2529,20 @@ def _plot_vt_tf_scatter(
     motion_df: pd.DataFrame,
     obs_fr: np.ndarray,
     preds: np.ndarray,
-    config_range: tuple[float, float],
 ) -> None:
-    """VT-only predicted vs observed scatter across TF bins."""
+    """VT-only predicted vs observed scatter across TF bins (5%-equal-count
+    pooled bins, the project tuning convention)."""
     vt_mask = motion_df["condition"].to_numpy() == "VT"
     if not vt_mask.any():
         ax.text(0.5, 0.5, "no VT bins", ha="center", va="center",
                 transform=ax.transAxes, fontsize=7, color="#888")
         return
     x = motion_df.loc[vt_mask, "tf"].to_numpy(dtype=np.float64)
-    bin_edges, bin_centres = _adaptive_bin_edges(x, config_range)
+    bin_edges, bin_centres = _pooled_quantile_edges(x)
+    if bin_edges is None:
+        ax.text(0.5, 0.5, "no TF data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=7, color="#888")
+        return
     _plot_binned_scatter(
         ax, x, obs_fr[vt_mask], preds[vt_mask],
         motion_df.loc[vt_mask, "trial_id"].to_numpy(),
@@ -2883,6 +2885,22 @@ def _plot_me_face_panel(
     trial_ids = motion["trial_id"].to_numpy(dtype=np.int64)
     cond_labels = motion["condition"].to_numpy(dtype=object)
 
+    # 5%-equal-count bin edges computed GLOBALLY over all conditions' finite
+    # motion bins (pooled), so bin k spans the same value range for every
+    # condition — bin 1 of T_Vstatic / V / VT is the same interval (Laura
+    # 2026-06-16). Per-condition edges made the bins incomparable across
+    # conditions. np.unique inside the helper drops zero-width bins from
+    # quantile collisions (e.g. heavy-tailed face ME, near-discrete SF).
+    edges, centres = _pooled_quantile_edges(me_z_motion[finite_motion], n_bins=n_bins)
+    if edges is None:
+        ax.text(0.5, 0.5,
+                f"insufficient {name} data\n(< {n_bins} finite motion bins)",
+                ha="center", va="center", transform=ax.transAxes,
+                color="#888", fontsize=9)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+    n_b = edges.size - 1
+
     plotted_any = False
     for cond in ("T_Vstatic", "V", "VT"):
         cmask = (cond_labels == cond) & finite_motion
@@ -2891,15 +2909,6 @@ def _plot_me_face_panel(
         me_z_c = me_z_motion[cmask]
         signal_c = per_bin_signal[cmask]
         trial_c = trial_ids[cmask]
-
-        # 5%-quantile bin edges within this condition. Drop duplicates so
-        # quantile collisions (e.g. heavy-tailed face ME) don't yield
-        # zero-width bins.
-        edges = np.unique(np.quantile(me_z_c, np.linspace(0, 1, n_bins + 1)))
-        if edges.size < 3:
-            continue
-        centres = 0.5 * (edges[:-1] + edges[1:])
-        n_b = edges.size - 1
 
         # Per-trial means per bin → median + IQR across trials per bin
         trials = np.unique(trial_c)
@@ -2921,8 +2930,11 @@ def _plot_me_face_panel(
         if not per_trial_per_bin:
             continue
         arr = np.array(per_trial_per_bin)
-        median = np.nanmedian(arr, axis=0)
-        with np.errstate(invalid="ignore"):
+        # Pooled global edges mean a condition can have empty bins (e.g. V has
+        # no high-SF bins) → all-NaN columns; silence the expected slice warning.
+        with np.errstate(invalid="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            median = np.nanmedian(arr, axis=0)
             q1 = np.nanquantile(arr, 0.25, axis=0)
             q3 = np.nanquantile(arr, 0.75, axis=0)
         good = np.isfinite(median)

@@ -19,6 +19,8 @@ from rc2_glm.plots import (
     _BETA_GROUP_COLORS,
     _BETA_GROUP_ORDER,
     _beta_group_tag,
+    _plot_me_face_panel,
+    _pooled_quantile_edges,
     _trial_quantiles_by_bin,
     _trial_quantiles_by_level,
     plot_basis_functions,
@@ -358,6 +360,62 @@ def test_save_figure_both_formats(tmp_path):
     assert suffixes == [".pdf", ".png"]
     for p in written:
         assert p.exists()
+
+
+def test_pooled_quantile_edges_equal_count_not_equal_width():
+    """The tuning-bin convention: 5%-equal-count bins (each bin ~ n/20 of the
+    samples), NOT equal-width — so edges track the data's quantiles."""
+    rng = np.random.default_rng(1)
+    v = rng.exponential(1.0, size=4000)  # right-skewed
+    edges, centres = _pooled_quantile_edges(v, n_bins=20)
+    assert edges is not None and centres is not None
+    assert edges.size <= 21 and centres.size == edges.size - 1
+    counts, _ = np.histogram(v, bins=edges)
+    target = v.size / (edges.size - 1)
+    assert np.all(np.abs(counts - target) <= 0.15 * target)  # equal-count
+    widths = np.diff(edges)
+    assert widths.max() > 2.0 * widths.min()                 # not equal-width
+
+
+def test_pooled_quantile_edges_too_few_values_returns_none():
+    edges, centres = _pooled_quantile_edges(np.arange(5.0), n_bins=20)
+    assert edges is None and centres is None
+
+
+def test_me_face_panel_bins_are_pooled_across_conditions():
+    """Bin k must span the same value range for every condition: each
+    condition's plotted x-centres are drawn from ONE global edge set, computed
+    over the pooled (all-condition) values — not per-condition edges."""
+    cfg = GLMConfig(sf_or_source="rf_local")
+    rng = np.random.default_rng(3)
+    rows = []
+    # Condition-specific, non-overlapping SF ranges so per-condition edges
+    # would differ sharply from the pooled edges (the regression guard).
+    tid = 0
+    for cond, (lo, hi) in (("V", (0.02, 0.05)), ("VT", (0.10, 0.15))):
+        for _ in range(4):  # trials per condition
+            for b in range(30):
+                rows.append({
+                    "probe_id": "p0", "cluster_id": 1, "trial_id": tid,
+                    "condition": cond, "sf": float(rng.uniform(lo, hi)),
+                    "spike_count": int(rng.poisson(1.0)),
+                    "time_in_trial": b * cfg.time_bin_width,
+                })
+            tid += 1
+    df = pd.DataFrame(rows)
+
+    fig, ax = plt.subplots()
+    _plot_me_face_panel(ax, df, cfg, per_bin_predictions=None,
+                        col="sf", name="SF", n_bins=20, zscore=False)
+    # The global edges the panel should have used (same input: all motion sf).
+    _, centres = _pooled_quantile_edges(df["sf"].to_numpy(), n_bins=20)
+    drawn_x = np.concatenate(
+        [ln.get_xdata() for ln in ax.lines if np.size(ln.get_xdata())]
+    )
+    assert drawn_x.size > 0
+    # Every plotted x-centre belongs to the single global set (pooled).
+    assert np.all(np.isin(np.round(drawn_x, 12), np.round(centres, 12)))
+    plt.close(fig)
 
 
 def test_beta_group_tag_new_pairwise_interactions():
