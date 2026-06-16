@@ -431,3 +431,54 @@ def test_beta_group_tag_new_pairwise_interactions():
     assert _beta_group_tag("OR_1_x_MEf4") == "OR x MEf"        # rf_local OR
     assert _beta_group_tag("OR0.785_x_Acc1") == "OR x Acc"     # token OR
     assert _beta_group_tag("MEf2_x_Acc4") == "MEf x Acc"
+
+
+def test_vars_from_names_detects_every_interaction_the_design_builds():
+    """Regression for the 2026-06-16 histme_all ZERO-FILLED bug.
+
+    The prediction path rebuilds the marginal design from the *trained* column
+    names via ``_vars_from_names`` → ``assemble_design_matrix_selected``. If an
+    interaction the design matrix builds isn't in ``_INTERACTION_VARS`` /
+    ``_INTERACTION_PREFIX``, ``_vars_from_names`` doesn't detect it, the
+    prediction design omits it, and ``_align_prediction_columns`` zero-fills
+    every one of its trained columns out of the marginal (the Acceleration /
+    ME_face pairwise set was silently dropped this way — 15k ZERO-FILLED warns).
+
+    So: every interaction in the canonical set must (a) be detected from its
+    canonical trained column name as exactly itself, and (b) not cross-match
+    another interaction's column.
+    """
+    from rc2_glm.plots import _INTERACTION_VARS, _vars_from_names
+
+    # One representative trained column per interaction, in the design_matrix.py
+    # naming convention (rf_local continuous SF/OR form: SF_{j}, OR_{j}).
+    rep = {
+        "Speed_x_TF": "Spd1_x_TF2",
+        "Speed_x_SF": "Spd1_x_SF_1",
+        "Speed_x_OR": "Spd1_x_OR_1",
+        "TF_x_SF": "TF1_x_SF_1",
+        "TF_x_OR": "TF1_x_OR_1",
+        "SF_x_OR": "SF_1_x_OR_1",
+        "ME_face_x_Speed": "MEf1_x_Spd1",
+        "Speed_x_Acceleration": "Spd1_x_Acc1",
+        "TF_x_ME_face": "TF1_x_MEf1",
+        "TF_x_Acceleration": "TF1_x_Acc1",
+        "SF_x_ME_face": "SF_1_x_MEf1",
+        "SF_x_Acceleration": "SF_1_x_Acc1",
+        "OR_x_ME_face": "OR_1_x_MEf1",
+        "OR_x_Acceleration": "OR_1_x_Acc1",
+        "ME_face_x_Acceleration": "MEf1_x_Acc1",
+    }
+    # the test must cover the WHOLE canonical set (fails if a var is added
+    # without a representative here)
+    assert set(rep) == set(_INTERACTION_VARS)
+
+    # each column in isolation detects exactly its own interaction — no miss,
+    # no cross-match
+    for var, col in rep.items():
+        detected = [v for v in _vars_from_names([col]) if "_x_" in v]
+        assert detected == [var], f"{col!r} -> {detected}, expected [{var!r}]"
+
+    # the full set together resolves to the full interaction set, nothing extra
+    detected_all = {v for v in _vars_from_names(list(rep.values())) if "_x_" in v}
+    assert detected_all == set(_INTERACTION_VARS)

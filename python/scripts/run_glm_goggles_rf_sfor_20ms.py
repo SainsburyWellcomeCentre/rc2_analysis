@@ -31,8 +31,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from dataclasses import replace
 from pathlib import Path
+
+# Allow ``import scripts.<sibling>`` when this driver is run as a file path
+# (``python scripts/run_...py``): then sys.path[0] is scripts/, not its parent,
+# so the late in-pipeline ``import scripts.diagnostics_rf_sfor`` (main(), end of
+# a full run) fails with "No module named 'scripts'" and the diagnostics step is
+# silently skipped — variance_partition / acid figures never regenerate
+# (histme_all run, 2026-06-16). Putting python/ (the parent of scripts/) on the
+# path makes the package importable either way (file path or ``python -m``).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib
 

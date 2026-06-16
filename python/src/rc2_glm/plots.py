@@ -4242,11 +4242,24 @@ _MAIN_PREFIX: dict[str, str] = {
 }
 _INTERACTION_PREFIX: dict[str, str] = {
     "Speed": "Spd", "TF": "TF", "SF": "SF", "OR": "OR", "ME_face": "MEf",
+    "Acceleration": "Acc",  # cols Acc{a}; pairs are *_x_Acc{a} (2026-06-16)
 }
 _INTERACTION_VARS: tuple[str, ...] = (
     "Speed_x_TF", "Speed_x_SF", "Speed_x_OR",
     "TF_x_SF", "TF_x_OR", "SF_x_OR",
     "ME_face_x_Speed",  # cols are MEf{m}_x_Spd{s} (see _INTERACTION_PREFIX)
+    # Acceleration / ME_face full-pairwise set (built in design_matrix.py
+    # 2026-06-15). Without these here _vars_from_names never told the
+    # prediction design to rebuild them, so every selected Acceleration/ME
+    # interaction was ZERO-FILLED out of the marginal (histme_all run,
+    # 2026-06-16). Cols: Spd{s}_x_Acc{a}, TF{t}_x_MEf{m}, TF{t}_x_Acc{a},
+    # SF_{j}_x_MEf{m}, SF_{j}_x_Acc{a}, OR_{j}_x_MEf{m}, OR_{j}_x_Acc{a},
+    # MEf{m}_x_Acc{a}.
+    "Speed_x_Acceleration",
+    "TF_x_ME_face", "TF_x_Acceleration",
+    "SF_x_ME_face", "SF_x_Acceleration",
+    "OR_x_ME_face", "OR_x_Acceleration",
+    "ME_face_x_Acceleration",
 )
 
 
