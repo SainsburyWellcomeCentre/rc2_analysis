@@ -213,6 +213,27 @@ class FormattedDataReader:
             return np.array([], dtype=np.int64)
         return self.cluster_ids()[idx]
 
+    def selected_cluster_ids(self) -> np.ndarray:
+        """Cluster IDs in the file's curated ``selected_clusters`` set.
+
+        This is the analysis cohort the formatting step picked (good single
+        units), independent of VISp anatomy — for the goggles cohort, anatomy
+        is largely ``unknownLocation`` so VISp filtering is the wrong gate.
+        Returns an empty array if the file has no ``selected_clusters`` field.
+        """
+        if "selected_clusters" not in self._file:
+            return np.array([], dtype=np.int64)
+        return np.array(self._file["selected_clusters"]).ravel().astype(np.int64)
+
+    def selected_cluster_indices(self) -> np.ndarray:
+        """Indices into the ``clusters`` struct for ``selected_cluster_ids``."""
+        sel = set(int(x) for x in self.selected_cluster_ids())
+        if not sel:
+            return np.array([], dtype=np.int64)
+        ids = self.cluster_ids()
+        return np.array([i for i, cid in enumerate(ids) if int(cid) in sel],
+                        dtype=np.int64)
+
     def spike_times(self, cluster_idx: int) -> np.ndarray:
         f = self._file
         arr = _deref_array(f, f["clusters"]["spike_times"][cluster_idx, 0])

@@ -109,6 +109,7 @@ def run_pipeline(
     plot_clusters: int | None = None,
     n_jobs: int = -1,
     cluster_filter: set[int] | None = None,
+    cluster_set: str | None = None,
 ) -> PipelineResult:
     """Load a probe .mat, fit GLMs cluster-by-cluster, write CSVs + plots.
 
@@ -140,6 +141,7 @@ def run_pipeline(
             plot_clusters=plot_clusters,
             cluster_filter=cluster_filter,
             n_jobs=n_jobs,
+            cluster_set=cluster_set,
         )
     finally:
         for h in log_handlers:
@@ -159,6 +161,7 @@ def _run_pipeline_inner(
     plot_clusters: int | None,
     n_jobs: int,
     cluster_filter: set[int] | None = None,
+    cluster_set: str | None = None,
 ) -> PipelineResult:
     _banner("Loading data")
     logger.info("mat file: %s", mat_path)
@@ -175,6 +178,7 @@ def _run_pipeline_inner(
         config=config,
         stimulus_lookup=stimulus_lookup,
         visp_only=visp_only,
+        cluster_set=cluster_set,
     )
     if cluster_filter is not None:
         # Upstream cluster allow-list. Restrict the probe's cluster set

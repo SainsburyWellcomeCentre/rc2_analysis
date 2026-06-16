@@ -201,7 +201,7 @@ def dry_run() -> int:
             FORMATTED_DIR / f"{probe}.mat",
             config=GLMConfig(),
             stimulus_lookup=_lookup(),
-            visp_only=True,
+            cluster_set="selected",
         )
         for t in data.trials:
             rows.append({
@@ -211,7 +211,8 @@ def dry_run() -> int:
             })
         pf = prefilter_probe(data, config=GLMConfig())
         n_keep = int(pf["should_run_glm"].sum())
-        log.info("%s: %d VISp clusters → cohort %d (prefilter)", probe, len(data.clusters), n_keep)
+        log.info("%s: %d selected clusters (prefilter would keep %d — diagnostic only)",
+                 probe, len(data.clusters), n_keep)
 
     df = pd.DataFrame(rows)
     counts = (
@@ -246,7 +247,7 @@ def run_probe(probe: str, out_root: Path = OUT_ROOT, config_fn=make_config) -> P
         output_dir=out_dir,
         stimulus_lookup=_lookup(),
         backend="irls",
-        visp_only=True,
+        cluster_set="selected",
         make_plots=True,
         plot_format="pdf",
         n_jobs=4,
@@ -310,7 +311,7 @@ def run_probe_condition(probe: str, condition: str, cohort: set[int]) -> Path:
         output_dir=out_dir,
         stimulus_lookup=_lookup(),
         backend="irls",
-        visp_only=True,
+        cluster_set="selected",
         make_plots=True,
         plot_format="pdf",
         n_jobs=4,

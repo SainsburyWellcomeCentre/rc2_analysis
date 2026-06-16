@@ -88,18 +88,36 @@ def load_probe_data(
     cluster_indices: Iterable[int] | None = None,
     trial_indices: Iterable[int] | None = None,
     visp_only: bool = True,
+    cluster_set: str | None = None,
 ) -> ProbeData:
-    """Load a probe .mat file into structured ProbeData."""
+    """Load a probe .mat file into structured ProbeData.
+
+    ``cluster_set`` selects the cohort when ``cluster_indices`` is not given:
+    ``"visp"`` (region matches VISp), ``"selected"`` (the file's curated
+    ``selected_clusters`` set — the goggles default, anatomy-independent), or
+    ``"all"`` (every cluster). If ``None`` it falls back to ``visp_only``
+    (``"visp"`` / ``"all"``) so existing callers are unchanged.
+    """
     config = config or GLMConfig()
     with FormattedDataReader(mat_path) as reader:
         fs = reader.fs
 
         if cluster_indices is None:
-            cluster_indices = (
-                reader.visp_cluster_indices().tolist()
-                if visp_only
-                else list(range(reader.n_clusters))
-            )
+            if cluster_set is None:
+                cluster_set = "visp" if visp_only else "all"
+            if cluster_set == "visp":
+                cluster_indices = reader.visp_cluster_indices().tolist()
+            elif cluster_set == "selected":
+                cluster_indices = reader.selected_cluster_indices().tolist()
+                if not cluster_indices:
+                    raise ValueError(
+                        f"cluster_set='selected' but {mat_path} has no "
+                        "selected_clusters field"
+                    )
+            elif cluster_set == "all":
+                cluster_indices = list(range(reader.n_clusters))
+            else:
+                raise ValueError(f"unknown cluster_set={cluster_set!r}")
         cluster_indices = list(cluster_indices)
         cluster_ids = reader.cluster_ids()
 

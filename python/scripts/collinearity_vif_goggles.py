@@ -98,7 +98,7 @@ def main() -> int:
     rows = []
     for probe in drv.PROBES:
         pdata = load_probe_data(drv.FORMATTED_DIR / f"{probe}.mat", config=cfg,
-                                stimulus_lookup=lookup, visp_only=True)
+                                stimulus_lookup=lookup, cluster_set="selected")
         cohort = drv.load_cohort(probe)
         cl = next(c for c in pdata.clusters if c.cluster_id in cohort)
         df_full = bin_cluster(pdata, cl)
