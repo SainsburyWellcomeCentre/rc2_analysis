@@ -138,6 +138,59 @@ def plot_acid_stack_sorted(df, out):
     print(f"wrote {out}.pdf / .png")
 
 
+def plot_spike_count_diagnostics(spike_df, out, *, min_spikes=50, min_trial_frac=0.5):
+    """Cohort spike-count quality diagnostics — the gate that admits clusters to
+    the GLM / acid test. Two panels:
+      (top)    histogram of TOTAL spikes per cluster (log x), floor marked;
+               kept vs floor-excluded coloured.
+      (bottom) per-cluster box of the PER-TRIAL spike-count distribution
+               (precomputed min/Q1/median/Q3/max), clusters sorted by total,
+               floor-EXCLUDED clusters drawn red — the filter is shown, not
+               hidden (feedback_diagnose_dont_mask). symlog-y spans the wide
+               firing range.
+    ``spike_df`` columns: n_spikes, n_trials, trial_occupancy, passed_floor,
+    pt_min/pt_q1/pt_med/pt_q3/pt_max."""
+    d = spike_df.sort_values("n_spikes").reset_index(drop=True)
+    passed = d["passed_floor"].to_numpy(bool)
+    n = len(d); n_excl = int((~passed).sum())
+    fig, (axH, axB) = plt.subplots(2, 1, figsize=(15, 8.0))
+
+    ns = d["n_spikes"].to_numpy(float)
+    lo = max(1.0, float(ns.min()) if n else 1.0)
+    bins = np.logspace(np.log10(lo), np.log10(max(float(ns.max()), lo * 10) if n else 10), 40)
+    axH.hist(ns[passed], bins=bins, color="tab:blue", alpha=0.8,
+             label=f"kept (n={int(passed.sum())})")
+    if n_excl:
+        axH.hist(ns[~passed], bins=bins, color="tab:red", alpha=0.85,
+                 label=f"excluded (n={n_excl})")
+    axH.axvline(min_spikes, color="k", ls="--", lw=1.4, label=f"floor = {min_spikes} spk")
+    axH.set_xscale("log"); axH.set_xlabel("total spikes per cluster (log)")
+    axH.set_ylabel("clusters"); axH.legend(fontsize=8, frameon=False)
+    axH.set_title(f"Cohort spike counts (n={n}; floor ≥{min_spikes} spk AND "
+                  f"≥{min_trial_frac:.0%} trials with a spike → {n_excl} excluded)",
+                  fontsize=10, fontweight="bold")
+
+    stats = [dict(med=r.pt_med, q1=r.pt_q1, q3=r.pt_q3,
+                  whislo=r.pt_min, whishi=r.pt_max, fliers=[]) for r in d.itertuples()]
+    if stats:
+        bp = axB.bxp(stats, positions=np.arange(n), widths=0.7, showfliers=False,
+                     patch_artist=True)
+        for i, box in enumerate(bp["boxes"]):
+            box.set_facecolor("tab:red" if not passed[i] else "tab:blue"); box.set_alpha(0.55)
+    axB.set_yscale("symlog", linthresh=1.0)
+    axB.set_xlim(-0.5, n - 0.5); axB.set_xticks([])
+    axB.set_xlabel(f"cluster (sorted by total spikes; red = floor-excluded, n={n_excl})")
+    axB.set_ylabel("spikes per trial (symlog)")
+    axB.set_title("Per-trial spike-count variability per cluster "
+                  "(box = min / Q1 / median / Q3 / max across trials)",
+                  fontsize=10, fontweight="bold")
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{out}.pdf"); fig.savefig(f"{out}.png", dpi=120)
+    plt.close(fig)
+    print(f"wrote {out}.pdf / .png")
+
+
 def main() -> int:
     part = pd.read_csv(PART)
     sel = pd.read_csv(SEL)[["probe_id", "cluster_id", "time_selected_vars"]]
