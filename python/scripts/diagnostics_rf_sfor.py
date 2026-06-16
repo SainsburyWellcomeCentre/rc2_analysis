@@ -74,7 +74,7 @@ def compute_partition(run: str, limit: int | None = None) -> tuple[pd.DataFrame,
             cohort = cohort[:limit]
         cohort = set(cohort)
         pdata = load_probe_data(drv.FORMATTED_DIR / f"{probe}.mat", config=cfg,
-                                stimulus_lookup=drv._lookup(), visp_only=True)
+                                stimulus_lookup=drv._lookup(), cluster_set="selected")
         rf = load_rf_sf_or(drv.RF_PARQUET_DIR, probe,
                            min_concentration=getattr(cfg, "rf_min_concentration", 0.0))
         for cl in pdata.clusters:

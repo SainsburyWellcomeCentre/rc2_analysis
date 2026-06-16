@@ -202,19 +202,22 @@ _RUN_LABEL = "Speed+TF+SF+OR+Acc"
 
 
 def dry_run() -> int:
-    """Report prefilter cohort, RF clusters and their intersection per probe."""
-    from rc2_glm.prefilter import prefilter_probe
+    """Report the selected cohort, RF clusters and the fit set per probe.
 
+    The goggles cohort is the file's curated ``selected_clusters`` (not VISp
+    anatomy). With ``apply_prefilter=False`` the rf_local fit set is
+    selected ∩ RF; once every selected cluster has a measured-or-imputed RF
+    that equals the full selected cohort.
+    """
     for probe in PROBES:
         data = load_probe_data(
             FORMATTED_DIR / f"{probe}.mat", config=GLMConfig(),
-            stimulus_lookup=_lookup(), visp_only=True,
+            stimulus_lookup=_lookup(), cluster_set="selected",
         )
-        pf = prefilter_probe(data, config=GLMConfig())
-        cohort = set(pf.loc[pf["should_run_glm"], "cluster_id"])
+        selected = {c.cluster_id for c in data.clusters}
         rf = load_rf_sf_or(RF_PARQUET_DIR, probe).clusters
-        log.info("%s: prefilter %d | RF %d | ∩ = %d (fit set)",
-                 probe, len(cohort), len(rf), len(cohort & rf))
+        log.info("%s: selected %d | RF %d | fit set (selected ∩ RF) = %d",
+                 probe, len(selected), len(rf), len(selected & rf))
     return 0
 
 
@@ -223,14 +226,12 @@ def run_probe(probe: str, max_clusters: int | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     cluster_filter = None
     if max_clusters is not None:
-        # Wiring smoke: restrict to the first few prefilter∩RF clusters.
-        from rc2_glm.prefilter import prefilter_probe
+        # Wiring smoke: restrict to the first few selected∩RF clusters.
         data = load_probe_data(
             FORMATTED_DIR / f"{probe}.mat", config=GLMConfig(),
-            stimulus_lookup=_lookup(), visp_only=True,
+            stimulus_lookup=_lookup(), cluster_set="selected",
         )
-        pf = prefilter_probe(data, config=GLMConfig())
-        cohort = set(pf.loc[pf["should_run_glm"], "cluster_id"])
+        cohort = {c.cluster_id for c in data.clusters}
         rf = load_rf_sf_or(RF_PARQUET_DIR, probe).clusters
         if getattr(_CONFIG_FN(), "rf_sf_or_nominal_fallback", False):
             # _all smoke: lead with no-RF clusters so the nominal fallback runs.
@@ -245,7 +246,7 @@ def run_probe(probe: str, max_clusters: int | None = None) -> Path:
         output_dir=out_dir,
         stimulus_lookup=_lookup(),
         backend="irls",
-        visp_only=True,
+        cluster_set="selected",
         make_plots=True,
         plot_format="pdf",
         n_jobs=1,  # single-process, deterministic run. Plotting is main-process

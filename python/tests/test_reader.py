@@ -44,6 +44,20 @@ def test_n_clusters_matches_dataset_length(formatted_mat_path):
         assert r.n_clusters == f["clusters"]["id"].shape[0]
 
 
+def test_selected_clusters_map_to_cluster_ids(formatted_mat_path):
+    """selected_cluster_indices/ids resolve to real clusters (the goggles cohort
+    gate, cluster_set='selected'). Skips a file without the field."""
+    with FormattedDataReader(formatted_mat_path) as r:
+        sel_ids = {int(x) for x in r.selected_cluster_ids()}
+        if not sel_ids:
+            pytest.skip("file has no selected_clusters field")
+        all_ids = r.cluster_ids()
+        assert sel_ids.issubset({int(x) for x in all_ids})
+        idx = r.selected_cluster_indices()
+        assert len(idx) == len(sel_ids)
+        assert {int(all_ids[i]) for i in idx} == sel_ids
+
+
 # --- Reader: clusters ---
 
 
