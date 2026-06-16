@@ -1618,12 +1618,31 @@ def _banner(title: str) -> None:
     logger.info(line)
 
 
-def _log_prefilter_summary(prefilter_df: pd.DataFrame, keep_ids: set[int]) -> None:
+def _log_prefilter_summary(
+    prefilter_df: pd.DataFrame, keep_ids: set[int], gating: bool
+) -> None:
+    """Log the stationary-vs-motion prefilter result.
+
+    The per-category counts describe the prefilter INPUT — every cluster
+    examined (the motion-responsiveness funnel) — NOT the fitted cohort.
+    Never read ``none_significant`` etc. as a cohort statistic; the cohort
+    is the final line. When ``gating`` is False the prefilter is a pure
+    diagnostic and the whole cohort is kept.
+    """
     counts = prefilter_df["category"].value_counts()
+    logger.info("prefilter funnel (input = %d clusters examined):",
+                int(len(prefilter_df)))
     for cat, n in counts.items():
         logger.info("  %s: %d", cat, int(n))
-    logger.info("total clusters: %d | keep for GLM: %d",
-                int(len(prefilter_df)), len(keep_ids))
+    if gating:
+        logger.info("selected cohort (prefilter-gated): %d clusters",
+                    len(keep_ids))
+    else:
+        logger.info(
+            "prefilter NOT gating — whole cohort kept: %d clusters "
+            "(motion-responsive subset would be %d)",
+            int(len(prefilter_df)), len(keep_ids),
+        )
 
 
 # --------------------------------------------------------------------------- #

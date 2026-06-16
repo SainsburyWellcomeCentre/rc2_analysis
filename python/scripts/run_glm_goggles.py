@@ -24,10 +24,10 @@ Differences from the screens driver (``run_glm_split_by_condition.py``):
   * the goggles stimulus parameter grid (``GOGGLES_STIMULUS``: SF 008/016/032,
     re-parameterized VX, gain ladder preserved — see ``trial_conditions.py``);
   * the goggles motion-cloud sequence / image-folders mats;
-  * **cohort built by the prefilter** off the goggles stationary-vs-motion table
-    (``apply_prefilter=True``), because there is no prior goggles run to reuse.
-    Clusters absent from the precomputed SVM table fall out as non-significant,
-    so the cohort universe is the SVM table's selected units.
+  * **whole selected cohort fit** (``apply_prefilter=False``): the stationary-
+    vs-motion table is still computed as a diagnostic (the motion-responsive
+    funnel stays on record) but no longer gates the cohort — every selected
+    cluster goes in. A spike-count floor will become the quality gate.
 
 Usage:
     python scripts/run_glm_goggles.py --dry-run      # trial/cohort sanity, no fit
@@ -125,7 +125,7 @@ def make_config() -> GLMConfig:
         n_selection_seeds=10,
         selection_threshold_count=7,
         profile_cv_diagnostic=True,
-        apply_prefilter=True,        # cohort from the goggles SVM table
+        apply_prefilter=False,       # whole selected cohort; prefilter is a diagnostic only
     )
 
 
@@ -148,7 +148,7 @@ def make_config_me() -> GLMConfig:
         n_selection_seeds=10,
         selection_threshold_count=7,
         profile_cv_diagnostic=True,
-        apply_prefilter=True,
+        apply_prefilter=False,       # whole selected cohort; prefilter is a diagnostic only
     )
 
 

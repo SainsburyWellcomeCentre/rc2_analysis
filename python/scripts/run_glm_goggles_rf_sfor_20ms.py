@@ -120,7 +120,7 @@ def make_config() -> GLMConfig:
         n_selection_seeds=1,
         selection_threshold_count=1,
         profile_cv_diagnostic=False,
-        apply_prefilter=True,   # prefilter cohort; rf_local ∩ RF in pipeline
+        apply_prefilter=False,  # whole selected cohort; prefilter is a diagnostic only
     )
 
 
