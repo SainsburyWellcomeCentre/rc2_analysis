@@ -259,7 +259,8 @@ def dry_run() -> int:
 
 
 def run_probe(probe: str, max_clusters: int | None = None,
-              backend: str = "irls", device: str = "auto") -> Path:
+              backend: str = "irls", device: str = "auto",
+              n_jobs: int = 1) -> Path:
     out_dir = OUT_ROOT / "_runs" / probe
     out_dir.mkdir(parents=True, exist_ok=True)
     cluster_filter = None
@@ -290,9 +291,13 @@ def run_probe(probe: str, max_clusters: int | None = None,
         cluster_set="selected",
         make_plots=True,
         plot_format="pdf",
-        n_jobs=1,  # single-process, deterministic run. Plotting is main-process
-                   # regardless of n_jobs; speed-profile CV makes serial fitting
-                   # fast, so the parallelism isn't worth the nondeterminism here.
+        n_jobs=n_jobs,  # process-parallel fitting (loky). Plotting is main-process
+                   # regardless. With the signed-rank 10-fold forward selection the
+                   # serial path is slow, so n_jobs>1 is worth it — BUT pin BLAS to
+                   # 1 thread/worker (OMP/OPENBLAS/MKL/VECLIB=1) to avoid thread
+                   # oversubscription AND make cv-bps deterministic (single-thread
+                   # BLAS has a fixed reduction order; the multi-thread wander is the
+                   # ~±0.004 cv-bps nondeterminism). Default 1 keeps old runs as-is.
         cluster_filter=cluster_filter,
     )
     return out_dir
@@ -356,6 +361,11 @@ def main() -> int:
                          "nemos (JAX, GPU-capable on the cluster).")
     ap.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto",
                     help="JAX device for --backend nemos (cpu/gpu/auto). Ignored for irls.")
+    ap.add_argument("--n-jobs", type=int, default=1,
+                    help="Process-parallel cluster fits (loky). Default 1 (serial). "
+                         "For a deterministic parallel run pin BLAS to 1 thread/worker: "
+                         "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 "
+                         "VECLIB_MAXIMUM_THREADS=1 python scripts/run_glm_...py --n-jobs 8.")
     args = ap.parse_args()
 
     global OUT_ROOT, _CONFIG_FN, _RUN_LABEL
@@ -383,7 +393,7 @@ def main() -> int:
     probes = (args.probe,) if args.probe else PROBES
     for probe in probes:
         run_probe(probe, max_clusters=args.max_clusters,
-                  backend=args.backend, device=args.device)
+                  backend=args.backend, device=args.device, n_jobs=args.n_jobs)
     if args.max_clusters is None:
         aggregate()
         # Diagnostics are PART OF THE PIPELINE — generated at the end of every
