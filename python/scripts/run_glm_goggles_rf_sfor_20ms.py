@@ -76,6 +76,12 @@ OUT_ALL_BY_COND = {
     "V": ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histme_goggles_all_V",
     "T_Vstatic": ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histme_goggles_all_Tvstatic",
 }
+# History-in-baseline variants of the condition splits (the histbase analogue of
+# OUT_ALL_BY_COND): fit V or T_Vstatic trials alone, History as baseline nuisance.
+OUT_HISTBASE_BY_COND = {
+    "V": ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histbase_goggles_all_V",
+    "T_Vstatic": ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histbase_goggles_all_Tvstatic",
+}
 MC_SEQUENCE = ROOT / "motion_clouds_goggles_sequence_260420.mat"
 MC_FOLDERS = ROOT / "image_folders_goggles.mat"
 RF_PARQUET_DIR = str(ROOT / "saved_goggles" / "_extract" / "cohort")
@@ -233,6 +239,18 @@ def make_config_histme_all_cond(condition: str) -> GLMConfig:
     )
 
 
+def make_config_histbase_all_cond(condition: str) -> GLMConfig:
+    """make_config_histme_all_cond(condition) but History in BASELINE-nuisance
+    mode — the condition-split analogue of make_config_histbase_all(). Reuses the
+    same non-degenerate per-condition candidate set (History is never in it); only
+    the history mode flips (include_history off, history_in_baseline on)."""
+    return replace(
+        make_config_histme_all_cond(condition),
+        include_history=False,
+        history_in_baseline=True,
+    )
+
+
 # Selected by --hist-me / --all-clusters in main(); run_probe/aggregate read these.
 _CONFIG_FN = make_config
 _RUN_LABEL = "Speed+TF+SF+OR+Acc"
@@ -369,7 +387,12 @@ def main() -> int:
     args = ap.parse_args()
 
     global OUT_ROOT, _CONFIG_FN, _RUN_LABEL
-    if args.history_in_baseline:
+    if args.history_in_baseline and args.condition:
+        cond = args.condition
+        OUT_ROOT = OUT_HISTBASE_BY_COND[cond]
+        _CONFIG_FN = lambda: make_config_histbase_all_cond(cond)
+        _RUN_LABEL = f"all clusters, {cond} only; History=baseline"
+    elif args.history_in_baseline:
         OUT_ROOT = OUT_HISTBASE_ALL
         _CONFIG_FN = make_config_histbase_all
         _RUN_LABEL = "Speed+TF+SF+OR+Acc+ME (all clusters; History=baseline)"
@@ -401,7 +424,9 @@ def main() -> int:
         # Late import breaks the circular dependency (diagnostics imports this
         # driver). A diagnostics failure is logged, not fatal — the fits + the
         # root figs/ are already on disk.
-        run_key = ("histbase" if args.history_in_baseline
+        run_key = ("histbase_V" if args.history_in_baseline and args.condition == "V"
+                   else "histbase_Tvstatic" if args.history_in_baseline and args.condition == "T_Vstatic"
+                   else "histbase" if args.history_in_baseline
                    else "all_V" if args.condition == "V"
                    else "all_Tvstatic" if args.condition == "T_Vstatic"
                    else "all" if args.all_clusters

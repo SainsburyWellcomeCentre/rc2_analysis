@@ -40,6 +40,10 @@ RUNS = {
     "all_Tvstatic": (lambda: drv.make_config_histme_all_cond("T_Vstatic"),
                      drv.OUT_ALL_BY_COND["T_Vstatic"]),
     "histbase": (drv.make_config_histbase_all, drv.OUT_HISTBASE_ALL),
+    "histbase_V": (lambda: drv.make_config_histbase_all_cond("V"),
+                   drv.OUT_HISTBASE_BY_COND["V"]),
+    "histbase_Tvstatic": (lambda: drv.make_config_histbase_all_cond("T_Vstatic"),
+                          drv.OUT_HISTBASE_BY_COND["T_Vstatic"]),
 }
 _STIM = ("Speed", "TF", "SF", "OR")
 
