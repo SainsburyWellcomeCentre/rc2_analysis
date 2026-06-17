@@ -64,6 +64,11 @@ FORMATTED_DIR = ROOT / "formatted_data_goggles"
 OUT_ROOT = ROOT / "figures" / "glm" / "current_rf_sfor_20ms_goggles"
 OUT_HISTME = ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histme_goggles"
 OUT_HISTME_ALL = ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histme_goggles_all"
+# Same all-clusters config as histme, but History flips to the BASELINE-nuisance
+# mode (history_in_baseline=True): always-on in null + every fitted model, never a
+# forward-selection candidate, never displayed, mean folded into the marginal's
+# intercept. The "control for refractory structure without interpreting it" run.
+OUT_HISTBASE_ALL = ROOT / "figures" / "glm" / "current_rf_sfor_20ms_histbase_goggles_all"
 # Condition-split variants of the _all run (fit V or T_Vstatic trials alone) —
 # isolates pure-visual (TF/SF/OR) vs pure-vestibular (Speed) tuning, away from
 # the VT TF=gain·Speed entanglement. One folder per condition.
@@ -168,6 +173,23 @@ def make_config_histme_all() -> GLMConfig:
     return replace(make_config_histme(), rf_sf_or_nominal_fallback=True)
 
 
+def make_config_histbase_all() -> GLMConfig:
+    """make_config_histme_all() but History runs in BASELINE-nuisance mode
+    (history_in_baseline=True): the spike-History term is always present in the
+    null model and every fitted model (like the onset kernel), is NEVER a
+    forward-selection candidate, is NEVER displayed, and its mean is folded into
+    the intercept for the marginal. We control for refractory/autocorrelation
+    structure without interpreting it. include_history is turned OFF (the legacy
+    candidate mode) so History is baseline-only; the history window/basis/lags
+    carry over from make_config_histme(). All other terms — rf_local SF/OR, ME,
+    Speed/TF/SF/OR/Accel + the full interaction set — are unchanged."""
+    return replace(
+        make_config_histme_all(),
+        include_history=False,       # not a candidate; baseline flag forces it on
+        history_in_baseline=True,
+    )
+
+
 # Non-degenerate candidate set per condition (mirrors run_glm_split_by_condition
 # + the histme additions): in V the platform is static (Speed≡Accel≡0) so only
 # the visual terms + ME vary; in T_Vstatic the screen is grey (TF≡0, SF/OR≡NaN)
@@ -236,7 +258,8 @@ def dry_run() -> int:
     return 0
 
 
-def run_probe(probe: str, max_clusters: int | None = None) -> Path:
+def run_probe(probe: str, max_clusters: int | None = None,
+              backend: str = "irls", device: str = "auto") -> Path:
     out_dir = OUT_ROOT / "_runs" / probe
     out_dir.mkdir(parents=True, exist_ok=True)
     cluster_filter = None
@@ -255,12 +278,15 @@ def run_probe(probe: str, max_clusters: int | None = None) -> Path:
         else:
             cluster_filter = set(sorted(cohort & rf)[:max_clusters])
         log.info("smoke: %s restricted to %s", probe, cluster_filter)
+    # The fitting engine is a CLI choice: irls (CPU, the established lineage) or
+    # nemos (JAX, GPU-capable on the cluster). device routes JAX to cpu/gpu/auto.
+    cfg = replace(_CONFIG_FN(), device=device)
     run_pipeline(
         mat_path=FORMATTED_DIR / f"{probe}.mat",
-        config=_CONFIG_FN(),
+        config=cfg,
         output_dir=out_dir,
         stimulus_lookup=_lookup(),
-        backend="irls",
+        backend=backend,
         cluster_set="selected",
         make_plots=True,
         plot_format="pdf",
@@ -321,10 +347,23 @@ def main() -> int:
                     help="Condition-SPLIT of the _all run: fit only V (VF) or T_Vstatic "
                          "trials, with that condition's non-degenerate candidates → "
                          "current_rf_sfor_20ms_histme_goggles_all_<cond>/.")
+    ap.add_argument("--history-in-baseline", action="store_true",
+                    help="all-clusters config but History runs as an always-on BASELINE "
+                         "nuisance (never selected, never displayed) → "
+                         "current_rf_sfor_20ms_histbase_goggles_all/. Implies --all-clusters.")
+    ap.add_argument("--backend", choices=("irls", "nemos"), default="irls",
+                    help="Fitting engine: irls (CPU, default, the established lineage) or "
+                         "nemos (JAX, GPU-capable on the cluster).")
+    ap.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto",
+                    help="JAX device for --backend nemos (cpu/gpu/auto). Ignored for irls.")
     args = ap.parse_args()
 
     global OUT_ROOT, _CONFIG_FN, _RUN_LABEL
-    if args.condition:
+    if args.history_in_baseline:
+        OUT_ROOT = OUT_HISTBASE_ALL
+        _CONFIG_FN = make_config_histbase_all
+        _RUN_LABEL = "Speed+TF+SF+OR+Acc+ME (all clusters; History=baseline)"
+    elif args.condition:
         cond = args.condition
         OUT_ROOT = OUT_ALL_BY_COND[cond]
         _CONFIG_FN = lambda: make_config_histme_all_cond(cond)
@@ -343,7 +382,8 @@ def main() -> int:
 
     probes = (args.probe,) if args.probe else PROBES
     for probe in probes:
-        run_probe(probe, max_clusters=args.max_clusters)
+        run_probe(probe, max_clusters=args.max_clusters,
+                  backend=args.backend, device=args.device)
     if args.max_clusters is None:
         aggregate()
         # Diagnostics are PART OF THE PIPELINE — generated at the end of every
@@ -351,7 +391,8 @@ def main() -> int:
         # Late import breaks the circular dependency (diagnostics imports this
         # driver). A diagnostics failure is logged, not fatal — the fits + the
         # root figs/ are already on disk.
-        run_key = ("all_V" if args.condition == "V"
+        run_key = ("histbase" if args.history_in_baseline
+                   else "all_V" if args.condition == "V"
                    else "all_Tvstatic" if args.condition == "T_Vstatic"
                    else "all" if args.all_clusters
                    else "histme" if args.hist_me else "main")
