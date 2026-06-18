@@ -1,0 +1,970 @@
+"""FENS poster figure 1 — LEFT panel (Hardcastle 2017 fig 1C/D style).
+
+TEST DRIVER (iteration stage). Builds, for a chosen cluster, a cumulative
+model-buildup on one example trial: starting from a fixed baseline
+(``Intercept + Onset + History``), components are added one at a time and the
+predicted firing-rate trace is overlaid on the observed FR — annotating the
+gain in cross-validated bits/spike (cv-bps) at each addition. This mirrors
+Hardcastle et al. 2017 (Neuron) panel D (example-cell prediction improving with
+model complexity); the right panel (forward-selection process, top of their
+panel C) is deferred.
+
+Status / honesty note: this is intentionally a *standalone* script, NOT yet
+folded into ``rc2_glm.plots`` / ``rc2_glm.pipeline``. The per-cluster design
+prep below is a faithful MIRROR of ``pipeline._fit_one_cluster`` (lines ~489-642
+on the glm-improvements branch). To guard against silent divergence, the script
+oracle-checks itself: the buildup's cv-bps for each cluster's stored *Selected*
+variable set must reproduce ``time_Selected_cv_bps`` in the run's
+``glm_model_comparison.csv``. Once Laura picks a cluster and locks the figure
+design, the fit helper migrates into the package (a shared cluster-prep helper
+reused by both ``_fit_one_cluster`` and this buildup) per the display contract.
+
+Data source: the goggles History-in-baseline run config (``make_config_histbase_all``
+from ``run_glm_goggles_rf_sfor_20ms``), read against the
+``figures/glm/current_rf_sfor_20ms_histbase_goggles_all`` outputs. History is an
+always-on baseline nuisance there (never a forward-selection candidate), and the
+selection rule is the condition-stratified 10-fold one-sided Wilcoxon signed-rank
+test — so the fig2c bottom panel shows per-fold Δ bits/spike (mean ± SD over the
+10 folds), not a single-point Δ against a fixed threshold.
+
+Usage:
+    python scripts/make_fens_poster_figures.py \
+        --probe CAA-1124370_rec1_rec2_rec3 --clusters 194 125 20 29
+"""
+
+from __future__ import annotations
+
+# Pin BLAS/OMP to a single thread BEFORE numpy imports so the IRLS cv-bps is
+# reproducible: unpinned, thread-order float summation makes cv-bps wander by
+# ~few×1e-3 across process launches (a property of the production pipeline's
+# solver, not this script). setdefault lets the caller override.
+import os as _os
+
+for _v in (
+    "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS",
+):
+    _os.environ.setdefault(_v, "1")
+
+import argparse
+import logging
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from rc2_glm.basis import (
+    circular_basis,
+    convolve_history,
+    history_basis,
+    onset_kernel_basis,
+    raised_cosine_basis_linear,
+    value_basis,
+)
+from rc2_glm.cross_validation import cross_validate_glm, make_trial_folds
+from rc2_glm.design_matrix import assemble_design_matrix_selected
+from rc2_glm.fitting import fit_poisson_glm
+from rc2_glm.io import load_probe_data
+from rc2_glm.rf_sf_or import load_rf_sf_or
+from rc2_glm.time_binning import bin_cluster
+
+# The _all run config + paths come straight from the production driver so this
+# stays byte-faithful to how the cohort was fit.
+from run_glm_goggles_rf_sfor_20ms import (
+    FORMATTED_DIR,
+    OUT_HISTBASE_ALL,
+    RF_PARQUET_DIR,
+    _lookup,
+    make_config_histbase_all,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log = logging.getLogger("fens_poster")
+
+HOME = Path.home()
+# Figures land in the FENS_figures_poster ROOT (the /test iteration subdir is
+# retired now the figure design is locked on the histbase fits).
+OUT_DIR = HOME / "local_data" / "motion_clouds" / "figures" / "glm" / "FENS_figures_poster"
+# The histbase "_all" run outputs (oracle check + forward-selection history; the
+# fits themselves come from the formatted .mat). History is a baseline nuisance
+# here (history_in_baseline) — never selected, always in every model's baseline.
+_GLM_DIR = HOME / "local_data" / "motion_clouds" / "figures" / "glm"
+RUN_ALL_DIR = _GLM_DIR / "current_rf_sfor_20ms_histbase_goggles_all"
+
+# The buildup follows the cluster's OWN forward-selection result: rows = the
+# regressors forward selection chose, added one at a time in selection order
+# (so row count varies per cluster). History, when selected, is folded into the
+# baseline (Laura's "baseline = Intercept + Onset + History"); a cluster that did
+# NOT select History gets a baseline of Intercept + Onset only. Onset is
+# auto-added by the design assembler (include_onset_kernel=True).
+
+
+def load_selection_order(probe_id: str, cluster_id: int) -> list[str] | None:
+    """Ordered list of forward-selected terms for a cluster (selection order),
+    read from the run's glm_selection_history.csv. None if unavailable."""
+    csv = RUN_ALL_DIR / "_runs" / probe_id / "glm_selection_history.csv"
+    if not csv.exists():
+        return None
+    sh = pd.read_csv(csv)
+    sub = sh[sh["cluster_id"] == cluster_id].copy()
+    if sub.empty:
+        return None
+    added = sub["added"].astype(str).str.lower() == "true"
+    sub = sub[added].sort_values("round")
+    return [str(c) for c in sub["best_candidate"].tolist() if str(c) not in ("", "nan")]
+
+
+def buildup_steps_for(selected_ordered: list[str]) -> list[tuple[str, list[str]]]:
+    """(label, cumulative-vars) steps. History (if selected) lives in the
+    baseline; every other selected term becomes its own cumulative row, in
+    selection order."""
+    history = "History" in selected_ordered
+    base_vars = ["History"] if history else []
+    base_label = "baseline (Intercept+Onset" + ("+History)" if history else ")")
+    steps = [(base_label, list(base_vars))]
+    cum = list(base_vars)
+    for v in selected_ordered:
+        if v == "History":
+            continue
+        cum = cum + [v]
+        steps.append((f"+ {v}", list(cum)))
+    return steps
+
+
+# --------------------------------------------------------------------------- #
+# Per-cluster design prep — MIRROR of pipeline._fit_one_cluster.
+# --------------------------------------------------------------------------- #
+def prepare_cluster_design(df: pd.DataFrame, config) -> dict:
+    """Build the bases / y / offset / folds for one binned cluster.
+
+    Faithful mirror of pipeline._fit_one_cluster (the rf_local + history + ME +
+    accel branches as configured by make_config_histbase_all). Returns a dict of
+    everything assemble_design_matrix_selected / cross_validate_glm need.
+    """
+    motion_mask = (df["condition"] != "stationary").to_numpy(dtype=bool)
+
+    speed = df["speed"].to_numpy(dtype=np.float64)
+    tf = df["tf"].to_numpy(dtype=np.float64)
+    onset = df["time_since_onset"].to_numpy(dtype=np.float64)
+    sf_vals = df["sf"].to_numpy(dtype=np.float64)
+    or_vals = df["orientation"].to_numpy(dtype=np.float64)
+    y = df["spike_count"].to_numpy(dtype=np.float64)
+    trial_ids = df["trial_id"].to_numpy(dtype=np.int64)
+    condition_labels = df["condition"].to_numpy(dtype=object)
+    profile_ids = (
+        df["profile_id"].to_numpy(dtype=np.int64) if "profile_id" in df.columns else None
+    )
+
+    spacing = getattr(config, "speed_tf_basis_spacing", "log")
+    B_speed = value_basis(speed, config.n_speed_bases, *config.speed_range, spacing=spacing)
+    B_tf = value_basis(tf, config.n_tf_bases, *config.tf_range, spacing=spacing)
+    B_onset = onset_kernel_basis(onset, config.n_onset_bases, config.onset_range[1])
+
+    # History (identity 2-lag). Built when EITHER include_history (legacy
+    # candidate mode) OR history_in_baseline (the histbase config: History is an
+    # always-on baseline nuisance, never a candidate) — mirrors the pipeline,
+    # which builds B_history under either flag. Missing this would silently drop
+    # History from every model's baseline in the histbase fits.
+    if getattr(config, "include_history", False) or getattr(config, "history_in_baseline", False):
+        h_basis = history_basis(
+            n_bases=config.n_history_bases,
+            t_max_s=config.history_window_s,
+            bin_width_s=config.time_bin_width,
+            kind=getattr(config, "history_basis_kind", "raised_cosine"),
+        )
+        B_history = convolve_history(y, trial_ids, h_basis)
+    else:
+        B_history = None
+
+    # Face ME (z-scored over finite motion rows).
+    B_me_face = None
+    if "me_face_raw" in df.columns and getattr(config, "include_me_face", True):
+        me_raw = df["me_face_raw"].to_numpy(dtype=np.float64)
+        me_motion_finite = np.isfinite(me_raw) & motion_mask
+        if int(me_motion_finite.sum()) >= 10:
+            me_mean = float(me_raw[me_motion_finite].mean())
+            me_std = float(me_raw[me_motion_finite].std(ddof=0)) or 1.0
+            me_z = np.where(np.isfinite(me_raw), (me_raw - me_mean) / me_std, 0.0)
+            B_me_face = raised_cosine_basis_linear(
+                me_z, config.n_me_face_bases, config.me_face_range[0], config.me_face_range[1]
+            )
+
+    # Acceleration (z-scored signed accel, clipped to accel_range).
+    B_accel = None
+    if "acceleration" in df.columns and getattr(config, "include_acceleration", False):
+        acc_raw = df["acceleration"].to_numpy(dtype=np.float64)
+        acc_motion = np.isfinite(acc_raw) & motion_mask
+        if int(acc_motion.sum()) >= 10:
+            a_mean = float(acc_raw[acc_motion].mean())
+            a_std = float(acc_raw[acc_motion].std(ddof=0)) or 1.0
+            acc_z = np.where(np.isfinite(acc_raw), (acc_raw - a_mean) / a_std, 0.0)
+            acc_z = np.clip(acc_z, config.accel_range[0], config.accel_range[1])
+            B_accel = raised_cosine_basis_linear(
+                acc_z, config.n_accel_bases, config.accel_range[0], config.accel_range[1]
+            )
+
+    # RF-local SF/OR value bases.
+    B_sf = B_or = None
+    if getattr(config, "sf_or_source", "tokens") == "rf_local":
+        n_rows = sf_vals.size
+        sf_fin = np.isfinite(sf_vals)
+        B_sf = np.zeros((n_rows, config.n_sf_bases), dtype=np.float64)
+        if sf_fin.any():
+            B_sf[sf_fin] = raised_cosine_basis_linear(
+                sf_vals[sf_fin], config.n_sf_bases, *config.sf_cpd_range
+            )
+        or_fin = np.isfinite(or_vals)
+        B_or = np.zeros((n_rows, config.n_or_bases), dtype=np.float64)
+        if or_fin.any():
+            B_or[or_fin] = circular_basis(or_vals[or_fin], config.n_or_bases)
+
+    offset = float(np.log(config.time_bin_width))
+    fold_ids = make_trial_folds(
+        trial_ids,
+        config.n_folds,
+        config.cv_seed,
+        condition_labels_per_bin=condition_labels,
+        strategy=config.cv_strategy,
+        profile_ids_per_bin=profile_ids,
+    )
+
+    sf_valid = sf_vals[(sf_vals != 0.0) & ~np.isnan(sf_vals)]
+    sf_ref_levels = np.sort(np.unique(sf_valid)).tolist() if sf_valid.size > 0 else []
+    or_valid = or_vals[(or_vals != 0.0) & ~np.isnan(or_vals)]
+    or_ref_levels = np.sort(np.unique(or_valid)).tolist() if or_valid.size > 0 else []
+
+    return dict(
+        B_speed=B_speed, B_tf=B_tf, B_onset=B_onset, sf_vals=sf_vals, or_vals=or_vals,
+        y=y, offset=offset, fold_ids=fold_ids, motion_mask=motion_mask,
+        sf_ref_levels=sf_ref_levels, or_ref_levels=or_ref_levels,
+        B_history=B_history, B_me_face=B_me_face, B_accel=B_accel, B_sf=B_sf, B_or=B_or,
+    )
+
+
+def _design(prep: dict, vars_: list[str], config):
+    return assemble_design_matrix_selected(
+        prep["B_speed"], prep["B_tf"], prep["B_onset"], prep["sf_vals"], prep["or_vals"],
+        vars_,
+        sf_ref_levels=prep["sf_ref_levels"], or_ref_levels=prep["or_ref_levels"],
+        B_history=prep["B_history"], B_me_face=prep["B_me_face"], B_accel=prep["B_accel"],
+        B_sf=prep["B_sf"], B_or=prep["B_or"],
+        include_onset_kernel=getattr(config, "include_onset_kernel", True),
+        history_in_baseline=getattr(config, "history_in_baseline", False),
+    )
+
+
+def cv_bps_for(prep: dict, vars_: list[str], config, backend: str = "irls") -> float:
+    X, _ = _design(prep, vars_, config)
+    if X.shape[1] == 0 or X.shape[1] >= prep["y"].size:
+        return float("nan")
+    cv = cross_validate_glm(
+        X, prep["y"], prep["offset"], prep["fold_ids"],
+        lambda_ridge=config.lambda_ridge, backend=backend,
+    )
+    return float(cv.cv_bits_per_spike)
+
+
+def cv_folds_for(prep: dict, vars_: list[str], config, backend: str = "irls") -> np.ndarray | None:
+    """Per-fold cv bits/spike for a model (the 10 condition-stratified folds),
+    on the SAME fold partition every model sees — so two models' fold arrays are
+    paired and can be differenced fold-by-fold (exactly the signed-rank input).
+    None when the model is degenerate (no columns / rank-deficient)."""
+    X, _ = _design(prep, vars_, config)
+    if X.shape[1] == 0 or X.shape[1] >= prep["y"].size:
+        return None
+    cv = cross_validate_glm(
+        X, prep["y"], prep["offset"], prep["fold_ids"],
+        lambda_ridge=config.lambda_ridge, backend=backend,
+    )
+    return np.asarray(cv.fold_bits_per_spike, dtype=np.float64)
+
+
+def _paired_delta(f_model: np.ndarray | None, f_cur: np.ndarray | None) -> np.ndarray | None:
+    """Fold-by-fold paired Δ bits/spike (model+candidate minus current model).
+    None if either model is degenerate or the fold arrays don't align."""
+    if f_model is None or f_cur is None or f_model.shape != f_cur.shape:
+        return None
+    return np.asarray(f_model, np.float64) - np.asarray(f_cur, np.float64)
+
+
+def _delta_stats(d: np.ndarray | None) -> tuple[float, float, float]:
+    """(mean, SD, one-sided Wilcoxon signed-rank p) of a paired per-fold Δ.
+    SD is the across-fold spread (Laura's choice); the p-value is the same
+    one-sided 'candidate improves bits/spike' test the production selection uses.
+    """
+    if d is None or d.size == 0 or not np.all(np.isfinite(d)):
+        return float("nan"), float("nan"), float("nan")
+    mean = float(np.mean(d))
+    sd = float(np.std(d, ddof=1)) if d.size > 1 else 0.0
+    try:
+        from scipy.stats import wilcoxon
+        p = float(wilcoxon(d, alternative="greater", zero_method="wilcox").pvalue)
+    except Exception:  # all-zero/degenerate differences → no test
+        p = float("nan")
+    return mean, sd, p
+
+
+def insample_rate_for(prep: dict, vars_: list[str], config, backend: str = "irls") -> np.ndarray:
+    """Per-bin predicted firing rate (Hz) for an in-sample refit — ALL rows
+    (stationary + motion), so the full trial window can be plotted."""
+    X, _ = _design(prep, vars_, config)
+    fit = fit_poisson_glm(
+        X, prep["y"], prep["offset"], lambda_ridge=config.lambda_ridge, backend=backend
+    )
+    return np.exp(np.clip(X @ fit.beta, -20.0, 20.0))  # exp(X@beta) = count/bin = Hz
+
+
+# --------------------------------------------------------------------------- #
+# MATLAB FiringRate.get_convolution port (Gaussian, sigma=20 ms) — the
+# "smoothed firing rate at a good timescale" property of the formatted-data
+# class (lib/classes/analysis/FiringRate.m). Builds a spike train at the
+# timebase fs, convolves fs*train with a normalised Gaussian (width=sigma,
+# length=window), interpolates onto T. prepad/postpad avoid edge effects.
+# --------------------------------------------------------------------------- #
+def fr_convolution(
+    spike_times: np.ndarray, T: np.ndarray,
+    width: float = 0.02, length: float = 1.0, pad: float = 1.0,
+) -> np.ndarray:
+    fs = 1.0 / (T[1] - T[0])
+    t0, t1 = T[0] - pad, T[-1] + pad
+    st = spike_times[(spike_times > t0) & (spike_times < t1)]
+    n = int(round((t1 - t0) * fs)) + 1
+    train = np.zeros(n, dtype=np.float64)
+    idx = np.round((st - t0) * fs).astype(int)
+    idx = idx[(idx >= 0) & (idx < n)]
+    np.add.at(train, idx, 1.0)
+    sigma = width * fs
+    sz = int(round(length * fs))
+    x = np.linspace(-sz / 2, sz / 2, sz)
+    g = np.exp(-x**2 / (2 * sigma**2))
+    g /= g.sum()
+    conv = np.convolve(fs * train, g, mode="same")
+    sr_t = t0 + np.arange(n) / fs
+    return np.interp(T, sr_t, conv)
+
+
+def select_vt_trials(
+    df: pd.DataFrame, n: int, baseline_min: int, baseline_max: int,
+) -> list[tuple[int, int, int]]:
+    """Top-n VT trials with 'a few' (baseline_min..baseline_max) stationary
+    spikes, ranked by motion-spike count. Returns (trial_id, motion, baseline)."""
+    stat = df[df["condition"] == "stationary"].groupby("trial_id")["spike_count"].sum()
+    mot = df[df["condition"] == "VT"].groupby("trial_id")["spike_count"].sum()
+    cand = pd.DataFrame({"motion": mot})
+    cand["baseline"] = stat.reindex(cand.index).fillna(0).astype(int)
+    ok = cand[(cand["baseline"] >= baseline_min) & (cand["baseline"] <= baseline_max)]
+    ok = ok.sort_values("motion", ascending=False).head(n)
+    return [(int(t), int(r.motion), int(r.baseline)) for t, r in ok.iterrows()]
+
+
+# --------------------------------------------------------------------------- #
+# Plotting
+# --------------------------------------------------------------------------- #
+def plot_buildup(
+    probe_id, cluster_id, df, config, step_results, tid,
+    spike_times, t_motion_start, out_path, baseline_spk=None,
+):
+    """Stacked single-trial buildup: 1 column, one row per cumulative addition.
+
+    Per row: raw 20 ms observed FR (gray line, NO smoothing), the MATLAB
+    Gaussian FR (sigma=20 ms; pink), and the current cumulative model
+    prediction (black). Window = full trial: stationary prelude THEN motion
+    (~4 + ~4 s), motion onset marked. Rows/predictions are taken in df row
+    order (the order the GLM saw → history stays self-consistent) on a synthetic
+    axis (stationary is time_in_trial=0 in the binning, so given bin-width
+    spacing before motion). The pink FR is computed in ABSOLUTE probe time over
+    [t_motion_start - stat_dur, t_motion_start + motion_dur] and mapped onto the
+    same synthetic axis (x = abs_t - t_lo).
+    """
+    bw = float(config.time_bin_width)
+    df = df.reset_index(drop=True)
+    cond = df["condition"].to_numpy(dtype=object)
+    tit = df["time_in_trial"].to_numpy(dtype=float)
+    trial_ids = df["trial_id"].to_numpy()
+
+    pos = np.where(trial_ids == tid)[0]
+    stat = pos[cond[pos] == "stationary"]
+    mot = pos[cond[pos] != "stationary"]
+    mot = mot[np.argsort(tit[mot])]  # temporal order within motion
+    n_stat = stat.size
+    onset_t = n_stat * bw
+    motion_dur = float(tit[mot].max()) if mot.size else 0.0
+    order = np.concatenate([stat, mot])
+    t = np.concatenate([np.arange(n_stat) * bw, onset_t + tit[mot]])
+    n_spk = int(df.iloc[order]["spike_count"].sum())
+    cond_label = str(cond[mot[0]]) if mot.size else "?"
+
+    # Pink: MATLAB Gaussian FR over the absolute trial window, mapped to x.
+    t_lo = t_motion_start - onset_t
+    t_hi = t_motion_start + motion_dur
+    T = np.arange(t_lo, t_hi + 1e-9, 0.001)  # 1 ms timebase
+    fr_pink = fr_convolution(spike_times, T)
+    x_pink = T - t_lo
+
+    n = len(step_results)
+    fig, axes = plt.subplots(
+        n, 1, figsize=(8.0, 1.9 * n), sharex=True, sharey=True, constrained_layout=True,
+    )
+    axes = np.atleast_1d(axes)
+    baseline_cv = step_results[0]["cv"]
+    for k, (ax, sr) in enumerate(zip(axes, step_results)):
+        pred = sr["rate"][order]
+        ax.plot(x_pink, fr_pink, color="#ff4da6", lw=1.0, zorder=1,
+                label="observed FR (Gauss σ=20 ms)" if k == 0 else None)
+        ax.plot(t, pred, color="black", lw=1.3, zorder=3,
+                label="model prediction" if k == 0 else None)
+        ax.axvline(onset_t, color="0.8", ls="--", lw=0.8, zorder=2)
+        delta = sr["cv"] - (step_results[k - 1]["cv"] if k > 0 else sr["cv"])
+        label = sr["label"].replace("\n", " ")
+        if k == 0:
+            txt = label
+        else:
+            txt = f"{label}   +{delta:.3f} bits/spike   (cum +{sr['cv'] - baseline_cv:.3f})"
+        ax.set_title(txt, fontsize=8, loc="left")
+        ax.set_ylabel("FR (Hz)", fontsize=8)
+        ax.spines[["top", "right"]].set_visible(False)
+        if k == 0:
+            ax.legend(fontsize=7, loc="upper left", framealpha=0.9, ncol=2)
+
+    axes[-1].set_xlabel(
+        "time from stationary onset (s)   —   motion onset at dashed line", fontsize=9
+    )
+    base_note = f", {baseline_spk} baseline spk" if baseline_spk is not None else ""
+    fig.suptitle(
+        f"{probe_id}  cluster {cluster_id}  |  {cond_label} trial {tid} "
+        f"({n_spk} spk{base_note}, full trial)  |  total gain "
+        f"{step_results[-1]['cv'] - baseline_cv:+.3f} bps",
+        fontsize=10,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
+# --------------------------------------------------------------------------- #
+# Hardcastle 2017 Fig-2C-style forward-selection panel for ONE cluster + trial.
+# Top row: cumulative-model FR reconstructions (pink observed Gaussian FR +
+# black prediction). Bottom row: per-step candidate Δ cv-bps (the bits/spike
+# increase each candidate would add at that step), the chosen term highlighted,
+# a rejected term in red, and the 0.005 selection threshold as a dotted line.
+# --------------------------------------------------------------------------- #
+MAIN_POOL = ["Acceleration", "Speed", "TF", "SF", "OR", "ME_face"]
+ABBR = {"Acceleration": "A", "Speed": "S", "TF": "TF", "SF": "SF",
+        "OR": "OR", "ME_face": "ME"}
+
+
+def _trial_window(df, config, tid, t_motion_start, spike_times):
+    """Shared trial-window machinery: row order, synthetic time axis, motion
+    onset, and the pink Gaussian-FR trace in mapped coordinates."""
+    bw = float(config.time_bin_width)
+    cond = df["condition"].to_numpy(dtype=object)
+    tit = df["time_in_trial"].to_numpy(dtype=float)
+    pos = np.where(df["trial_id"].to_numpy() == tid)[0]
+    stat = pos[cond[pos] == "stationary"]
+    mot = pos[cond[pos] != "stationary"]
+    mot = mot[np.argsort(tit[mot])]
+    n_stat = stat.size
+    onset_t = n_stat * bw
+    motion_dur = float(tit[mot].max()) if mot.size else 0.0
+    order = np.concatenate([stat, mot])
+    t = np.concatenate([np.arange(n_stat) * bw, onset_t + tit[mot]])
+    t_lo = t_motion_start - onset_t
+    T = np.arange(t_lo, t_motion_start + motion_dur + 1e-9, 0.001)
+    fr_pink = fr_convolution(spike_times, T)
+    x_pink = T - t_lo
+    return order, t, onset_t, x_pink, fr_pink
+
+
+def plot_forward_panel(
+    probe_id, cluster_id, df, prep, config, tid, spike_times, t_motion_start,
+    baseline_vars, accepted, rejected, out_path, backend="irls",
+):
+    order, t, onset_t, x_pink, fr_pink = _trial_window(
+        df, config, tid, t_motion_start, spike_times)
+
+    # Columns: baseline, then one per accepted term, then the rejected example.
+    top_models = [("baseline", list(baseline_vars))]
+    cur = list(baseline_vars)
+    for v in accepted:
+        cur = cur + [v]
+        top_models.append((f"+ {v}", list(cur)))
+    top_models.append((f"+ {rejected} (rejected)", list(cur) + [rejected]))
+    n_col = len(top_models)
+    base_cv = cv_bps_for(prep, baseline_vars, config, backend)
+
+    # Bottom panels: one per transition (under columns 1..n_col-1). Each shows,
+    # for every still-available main effect, the PER-FOLD paired Δ bits/spike over
+    # the current model (mean ± SD across the 10 condition-stratified folds — the
+    # same paired per-fold Δ the signed-rank selection consumes). The chosen term
+    # is highlighted with its one-sided Wilcoxon signed-rank p-value.
+    def _candidates(cur, chosen, chosen_color):
+        f_cur = cv_folds_for(prep, cur, config, backend)
+        out = []
+        for m in (mm for mm in MAIN_POOL if mm not in cur):
+            mean, sd, p = _delta_stats(
+                _paired_delta(cv_folds_for(prep, cur + [m], config, backend), f_cur))
+            hl = m == chosen
+            out.append((m, mean, sd, hl, chosen_color if hl else "black",
+                        p if hl else None))
+        return out
+
+    bottom = []  # (col_index, list[(cand, mean, sd, is_highlight, color, pval)])
+    cur = list(baseline_vars)
+    for i, v in enumerate(accepted):
+        bottom.append((i + 1, _candidates(cur, v, "black")))
+        cur = cur + [v]
+    # Rejected example: the term that did NOT clear the signed-rank test.
+    bottom.append((n_col - 1, _candidates(cur, rejected, "#d62728")))
+
+    fig, axes = plt.subplots(
+        2, n_col, figsize=(2.5 * n_col, 4.6),
+        gridspec_kw={"height_ratios": [1.1, 1.0]}, constrained_layout=True,
+    )
+
+    # Top row: reconstructions (shared y so the prediction visibly catches up).
+    rates = [insample_rate_for(prep, v, config, backend)[order] for _, v in top_models]
+    cvs = [cv_bps_for(prep, v, config, backend) for _, v in top_models]
+    top_ymax = max(float(fr_pink.max()), max(float(r.max()) for r in rates))
+    x_end = float(t[-1])
+    for k, (label, vars_) in enumerate(top_models):
+        ax = axes[0, k]
+        # Mask-derived periods: stationary prelude (shaded) vs motion.
+        ax.axvspan(0, onset_t, color="#d6e4f0", alpha=0.8, lw=0, zorder=0)
+        ax.plot(x_pink, fr_pink, color="#ff4da6", lw=0.9,
+                label="Rec. FR (Gauss 20 ms)" if k == 0 else None)
+        ax.plot(t, rates[k], color="black", lw=1.1,
+                label="Pred. FR" if k == 0 else None)
+        ax.axvline(onset_t, color="0.45", ls="--", lw=0.9)
+        ax.set_xlim(0, x_end)
+        ax.set_ylim(0, 1.05 * top_ymax)
+        delta = cvs[k] - cvs[k - 1] if k > 0 else 0.0
+        cum = cvs[k] - cvs[0]
+        ttl = label if k == 0 else f"{label}\nΔ+{delta:.3f}  (cum +{cum:.3f})"
+        ax.set_title(ttl, fontsize=8)
+        ax.spines[["top", "right"]].set_visible(False)
+        if k == 0:
+            ax.set_ylabel("firing rate (Hz)", fontsize=8)
+            ax.legend(fontsize=6, loc="lower left", framealpha=0.9)
+            tr = ax.get_xaxis_transform()
+            ax.text(onset_t * 0.5, 0.94, "stationary\n(baseline)", transform=tr,
+                    ha="center", va="top", fontsize=6.5, color="#2b5d8a")
+            ax.text(onset_t + (x_end - onset_t) * 0.5, 0.94, "motion", transform=tr,
+                    ha="center", va="top", fontsize=6.5, color="#7a4a12")
+        else:
+            ax.set_yticklabels([])
+
+    # Bottom row: per-candidate mean ± SD of the paired per-fold Δ (shared y).
+    axes[1, 0].axis("off")  # no transition produces the baseline column
+    finite = [(mn, sd) for _, cands in bottom for _, mn, sd, _, _, _ in cands
+              if np.isfinite(mn)]
+    ymax = max((mn + sd for mn, sd in finite), default=0.1)
+    ymin = min([mn - sd for mn, sd in finite] + [0.0], default=-0.02)
+    for col, cands in bottom:
+        ax = axes[1, col]
+        for xi, (m, mn, sd, hl, color, p) in enumerate(cands):
+            if not np.isfinite(mn):
+                continue
+            ax.errorbar([xi], [mn], yerr=[sd], fmt="o",
+                        ms=7 if hl else 4, color=color if hl else "0.6",
+                        ecolor=color if hl else "0.7",
+                        elinewidth=1.4 if hl else 0.9, capsize=3,
+                        markeredgecolor="black" if hl else "none",
+                        zorder=3 if hl else 2)
+            if hl and p is not None and np.isfinite(p):
+                ax.annotate(f"signed-rank\np={p:.3f}", (xi, mn + sd),
+                            textcoords="offset points", xytext=(0, 4),
+                            ha="center", va="bottom", fontsize=6, color=color)
+        ax.axhline(0, color="0.85", lw=0.6)
+        ax.set_xticks(range(len(cands)))
+        ax.set_xticklabels([ABBR.get(m, m) for m, *_ in cands], fontsize=7)
+        ax.set_ylim(min(-0.02, 1.2 * ymin), 1.3 * ymax)
+        ax.spines[["top", "right"]].set_visible(False)
+        if col == 1:
+            ax.set_ylabel("per-fold Δ bits/spike (mean ± SD)", fontsize=8)
+
+    fig.suptitle(
+        f"{probe_id}  cluster {cluster_id}  trial {tid}  —  forward selection "
+        f"(condition-stratified 10-fold, one-sided Wilcoxon signed-rank, "
+        f"α={config.selection_alpha}; History in baseline)",
+        fontsize=10, fontweight="bold",
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
+# --------------------------------------------------------------------------- #
+# Fig 2 — population forward-selection summary + acid-stack (evolution of
+# forward_selection_summary + acid_stack_sorted).
+#   (1,1) histogram of #selected predictors per cluster (single colour).
+#   (1,2) main effects: bar = Σ LOO-unique cv-bps over clusters; #clusters that
+#         selected it annotated on top.
+#   (1,3) same for interaction terms (LOO-unique computed on the fly to match
+#         variance_partition's full-additive / condition-stratified-5-fold defn).
+#   (2,1) per-cluster stacked unique Δ cv-bps, all regressors except History,
+#         sorted, symlog y.
+# --------------------------------------------------------------------------- #
+# Single per-predictor colour map shared by (1,2), (1,3), and (2,1). History and
+# Onset are deliberately NOT shown in any panel (baseline/nuisance terms).
+PREDICTOR_COLORS = {"Speed": "tab:green", "Acceleration": "tab:cyan", "TF": "tab:orange",
+                    "SF": "tab:olive", "OR": "tab:red", "ME_face": "tab:purple"}
+DISPLAY = {"Speed": "Speed", "Acceleration": "Accel", "TF": "TF", "SF": "SF",
+           "OR": "OR", "ME_face": "ME"}
+# (canonical label, variance_partition column) — main effects only, no History/Onset.
+ME_UNIQUE = [("Speed", "unique_Speed"), ("Acceleration", "unique_Accel"),
+             ("TF", "unique_TF"), ("SF", "unique_SF"), ("OR", "unique_OR"),
+             ("ME_face", "unique_ME")]
+# Acid-stack vars (display label, column, colour) — History AND Onset excluded.
+ACID_VARS = [("Speed", "unique_Speed", "tab:green"), ("Accel", "unique_Accel", "tab:cyan"),
+             ("TF", "unique_TF", "tab:orange"), ("SF", "unique_SF", "tab:olive"),
+             ("OR", "unique_OR", "tab:red"), ("ME", "unique_ME", "tab:purple")]
+# History stays in the full additive model when measuring uniques (it's a real
+# nuisance regressor); it's only excluded from the DISPLAY.
+FULL_ADD = ["Speed", "TF", "SF", "OR", "ME_face", "Acceleration", "History"]
+
+
+def _interaction_colors(name):
+    """(facecolor, hatch-colour) for an interaction bar = its two constituents."""
+    parts = name.split("_x_")
+    cols = [PREDICTOR_COLORS.get(p, "0.5") for p in parts]
+    return cols[0], (cols[1] if len(cols) > 1 else cols[0])
+
+
+def _sel_terms(s):
+    s = str(s)
+    return [] if s in ("", "nan") else s.split("+")
+
+
+def _cv_with_folds(prep, vars_, folds, config, backend="irls"):
+    X, _ = _design(prep, vars_, config)
+    if X.shape[1] == 0 or X.shape[1] >= prep["y"].size:
+        return float("nan")
+    from rc2_glm.cross_validation import cross_validate_glm as _cv
+    return float(_cv(X, prep["y"], prep["offset"], folds,
+                     lambda_ridge=config.lambda_ridge, backend=backend).cv_bits_per_spike)
+
+
+def compute_interaction_uniques(config, probes, mc, backend="irls"):
+    """Σ LOO-unique cv-bps + selection count per interaction term, over all
+    clusters that selected it. unique_I = cv(full_additive ∪ I) − cv(full_additive),
+    condition-stratified 5-fold (matches variance_partition_accel.partition)."""
+    from rc2_glm.cross_validation import make_trial_folds
+    sums, counts = {}, {}
+    for probe_id in probes:
+        sub = mc[mc["probe_id"] == probe_id]
+        need = {int(r.cluster_id): [v for v in _sel_terms(r.time_selected_vars) if "_x_" in v]
+                for r in sub.itertuples() if any("_x_" in v for v in _sel_terms(r.time_selected_vars))}
+        if not need:
+            continue
+        probe = load_probe_data(FORMATTED_DIR / f"{probe_id}.mat", config=config,
+                                stimulus_lookup=_lookup(), cluster_set="selected")
+        rf = load_rf_sf_or(config.rf_sf_or_parquet_dir, probe.probe_id,
+                           min_concentration=getattr(config, "rf_min_concentration", 0.0))
+        by = {c.cluster_id: c for c in probe.clusters}
+        for cid, inters in need.items():
+            if cid not in by:
+                continue
+            df = bin_cluster(probe, by[cid], rf_lookup=rf)
+            if df.empty:
+                continue
+            prep = prepare_cluster_design(df, config)
+            folds = make_trial_folds(
+                df["trial_id"].to_numpy(np.int64), config.n_folds, config.cv_seed,
+                condition_labels_per_bin=df["condition"].to_numpy(object),
+                strategy="condition-stratified")
+            cv_full = _cv_with_folds(prep, FULL_ADD, folds, config, backend)
+            for I in inters:
+                u = _cv_with_folds(prep, FULL_ADD + [I], folds, config, backend) - cv_full
+                sums[I] = sums.get(I, 0.0) + max(u, 0.0)
+                counts[I] = counts.get(I, 0) + 1
+            log.info("interaction uniques: %s cluster %d done", probe_id, cid)
+    return sums, counts
+
+
+def _draw_acid_stack(ax, df_sub, present, *, ylim=None):
+    """Per-cluster stacked unique Δ cv-bps for a (sub)set of clusters, sorted by
+    stack total. ``present`` = [(label, column, colour)]. Negatives clipped to 0."""
+    heights = {lab: np.clip(pd.to_numeric(df_sub[col], errors="coerce").fillna(0).to_numpy(),
+                            0, None) for lab, col, _ in present}
+    tot = np.sum(list(heights.values()), axis=0) if heights else np.zeros(len(df_sub))
+    order = np.argsort(tot)
+    x = np.arange(len(df_sub)); bottom = np.zeros(len(df_sub))
+    for lab, col, c in present:
+        h = heights[lab][order]
+        ax.bar(x, h, bottom=bottom, width=1.0, color=c, linewidth=0, label=lab)
+        bottom = bottom + h
+    ax.set_xlim(-0.5, len(df_sub) - 0.5)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    return tot
+
+
+def plot_fig2_summary(mc, vp, inter_sums, inter_counts, out_path, config, *, zoom_split=False):
+    n = len(mc)
+    fig = plt.figure(figsize=(16, 9) if zoom_split else (15, 9), constrained_layout=True)
+    gs = fig.add_gridspec(2, 6, height_ratios=[1.0, 1.0])
+    ax11 = fig.add_subplot(gs[0, 0:2])
+    ax12 = fig.add_subplot(gs[0, 2:4])
+    ax13 = fig.add_subplot(gs[0, 4:6])
+    if zoom_split:
+        ax2 = fig.add_subplot(gs[1, 0:4]); ax2z = fig.add_subplot(gs[1, 4:6])
+    else:
+        ax2 = fig.add_subplot(gs[1, :]); ax2z = None
+
+    # (1,1) model-size histogram, single colour. History excluded from the count
+    # (nuisance term, not shown anywhere); interactions counted.
+    sizes = mc["time_selected_vars"].map(
+        lambda s: len([t for t in _sel_terms(s) if t != "History"]))
+    vc = sizes.value_counts().sort_index()
+    ax11.bar(vc.index, vc.values, color="#4c72b0", edgecolor="0.3", width=0.8)
+    for x, c in zip(vc.index, vc.values):
+        ax11.text(x, c, str(int(c)), ha="center", va="bottom", fontsize=8)
+    ax11.set_xlabel("# selected predictors (excl. History)"); ax11.set_ylabel("# clusters")
+    ax11.set_title(f"Model complexity (n={n})", fontsize=10)
+    ax11.set_xticks(vc.index)
+
+    # (1,2) main effects: Σ LOO-unique cv-bps + selection count, both over the
+    # clusters that SELECTED the term (same basis as the n= annotation and (1,3)).
+    sel_map = {(r.probe_id, int(r.cluster_id)): set(_sel_terms(r.time_selected_vars))
+               for r in mc.itertuples()}
+    me_labels, me_sums, me_counts = [], [], []
+    for lab, col in ME_UNIQUE:
+        if col not in vp.columns:
+            continue
+        mask = np.array([lab in sel_map.get((r.probe_id, int(r.cluster_id)), set())
+                         for r in vp.itertuples()])
+        vals = np.clip(pd.to_numeric(vp[col], errors="coerce").fillna(0).to_numpy(), 0, None)
+        me_labels.append(lab); me_sums.append(float(vals[mask].sum())); me_counts.append(int(mask.sum()))
+    _bar_bps(ax12, [DISPLAY[m] for m in me_labels], me_sums, me_counts, "main effects",
+             facecolors=[PREDICTOR_COLORS[m] for m in me_labels])
+
+    # (1,3) interactions: Σ LOO-unique cv-bps + count; oblique two-colour stripes
+    # (facecolour = 1st constituent, hatch colour = 2nd).
+    it_labels = sorted(inter_sums, key=lambda k: -inter_sums[k])
+    fcs = [_interaction_colors(k)[0] for k in it_labels]
+    ecs = [_interaction_colors(k)[1] for k in it_labels]
+    _bar_bps(ax13, [_INT_ABBR(k) for k in it_labels],
+             [inter_sums[k] for k in it_labels],
+             [inter_counts[k] for k in it_labels], "interaction terms",
+             facecolors=fcs, edgecolors=ecs, hatches=["////"] * len(it_labels))
+
+    # (2,1) acid stack, History & Onset excluded.
+    present = [(lab, col, c) for lab, col, c in ACID_VARS if col in vp.columns]
+    tot = _draw_acid_stack(ax2, vp, present)
+    ax2.set_xlabel("cluster (sorted; History & Onset excluded)")
+    ax2.legend(ncol=len(present), fontsize=8, frameon=False, loc="upper left")
+    if zoom_split:
+        ax2.set_ylabel("stacked unique Δ cv-bps (linear)")
+        ax2.set_title(f"Per-cluster unique contributions — all clusters (n={len(vp)})",
+                      fontsize=10, fontweight="bold")
+        mask = tot < 0.2
+        _draw_acid_stack(ax2z, vp[mask], present, ylim=(0, 0.2))
+        ax2z.set_xlabel(f"cluster (cumulative < 0.2, n={int(mask.sum())})")
+        ax2z.set_ylabel("stacked unique Δ cv-bps")
+        ax2z.set_title("magnified: cumulative < 0.2 bits/spike", fontsize=10)
+    else:
+        ax2.set_yscale("symlog", linthresh=0.01)
+        ax2.set_ylabel("stacked unique Δ cv-bps (symlog)")
+        ax2.set_title(f"Per-cluster unique contributions — except History & Onset (n={len(vp)})",
+                      fontsize=10, fontweight="bold")
+
+    fig.suptitle("FENS fig 2 — forward-selection summary + acid stack (goggles, "
+                 f"{RUN_ALL_DIR.name})", fontsize=11, fontweight="bold")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
+def _INT_ABBR(name):
+    return name.replace("ME_face", "ME").replace("Acceleration", "A").replace("_x_", "×")
+
+
+def _bar_bps(ax, labels, sums, counts, title, facecolors=None, edgecolors=None, hatches=None):
+    xs = np.arange(len(labels))
+    bars = ax.bar(
+        xs, sums,
+        color=facecolors if facecolors is not None else "#55a868",
+        edgecolor=edgecolors if edgecolors is not None else "0.3",
+        width=0.75, linewidth=1.3,
+    )
+    if hatches is not None:
+        for b, h in zip(bars, hatches):
+            b.set_hatch(h)
+    for xi, (s, c) in enumerate(zip(sums, counts)):
+        ax.text(xi, s, f"n={c}", ha="center", va="bottom", fontsize=7)
+    pos = [s for s in sums if s > 0]
+    if pos and max(pos) / min(pos) > 50:
+        ax.set_yscale("log")
+    ax.set_xticks(xs); ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=8)
+    ax.set_ylabel("Σ LOO-unique cv-bps (over clusters)")
+    ax.set_title(f"Cumulative cv-bps — {title}", fontsize=10)
+
+
+# --------------------------------------------------------------------------- #
+# Oracle: buildup cv-bps for the stored Selected set == CSV value.
+# --------------------------------------------------------------------------- #
+def oracle_check(prep, config, probe_id, cluster_id):
+    csv = RUN_ALL_DIR / "_runs" / probe_id / "glm_model_comparison.csv"
+    if not csv.exists():
+        log.warning("oracle: no %s — skipping", csv)
+        return
+    mc = pd.read_csv(csv)
+    row = mc[mc["cluster_id"] == cluster_id]
+    if row.empty:
+        log.warning("oracle: cluster %d not in %s — skipping", cluster_id, csv)
+        return
+    sel_str = str(row["time_selected_vars"].iloc[0])
+    sel_vars = [] if sel_str in ("", "nan") else sel_str.split("+")
+    stored = float(row["time_Selected_cv_bps"].iloc[0])
+    mine = cv_bps_for(prep, sel_vars, config)
+    # 5e-3 tolerance: the stored run used multi-threaded BLAS; even thread-pinned
+    # our recompute lands within ~few×1e-3 of it (IRLS float-summation order).
+    ok = np.isfinite(mine) and abs(mine - stored) < 5e-3
+    log.info(
+        "ORACLE cluster %d: Selected=[%s] stored=%.5f mine=%.5f Δ=%.2e -> %s",
+        cluster_id, sel_str, stored, mine, mine - stored, "PASS" if ok else "FAIL",
+    )
+    return ok
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--probe", default="CAA-1124370_rec1_rec2_rec3")
+    ap.add_argument("--clusters", type=int, nargs="+", default=[20, 29, 375])
+    ap.add_argument("--n-trials", type=int, default=6,
+                    help="VT trials to render per cluster (separate figures).")
+    ap.add_argument("--baseline-min", type=int, default=1)
+    ap.add_argument("--baseline-max", type=int, default=6,
+                    help="Pick VT trials with baseline-min..baseline-max stationary "
+                         "spikes ('a few, not too active').")
+    ap.add_argument("--fig2c", action="store_true",
+                    help="Hardcastle Fig-2C forward-selection panel for ONE trial "
+                         "(needs --trial).")
+    ap.add_argument("--trial", type=int, default=None,
+                    help="Trial id for --fig2c.")
+    ap.add_argument("--accepted", default="Acceleration,SF,Speed",
+                    help="--fig2c: accepted terms (columns), in order.")
+    ap.add_argument("--rejected", default="OR",
+                    help="--fig2c: the rejected example term (last column).")
+    ap.add_argument("--fig2-summary", action="store_true",
+                    help="Fig 2: population forward-selection summary + acid stack "
+                         "(all clusters, both probes). Ignores --clusters/--trial.")
+    args = ap.parse_args()
+
+    config = make_config_histbase_all()
+    backend = "irls"
+
+    if args.fig2_summary:
+        from run_glm_goggles_rf_sfor_20ms import PROBES
+        mc = pd.read_csv(RUN_ALL_DIR / "glm_model_comparison.csv")
+        vp = pd.read_csv(RUN_ALL_DIR / "diagnostics" / "variance_partition.csv")
+        log.info("fig2: %d clusters (model_comparison), %d (variance_partition)",
+                 len(mc), len(vp))
+        inter_sums, inter_counts = compute_interaction_uniques(config, PROBES, mc, backend)
+        plot_fig2_summary(mc, vp, inter_sums, inter_counts,
+                          OUT_DIR / "fig2_forward_selection_summary", config)
+        plot_fig2_summary(mc, vp, inter_sums, inter_counts,
+                          OUT_DIR / "fig2_forward_selection_summary_zoom", config,
+                          zoom_split=True)
+        return 0
+
+    log.info("loading %s ...", args.probe)
+    probe = load_probe_data(
+        FORMATTED_DIR / f"{args.probe}.mat", config=config,
+        stimulus_lookup=_lookup(), cluster_set="selected",
+    )
+    rf_lookup = load_rf_sf_or(
+        config.rf_sf_or_parquet_dir, probe.probe_id,
+        min_concentration=getattr(config, "rf_min_concentration", 0.0),
+    )
+    by_id = {c.cluster_id: c for c in probe.clusters}
+    trials_by_id = {t.trial_id: t for t in probe.trials}
+
+    if args.fig2c:
+        if args.trial is None:
+            ap.error("--fig2c requires --trial")
+        accepted = [s for s in args.accepted.split(",") if s]
+        for cid in args.clusters:
+            cluster = by_id[cid]
+            df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
+            prep = prepare_cluster_design(df, config)
+            oracle_check(prep, config, probe.probe_id, cid)
+            selected = load_selection_order(probe.probe_id, cid) or []
+            baseline_vars = ["History"] if "History" in selected else []
+            trial = trials_by_id[args.trial]
+            midx = np.flatnonzero(trial.motion_mask)
+            t_motion_start = float(trial.probe_t[int(midx[0])])
+            plot_forward_panel(
+                probe.probe_id, cid, df, prep, config, args.trial,
+                cluster.spike_times, t_motion_start,
+                baseline_vars, accepted, args.rejected,
+                OUT_DIR / f"fig2c_{probe.probe_id}_cluster_{cid}_trial_{args.trial}",
+            )
+        return 0
+
+    for cid in args.clusters:
+        if cid not in by_id:
+            log.warning("cluster %d not on probe %s — skipping", cid, args.probe)
+            continue
+        cluster = by_id[cid]
+        df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
+        if df.empty:
+            log.warning("cluster %d: empty binned df — skipping", cid)
+            continue
+        prep = prepare_cluster_design(df, config)
+        oracle_check(prep, config, probe.probe_id, cid)
+
+        selected = load_selection_order(probe.probe_id, cid)
+        if not selected:
+            log.warning("cluster %d: no forward-selection record — skipping", cid)
+            continue
+        steps = buildup_steps_for(selected)
+        log.info("cluster %d: forward-selected = %s | %d rows",
+                 cid, selected, len(steps))
+
+        # Buildup cv-bps + in-sample rates (cluster-wide; same for every trial).
+        step_results = []
+        for label, vars_ in steps:
+            cv = cv_bps_for(prep, vars_, config, backend)
+            rate = insample_rate_for(prep, vars_, config, backend)
+            step_results.append(dict(label=label, vars=vars_, cv=cv, rate=rate))
+            log.info("cluster %d %-26s cv-bps=%.4f", cid, label, cv)
+
+        trials = select_vt_trials(df, args.n_trials, args.baseline_min, args.baseline_max)
+        if not trials:
+            log.warning("cluster %d: no VT trials with %d-%d baseline spikes — "
+                        "skipping (too sparse in baseline)", cid,
+                        args.baseline_min, args.baseline_max)
+            continue
+        log.info("cluster %d: %d VT trials selected: %s", cid, len(trials),
+                 [(t, b) for t, _, b in trials])
+        for tid, _motion, baseline in trials:
+            trial = trials_by_id.get(tid)
+            if trial is None:
+                continue
+            midx = np.flatnonzero(trial.motion_mask)
+            if midx.size == 0:
+                continue
+            t_motion_start = float(trial.probe_t[int(midx[0])])
+            plot_buildup(
+                probe.probe_id, cid, df, config, step_results, tid,
+                cluster.spike_times, t_motion_start,
+                OUT_DIR / f"buildup_{probe.probe_id}_cluster_{cid}_trial_{tid}",
+                baseline_spk=baseline,
+            )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
