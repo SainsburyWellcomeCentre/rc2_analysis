@@ -16,6 +16,18 @@ class GLMConfig:
     acceleration_threshold: float = 0.5         # m/s^2
     min_stationary_duration: float = 0.2        # seconds
 
+    # --- Motion-window source -------------------------------------------------
+    # "velocity" (default): motion = velocity/accel threshold mask ∩ analysis
+    #   window (the published RC2 / screens behaviour; byte-identical).
+    # "photodiode": for the VISUAL conditions (V, VT) of the goggles cohort,
+    #   motion = the PHOTODIODE visual-stimulus window (reader.trial_visual_window)
+    #   — the cloud only displays ~0.6–1.0 s after the velocity command (that
+    #   command→display latency is the real stationary↔motion GAP, excluded from
+    #   both periods), and ends ~4 s later. T_Vstatic (no visual → flat
+    #   photodiode) and any trial without a usable photodiode fall back to
+    #   "velocity". See reference_motion_clouds_goggles_trial_structure.
+    motion_window_source: str = "velocity"
+
     # --- Velocity filter (matches lib/fcn/general/filter_trace.m) ---
     apply_velocity_filter: bool = True
     filter_cutoff_hz: float = 50.0

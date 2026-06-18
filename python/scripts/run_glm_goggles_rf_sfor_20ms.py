@@ -119,6 +119,12 @@ def make_config() -> GLMConfig:
         time_bin_width=0.02,
         sf_or_source="rf_local",
         rf_sf_or_parquet_dir=RF_PARQUET_DIR,
+        # Goggles motion = the PHOTODIODE visual-stimulus window for V/VT (the
+        # cloud displays ~0.7 s after the velocity command — that latency is the
+        # real stationary↔motion gap, excluded; T_Vstatic falls back to
+        # velocity). Screens keep the velocity default. See
+        # reference_motion_clouds_goggles_trial_structure.
+        motion_window_source="photodiode",
         fit_condition=None,
         main_effects=MAIN_EFFECTS,
         interactions=INTERACTIONS,

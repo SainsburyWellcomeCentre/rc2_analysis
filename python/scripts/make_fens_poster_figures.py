@@ -98,6 +98,11 @@ OUT_DIR = HOME / "local_data" / "motion_clouds" / "figures" / "glm" / "FENS_figu
 _GLM_DIR = HOME / "local_data" / "motion_clouds" / "figures" / "glm"
 RUN_ALL_DIR = _GLM_DIR / "current_rf_sfor_20ms_histbase_goggles_all"
 
+# Global rf_local SF range (cpd) across the whole goggles cohort extraction
+# (parquet p0.5–p99.5 ≈ 0.027–0.130, full 0.021–0.151) — fixed SF y-axis so SF
+# panels are comparable across trials/clusters.
+SF_YLIM_CPD = (0.02, 0.15)
+
 # The buildup follows the cluster's OWN forward-selection result: rows = the
 # regressors forward selection chose, added one at a time in selection order
 # (so row count varies per cluster). History, when selected, is folded into the
@@ -362,6 +367,226 @@ def select_vt_trials(
     ok = cand[(cand["baseline"] >= baseline_min) & (cand["baseline"] <= baseline_max)]
     ok = ok.sort_values("motion", ascending=False).head(n)
     return [(int(t), int(r.motion), int(r.baseline)) for t, r in ok.iterrows()]
+
+
+def select_v_trial(
+    df: pd.DataFrame, baseline_max: int = 10,
+) -> tuple[int, int, int] | None:
+    """Pick a representative V (ReplayOnly) trial for the trial-structure
+    schematic: rank V trials by motion-spike count (so the pink FR is
+    illustrative), preferring a sane handful of baseline spikes (≤baseline_max)
+    when available. Returns (trial_id, motion_spk, baseline_spk) or None."""
+    mot = df[df["condition"] == "V"].groupby("trial_id")["spike_count"].sum()
+    if mot.empty:
+        return None
+    stat = df[df["condition"] == "stationary"].groupby("trial_id")["spike_count"].sum()
+    cand = pd.DataFrame({"motion": mot})
+    cand["baseline"] = stat.reindex(cand.index).fillna(0).astype(int)
+    cand = cand.sort_values("motion", ascending=False)
+    pref = cand[cand["baseline"] <= baseline_max]
+    pick = pref if not pref.empty else cand
+    t = pick.index[0]
+    return int(t), int(pick.iloc[0]["motion"]), int(pick.iloc[0]["baseline"])
+
+
+# --------------------------------------------------------------------------- #
+# Poster column 1 — TRIAL-STRUCTURE schematic (mirrors the MATLAB trial
+# layout). For one V (ReplayOnly) trial of a defined-RF cluster, a stacked
+# column on a SHARED onset-relative time axis (x = bin_centre − motion_onset,
+# i.e. df.time_since_onset): baseline (negative x) → the small registered gap →
+# motion (positive x), spanning >8 s. Rows top→bottom:
+#   VF    visual-flow velocity (trial.velocity = the replayed multiplexer
+#         velocity in a V trial), cm/s;
+#   T     treadmill speed — flat 0 by design in a ReplayOnly trial (schematic);
+#   TF    per-bin temporal frequency (Hz), = gain × replay-speed;
+#   SF    per-bin RF-local spatial frequency (cpd, Gabor extraction — varies
+#         over the trial, hence a defined-RF cluster);
+#   OR    per-bin RF-local orientation (deg, circular);
+#   FR    the pink MATLAB Gaussian-σ20 ms convolved firing rate (fr_convolution).
+# Stationary vs motion are shaded from the binned mask extents; the unshaded
+# sliver between them is the real stationary↔motion mask gap (NOT faked as
+# contiguous, unlike the fig2c synthetic axis). Cluster is fully parametrised
+# (--clusters / --trial) so swapping the example is a one-flag change.
+# --------------------------------------------------------------------------- #
+def plot_trial_structure(
+    probe_id, cluster_id, df, config, tid, trial, spike_times, out_path,
+):
+    bw = float(config.time_bin_width)
+    sub = df[df["trial_id"] == tid].copy()
+    if sub.empty:
+        log.warning("cluster %d trial %d: no binned rows — skipping", cluster_id, tid)
+        return
+    cond = sub["condition"].to_numpy(object)
+    tso = sub["time_since_onset"].to_numpy(float)  # 0 == motion onset
+    o = np.argsort(tso)
+    sub, cond, tso = sub.iloc[o], cond[o], tso[o]
+    is_stat = cond == "stationary"
+    is_mot = ~is_stat
+
+    # Period boundaries (tso, 0 = motion / visual onset). Under the PHOTODIODE
+    # motion definition (goggles V/VT — config.motion_window_source=="photodiode")
+    # the trial carries the structure directly: stationary = pre-command baseline;
+    # GAP = command-onset → visual-onset (the ~0.7 s cloud-display latency, the
+    # real stationary↔motion gap); motion = the photodiode visual-stimulus window
+    # (≈4 s). Under the velocity definition (T_Vstatic / screens) there is no gap
+    # and motion = the velocity mask; we fall back to the mask extents.
+    mm = np.asarray(trial.motion_mask, dtype=bool)
+    sm = np.asarray(trial.stationary_mask, dtype=bool)
+    midx = np.flatnonzero(mm)
+    t_motion_start = float(trial.probe_t[int(midx[0])])  # = visual onset (photodiode)
+    pt = np.asarray(trial.probe_t, dtype=np.float64)
+    x_abs = pt - t_motion_start
+
+    has_gap = (getattr(trial, "command_onset_idx", None) is not None
+               and getattr(trial, "visual_onset_idx", None) is not None)
+    if has_gap:
+        command_tso = float(pt[trial.command_onset_idx] - t_motion_start)   # < 0
+        motion_end = float(pt[trial.visual_offset_idx] - t_motion_start)    # visual offset
+        gap_span = (command_tso, 0.0)
+        pre = np.flatnonzero(sm)
+        pre = pre[pre < trial.command_onset_idx]
+        motion_vel_end = float(pt[int(midx[-1])] - t_motion_start)  # for the axis margin
+    else:
+        command_tso = 0.0
+        motion_end = float(pt[int(midx[-1])] - t_motion_start)
+        gap_span = None
+        pre = np.flatnonzero(sm)
+        pre = pre[pre < midx[0]]
+        motion_vel_end = motion_end
+    if pre.size:
+        brk = np.flatnonzero(np.diff(pre) > 1)
+        stat_start_idx = int(pre[brk[-1] + 1]) if brk.size else int(pre[0])
+        stat_span = (float(pt[stat_start_idx] - t_motion_start), command_tso)
+    else:
+        stat_span = None
+    mot_span = (0.0, motion_end)
+    stat_dur = (stat_span[1] - stat_span[0]) if stat_span else float("nan")
+    gap_dur = (gap_span[1] - gap_span[0]) if gap_span else 0.0
+    log.info("cluster %d trial %d: stationary %.2fs | gap %.2fs | motion %.2fs "
+             "(%s)", cluster_id, tid, stat_dur, gap_dur, motion_end,
+             "photodiode" if has_gap else "velocity")
+
+    # Window: small margin each side; show a touch past the visual offset (the
+    # velocity command runs a little longer than the visual stimulus).
+    x_lo = (stat_span[0] if stat_span else command_tso) - 0.2
+    x_hi = max(motion_end, motion_vel_end) + 0.3
+    win = (x_abs >= x_lo) & (x_abs <= x_hi)
+
+    # Pink Gaussian-σ20 ms FR over the absolute window.
+    T = np.arange(t_motion_start + x_lo, t_motion_start + x_hi + 1e-9, 0.001)
+    fr_pink = fr_convolution(spike_times, T)
+    x_pink = T - t_motion_start
+
+    tf = sub["tf"].to_numpy(float)
+    sf = sub["sf"].to_numpy(float)
+    # rf_local orientation is already stored in DEGREES (0–180), same stimulus
+    # convention as the token (verified: token 135° vs rf_local circ-mean 145°).
+    # Render it the cl90_0p06cpd_trial_timeline way: TOKEN-CENTRED (OR − token on
+    # a ±90° axis) with the line SEAM-BROKEN at the 0/180 wrap (NaN-insert where
+    # |Δ| > 90), so the circular jumps don't draw as vertical streaks.
+    or_raw = sub["orientation"].to_numpy(float)
+    or_token = float(np.degrees(trial.orientation)) % 180.0
+    or_off = ((or_raw - or_token + 90.0) % 180.0) - 90.0  # token at 0, ∈ (−90, 90]
+
+    def _seam_break(x, y, thr=90.0):
+        """cl90 break_wrap: NaN-insert where the line jumps the circular seam."""
+        y = np.asarray(y, float)
+        j = np.where(np.abs(np.diff(y)) > thr)[0]
+        return np.insert(np.asarray(x, float), j + 1, np.nan), np.insert(y, j + 1, np.nan)
+
+    # SF token reference (cpd): goggle cpp token × screen calibration (×9.77);
+    # physical SF is unchanged across setups, so this lands on the rf_local trace
+    # (token 0.117 cpd vs rf_local mean 0.114) — see motion-clouds stimulus-units.
+    sf_token_cpd = float(trial.sf) * 9.77
+
+    rows = [
+        ("VF\n(cm/s)", "vf", "#1f4e79"),
+        ("T tread.\n(cm/s)", "t", "#7a4a12"),
+        ("TF\n(Hz)", "tf", "#d1701a"),
+        ("SF\n(cpd)", "sf", "#6b8e23"),
+        ("OR−tok\n(deg)", "or", "#c0392b"),
+        ("FR\n(Hz)", "fr", "#ff4da6"),
+    ]
+    fig, axes = plt.subplots(
+        len(rows), 1, figsize=(6.5, 8.6), sharex=True, constrained_layout=True,
+    )
+    for ax, (ylab, key, col) in zip(axes, rows):
+        if stat_span:
+            ax.axvspan(*stat_span, color="#d6e4f0", alpha=0.7, lw=0, zorder=0)
+        if gap_span:
+            ax.axvspan(*gap_span, facecolor="0.92", edgecolor="0.6",
+                       hatch="///", lw=0.0, zorder=0)
+        ax.axvspan(*mot_span, color="#fbe6d4", alpha=0.85, lw=0, zorder=0)
+        # boundary lines: stationary start · command onset (gap start) ·
+        # visual onset (motion start = 0) · visual offset (motion end)
+        bnds = [stat_span[0]] if stat_span else []
+        if gap_span:
+            bnds.append(command_tso)
+        bnds += [0.0, motion_end]
+        for xb in bnds:
+            ax.axvline(xb, color="0.4", ls="--", lw=0.9, zorder=2)
+        # velocity-command end (multiplexer runs slightly past the visual offset)
+        if has_gap and motion_vel_end > motion_end + 1e-3:
+            ax.axvline(motion_vel_end, color="0.72", ls=":", lw=0.8, zorder=2)
+        if key == "vf":
+            ax.plot(x_abs[win], np.asarray(trial.velocity, float)[win], color=col, lw=1.0)
+        elif key == "t":
+            ax.axhline(0.0, color=col, lw=1.4)
+            ax.set_ylim(-1, 1)
+            ax.text(0.985, 0.78, "≡ 0 (replay trial)", transform=ax.transAxes,
+                    ha="right", va="top", fontsize=6.5, color="0.4")
+        elif key == "tf":
+            ax.plot(tso, tf, color=col, lw=1.0, marker="o", ms=2)
+        elif key == "sf":
+            ax.plot(tso, sf, color=col, lw=1.0, marker="o", ms=2)
+            ax.axhline(sf_token_cpd, ls="--", color="0.35", lw=0.8)
+            ax.set_ylim(*SF_YLIM_CPD)  # fixed to the global possible range
+            ax.text(0.985, 0.04, f"token {sf_token_cpd:.3f}", transform=ax.transAxes,
+                    ha="right", va="bottom", fontsize=6, color="0.4")
+        elif key == "or":
+            ax.plot(*_seam_break(tso, or_off), color=col, lw=1.0, marker="o", ms=2)
+            ax.axhline(0.0, ls="--", color="r", lw=0.8)
+            ax.set_ylim(-90, 90)
+            ax.set_yticks([-90, -45, 0, 45, 90])
+            ax.text(0.985, 0.04, f"token {or_token:.0f}°", transform=ax.transAxes,
+                    ha="right", va="bottom", fontsize=6, color="0.4")
+        elif key == "fr":
+            ax.plot(x_pink, fr_pink, color=col, lw=1.0)
+        ax.set_ylabel(ylab, fontsize=8, rotation=0, ha="right", va="center")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlim(x_lo, x_hi)
+
+    top = axes[0]
+    tr = top.get_xaxis_transform()
+    if stat_span:
+        top.text(np.mean(stat_span), 1.04, "stationary\n(baseline)", transform=tr,
+                 ha="center", va="bottom", fontsize=7, color="#2b5d8a")
+    if gap_span:
+        top.text(np.mean(gap_span), 1.06, "gap", transform=tr, ha="center",
+                 va="bottom", fontsize=6.5, color="0.35")
+    top.text(0.5 * motion_end, 1.04, "motion\n(visual stimulus)", transform=tr,
+             ha="center", va="bottom", fontsize=7, color="#7a4a12")
+    lbl = ("dashed: stat start · command onset · visual onset · visual offset"
+           if gap_span else "dashed: stat start · onset · motion end")
+    axes[-1].set_xlabel(
+        f"time from visual onset (s)    ({lbl})", fontsize=6.8,
+    )
+    n_spk = int(sub["spike_count"].sum())
+    dur_note = (f"stat {stat_dur:.1f}s · gap {gap_dur:.2f}s · motion {motion_end:.1f}s"
+                if gap_span else
+                (f"stat {stat_dur:.1f}s · motion {motion_end:.1f}s"
+                 if stat_span else f"motion {motion_end:.1f}s"))
+    probe_short = probe_id.split("_rec")[0]
+    fig.suptitle(
+        f"{probe_short}  cl {cluster_id} · {trial.condition} trial {tid}  "
+        f"({n_spk} spk · {dur_note})",
+        fontsize=9.5, fontweight="bold",
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -931,6 +1156,10 @@ def main() -> int:
     ap.add_argument("--fig2-summary", action="store_true",
                     help="Fig 2: population forward-selection summary + acid stack "
                          "(all clusters, both probes). Ignores --clusters/--trial.")
+    ap.add_argument("--trial-structure", action="store_true",
+                    help="Poster column 1: trial-structure schematic (VF, flat T, "
+                         "TF, SF, OR, pink FR) for one V trial per --clusters cluster. "
+                         "Auto-picks a V trial unless --trial is given.")
     args = ap.parse_args()
 
     config = make_config_histbase_all()
@@ -961,6 +1190,36 @@ def main() -> int:
     )
     by_id = {c.cluster_id: c for c in probe.clusters}
     trials_by_id = {t.trial_id: t for t in probe.trials}
+
+    if args.trial_structure:
+        for cid in args.clusters:
+            if cid not in by_id:
+                log.warning("cluster %d not on probe %s — skipping", cid, args.probe)
+                continue
+            cluster = by_id[cid]
+            df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
+            if df.empty:
+                log.warning("cluster %d: empty binned df — skipping", cid)
+                continue
+            if args.trial is not None:
+                tid = args.trial
+            else:
+                pick = select_v_trial(df)
+                if pick is None:
+                    log.warning("cluster %d: no V trial available — skipping", cid)
+                    continue
+                tid, motion_spk, base_spk = pick
+                log.info("cluster %d: V trial %d (%d motion / %d baseline spk)",
+                         cid, tid, motion_spk, base_spk)
+            trial = trials_by_id.get(tid)
+            if trial is None or np.flatnonzero(trial.motion_mask).size == 0:
+                log.warning("cluster %d: trial %d missing/no motion — skipping", cid, tid)
+                continue
+            plot_trial_structure(
+                probe.probe_id, cid, df, config, tid, trial, cluster.spike_times,
+                OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}_trial_{tid}",
+            )
+        return 0
 
     if args.fig2c:
         if args.trial is None:

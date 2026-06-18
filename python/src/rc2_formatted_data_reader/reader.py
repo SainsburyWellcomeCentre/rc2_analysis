@@ -375,6 +375,46 @@ class FormattedDataReader:
 
         return mask | baseline
 
+    def trial_visual_window(
+        self,
+        trial_idx: int,
+        *,
+        min_range: float = 0.05,
+        min_toggles: int = 10,
+    ) -> tuple[int, int] | None:
+        """Visual-stimulus on/off window from the photodiode, as trial-relative
+        sample indices ``(onset, offset)``, or ``None`` when there is no visual
+        stimulus (flat photodiode).
+
+        During visual display the goggles photodiode **toggles** between two
+        distinct levels (the cloud flicker); the pre/post-stimulus baseline is
+        flat. We threshold at the mid-level and take the first and last toggle.
+        This is the PRINCIPLED motion boundary for the *visual* conditions (V,
+        VT): the cloud only appears ~0.6–1.0 s after the velocity command starts
+        (the command→display latency = the stationary↔motion gap), and ends ~4 s
+        later. ``T_Vstatic`` has no visual stimulus → flat photodiode → ``None``
+        (callers fall back to the velocity motion mask).
+
+        The goggles photodiode is small-amplitude (raw range ≈ 0.22; "~8 after
+        ×20 scaling", per master ``get_parameters_for_photodiode`` →
+        ``sparse_noise_goggles``). ``min_range``/``min_toggles`` reject a flat or
+        barely-fluctuating trace. Validated on CAA-1124370/371: V & VT give a
+        clean ~0.6–4.75 s window (≈4 s, 1.4–3.1 k toggles); T_Vstatic → None.
+        """
+        s, e = self.trial_bounds(trial_idx)
+        pd = self.session_channel("photodiode", s, e)
+        if pd is None:
+            return None
+        pd = np.asarray(pd, dtype=np.float64)
+        rng = float(np.nanmax(pd) - np.nanmin(pd))
+        if not np.isfinite(rng) or rng < min_range:
+            return None
+        hi = pd > (np.nanmin(pd) + 0.5 * rng)
+        toggles = np.flatnonzero(np.diff(hi.astype(np.int64)) != 0)
+        if toggles.size < min_toggles:
+            return None
+        return int(toggles[0]), int(toggles[-1])
+
     # --- Session-level arrays (lazy slicing) ---
 
     def probe_t(self, start: int, end: int) -> np.ndarray:

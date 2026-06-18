@@ -50,6 +50,16 @@ class TrialData:
     # 0 means "unknown" (no lookup available). Consumed by the
     # speed-profile CV strategy in rc2_glm.cross_validation.
     profile_id: int = 0
+    # Photodiode-defined trial structure (trial-relative sample indices), set
+    # only when ``motion_window_source == "photodiode"`` and a visual window was
+    # found (V/VT goggles trials). ``command_onset`` = velocity-command onset
+    # (= stationary end = gap start); ``visual_onset``/``visual_offset`` = the
+    # photodiode stimulus window (= motion). The GAP is
+    # ``[command_onset, visual_onset]`` (excluded from both masks). All ``None``
+    # under the velocity definition (the gap is not represented there).
+    command_onset_idx: int | None = None
+    visual_onset_idx: int | None = None
+    visual_offset_idx: int | None = None
 
 
 @dataclass
@@ -197,7 +207,13 @@ def _assign_profile_ids_by_velocity(
         mi = np.flatnonzero(t.motion_mask)
         if mi.size == 0:
             continue
-        t_rel = t.probe_t - float(t.probe_t[int(mi[0])])
+        # Align the trajectory on the velocity-COMMAND onset so the profile
+        # clustering is invariant to motion_window_source: under the photodiode
+        # mask ``t.motion_mask`` starts at the (jittery, per-trial) visual onset,
+        # which would smear the alignment; ``command_onset_idx`` is the stable
+        # velocity onset (== mi[0] under the velocity definition).
+        onset_idx = t.command_onset_idx if t.command_onset_idx is not None else int(mi[0])
+        t_rel = t.probe_t - float(t.probe_t[onset_idx])
         if float(t_rel.max()) < grid_max_s * 0.7:
             continue  # motion period too short to characterise the trajectory
         vel = np.abs(np.asarray(t.velocity, dtype=np.float64))
@@ -280,7 +296,7 @@ def _load_trial(
     )
 
     accel = acceleration_from_velocity(v)
-    m_mask = masks.treadmill_motion_mask(
+    vel_motion = masks.treadmill_motion_mask(
         v,
         accel,
         reader.fs,
@@ -289,8 +305,34 @@ def _load_trial(
         min_dur=config.min_stationary_duration,
     )
     analysis_mask = reader.trial_analysis_mask(trial_idx)
-    m_mask = m_mask & analysis_mask
-    s_mask = (~m_mask) & analysis_mask
+    vel_motion = vel_motion & analysis_mask
+
+    # Motion-window source. Default ("velocity"): motion = velocity/accel
+    # threshold ∩ analysis window (published RC2 / screens behaviour). The
+    # "photodiode" mode redefines motion for the VISUAL conditions (V/VT
+    # goggles): motion = the photodiode visual-stimulus window; the
+    # command→display latency between the velocity-command onset and the visual
+    # onset is the real stationary↔motion GAP, excluded from BOTH masks. Trials
+    # with no usable photodiode (T_Vstatic; flat trace) fall back to velocity.
+    command_onset_idx = visual_onset_idx = visual_offset_idx = None
+    vis_window = None
+    if getattr(config, "motion_window_source", "velocity") == "photodiode":
+        vis_window = reader.trial_visual_window(trial_idx)
+    if vis_window is not None:
+        v_on, v_off = vis_window
+        cmd_idx = np.flatnonzero(vel_motion)
+        command_onset_idx = int(cmd_idx[0]) if cmd_idx.size else int(v_on)
+        visual_onset_idx, visual_offset_idx = int(v_on), int(v_off)
+        m_mask = np.zeros_like(vel_motion)
+        m_mask[v_on : v_off + 1] = True
+        m_mask = m_mask & analysis_mask
+        # Stationary = pre-command baseline. The gap [command, visual] and the
+        # post-visual tail have vel_motion=True → excluded from the stationary
+        # complement; and they sit outside [v_on, v_off] → excluded from motion.
+        s_mask = (~vel_motion) & analysis_mask
+    else:
+        m_mask = vel_motion
+        s_mask = (~vel_motion) & analysis_mask
 
     sf = orient = gain = float("nan")
     excluded = False
@@ -321,6 +363,9 @@ def _load_trial(
         cloud_name=cloud_name,
         excluded=excluded,
         profile_id=profile_id,
+        command_onset_idx=command_onset_idx,
+        visual_onset_idx=visual_onset_idx,
+        visual_offset_idx=visual_offset_idx,
     )
 
 
