@@ -13,15 +13,19 @@
 # pinned to 1 thread/worker (no oversubscription + removes the IRLS cv-bps
 # thread-nondeterminism).
 #
-# THREE MODES via env vars (PER-PROBE SPLIT = the way to use 2 nodes):
+# MODES via env vars:
+#   N_SHARDS=<M>          -> SHARD ARRAY task: needs a job array of 0..(2*M-1);
+#                           probe = idx/M, shard = idx%M -> fit clusters[shard::M]
+#                           of that probe into _runs/<probe>/_shards/ (no aggregate).
+#                           Many small tasks pack into a fragmented cpu partition.
 #   PROBE=<id>            -> fit ONLY that probe (writes _runs/<probe>/, no aggregate)
-#   RUN_MODE=aggregate    -> skip fitting; aggregate() + diagnostics over both probes
-#   (neither)             -> full run: both probes serial + aggregate (single node)
-# Submit the split as:
-#   A=$(sbatch --parsable --export=ALL,PROBE=<p1> this.sbatch)
-#   B=$(sbatch --parsable --export=ALL,PROBE=<p2> this.sbatch)
-#   sbatch --dependency=afterok:$A:$B --export=ALL,RUN_MODE=aggregate this.sbatch
-# Both probe jobs run in parallel on 2 cpu nodes; aggregate fires once both finish.
+#   RUN_MODE=aggregate    -> skip fitting; merge shards + aggregate() + diagnostics
+#   (none)                -> full run: both probes + aggregate (single node)
+# Submit the SHARD ARRAY (M shards/probe, few cores each) + dependent aggregate:
+#   J=$(sbatch --parsable --array=0-$((2*M-1)) --cpus-per-task=6 \
+#              --export=ALL,N_SHARDS=$M this.sbatch)
+#   sbatch --dependency=afterok:$J --cpus-per-task=8 --mem=64G \
+#          --export=ALL,RUN_MODE=aggregate this.sbatch
 #
 # Prereqs: repo at $REPO on branch glm-improvements; venv at $REPO/python/.venv;
 # ceph data staged.
@@ -41,7 +45,15 @@ export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 N_JOBS="${SLURM_CPUS_PER_TASK:-20}"
 DRIVER="scripts/run_glm_goggles_rf_sfor_20ms.py"
 
-if [ "${RUN_MODE:-}" = "aggregate" ]; then
+PROBES_ARR=(CAA-1124370_rec1_rec2_rec3 CAA-1124371_rec1_rec2_rec3)
+
+if [ -n "${N_SHARDS:-}" ]; then
+    IDX="${SLURM_ARRAY_TASK_ID:?N_SHARDS set but this is not a job array}"
+    PR="${PROBES_ARR[$((IDX / N_SHARDS))]}"
+    SID="$((IDX % N_SHARDS))"
+    python "$DRIVER" --history-in-baseline --backend irls --n-jobs "$N_JOBS" \
+        --probe "$PR" --n-shards "$N_SHARDS" --shard-id "$SID"
+elif [ "${RUN_MODE:-}" = "aggregate" ]; then
     python "$DRIVER" --history-in-baseline --backend irls --aggregate-only
 elif [ -n "${PROBE:-}" ]; then
     python "$DRIVER" --history-in-baseline --backend irls --n-jobs "$N_JOBS" --probe "$PROBE"

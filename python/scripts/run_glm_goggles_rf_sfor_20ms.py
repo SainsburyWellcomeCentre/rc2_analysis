@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -284,11 +285,27 @@ def dry_run() -> int:
 
 def run_probe(probe: str, max_clusters: int | None = None,
               backend: str = "irls", device: str = "auto",
-              n_jobs: int = 1) -> Path:
+              n_jobs: int = 1,
+              shard: tuple[int, int] | None = None) -> Path:
     out_dir = OUT_ROOT / "_runs" / probe
-    out_dir.mkdir(parents=True, exist_ok=True)
     cluster_filter = None
-    if max_clusters is not None:
+    if shard is not None:
+        # Cluster-SHARD: fit clusters[shard_id::n_shards] of the sorted cohort and
+        # write to a shard subdir; _merge_shards() reassembles _runs/<probe>/ at
+        # aggregate time. Result-equivalent to a whole-probe run (per-cluster fits
+        # are independent), and lets many small tasks pack into a fragmented cpu
+        # partition (scheduling) while fanning the cohort across nodes (parallelism).
+        i, m = shard
+        data = load_probe_data(
+            FORMATTED_DIR / f"{probe}.mat", config=GLMConfig(),
+            stimulus_lookup=_lookup(), cluster_set="selected",
+        )
+        cohort = sorted(c.cluster_id for c in data.clusters)
+        cluster_filter = set(cohort[i::m])
+        out_dir = out_dir / "_shards" / f"{i:02d}of{m:02d}"
+        log.info("shard %d/%d of %s: %d of %d clusters", i, m, probe,
+                 len(cluster_filter), len(cohort))
+    elif max_clusters is not None:
         # Wiring smoke: restrict to the first few selected∩RF clusters.
         data = load_probe_data(
             FORMATTED_DIR / f"{probe}.mat", config=GLMConfig(),
@@ -303,6 +320,7 @@ def run_probe(probe: str, max_clusters: int | None = None,
         else:
             cluster_filter = set(sorted(cohort & rf)[:max_clusters])
         log.info("smoke: %s restricted to %s", probe, cluster_filter)
+    out_dir.mkdir(parents=True, exist_ok=True)
     # The fitting engine is a CLI choice: irls (CPU, the established lineage) or
     # nemos (JAX, GPU-capable on the cluster). device routes JAX to cpu/gpu/auto.
     cfg = replace(_CONFIG_FN(), device=device)
@@ -325,6 +343,42 @@ def run_probe(probe: str, max_clusters: int | None = None,
         cluster_filter=cluster_filter,
     )
     return out_dir
+
+
+_SHARD_CSV_NAMES = (
+    "glm_model_comparison.csv", "glm_selection_history.csv",
+    "glm_selection_history_full.csv", "glm_coefficients.csv",
+    "prefilter_decision_tree.csv", "tuning_curves.csv", "trial_level_metrics.csv",
+)
+
+
+def _merge_shards() -> None:
+    """Reassemble cluster-sharded outputs into the canonical _runs/<probe>/ dir so
+    aggregate()/figures see a normal whole-probe run: concatenate each shard's
+    row-wise CSVs and gather the per-cluster figs. No-op when no _shards/ exist
+    (un-sharded run). Per-cluster fits are independent, so the concatenation is
+    result-equivalent to a whole-probe run (row order aside)."""
+    for probe in PROBES:
+        shard_root = OUT_ROOT / "_runs" / probe / "_shards"
+        if not shard_root.is_dir():
+            continue
+        shard_dirs = sorted(d for d in shard_root.iterdir() if d.is_dir())
+        if not shard_dirs:
+            continue
+        dest = OUT_ROOT / "_runs" / probe
+        for name in _SHARD_CSV_NAMES:
+            parts = [pd.read_csv(d / name) for d in shard_dirs if (d / name).exists()]
+            if parts:
+                pd.concat(parts, ignore_index=True).to_csv(dest / name, index=False)
+        figdest = dest / "figs"
+        figdest.mkdir(exist_ok=True)
+        for d in shard_dirs:
+            sfigs = d / "figs"
+            if sfigs.is_dir():
+                for p in sfigs.glob("*"):
+                    if p.is_file():
+                        shutil.copy2(p, figdest / p.name)
+        log.info("merged %d shards for %s -> %s", len(shard_dirs), probe, dest)
 
 
 def aggregate() -> pd.DataFrame | None:
@@ -391,11 +445,19 @@ def main() -> int:
                          "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 "
                          "VECLIB_MAXIMUM_THREADS=1 python scripts/run_glm_...py --n-jobs 8.")
     ap.add_argument("--aggregate-only", action="store_true",
-                    help="Skip fitting; only aggregate()+diagnostics over the existing "
-                         "per-probe _runs/<probe>/ outputs. For the PER-PROBE SPLIT: run "
-                         "one job per --probe (each fits + writes its own _runs dir, no "
-                         "aggregate), then one --aggregate-only job with an afterok "
-                         "dependency on both. Doubles throughput across 2 nodes.")
+                    help="Skip fitting; only merge shards + aggregate()+diagnostics over "
+                         "the per-probe _runs/<probe>/ outputs. For the PER-PROBE SPLIT or "
+                         "the SHARD ARRAY: run the fit jobs (each --probe, optionally "
+                         "--n-shards/--shard-id), then one --aggregate-only job with an "
+                         "afterok dependency on all of them.")
+    ap.add_argument("--n-shards", type=int, default=None,
+                    help="Cluster-shard a probe into N shards (use with --probe + "
+                         "--shard-id): fit clusters[shard_id::N], writing to "
+                         "_runs/<probe>/_shards/. Lets many small array tasks pack into a "
+                         "fragmented cpu partition. The --aggregate-only job reassembles "
+                         "the shards into _runs/<probe>/.")
+    ap.add_argument("--shard-id", type=int, default=None,
+                    help="0-based shard index (use with --n-shards).")
     args = ap.parse_args()
 
     global OUT_ROOT, _CONFIG_FN, _RUN_LABEL
@@ -427,14 +489,19 @@ def main() -> int:
 
     if not args.aggregate_only:
         probes = (args.probe,) if args.probe else PROBES
+        shard = (args.shard_id, args.n_shards) if args.n_shards is not None else None
         for probe in probes:
             run_probe(probe, max_clusters=args.max_clusters,
-                      backend=args.backend, device=args.device, n_jobs=args.n_jobs)
+                      backend=args.backend, device=args.device, n_jobs=args.n_jobs,
+                      shard=shard)
     # aggregate()+diagnostics run ONLY on a full run (all probes) or an explicit
-    # --aggregate-only job — never after a single --probe fit (that would aggregate
-    # on incomplete data; the per-probe split runs aggregate as a separate
-    # afterok-dependent job once both probes finish).
-    if args.aggregate_only or (args.probe is None and args.max_clusters is None):
+    # --aggregate-only job — never after a single --probe/shard fit (that would
+    # aggregate on incomplete data; the split/array runs aggregate as a separate
+    # afterok-dependent job once all fit jobs finish). _merge_shards() first
+    # reassembles any cluster-shards into _runs/<probe>/ (no-op if un-sharded).
+    if args.aggregate_only or (args.probe is None and args.n_shards is None
+                               and args.max_clusters is None):
+        _merge_shards()
         aggregate()
         # Diagnostics are PART OF THE PIPELINE — generated at the end of every
         # full run (both probes), never a separate manual step (Laura 2026-06-15).
