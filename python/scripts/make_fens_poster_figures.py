@@ -24,8 +24,10 @@ from ``run_glm_goggles_rf_sfor_20ms``), read against the
 ``figures/glm/current_rf_sfor_20ms_histbase_goggles_all`` outputs. History is an
 always-on baseline nuisance there (never a forward-selection candidate), and the
 selection rule is the condition-stratified 10-fold one-sided Wilcoxon signed-rank
-test — so the fig2c bottom panel shows per-fold Δ bits/spike (mean ± SD over the
-10 folds), not a single-point Δ against a fixed threshold.
+test. The fig2c bottom panel plots each candidate at the CUMULATIVE-over-baseline
+bits/spike its model would reach (running cumulative + its paired fold-mean Δ,
+error bar = the per-fold Δ SD over the 10 folds, the signed-rank input), with a
+green vertical segment marking the accepted step from one column to the next.
 
 Usage:
     python scripts/make_fens_poster_figures.py \
@@ -54,6 +56,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
@@ -499,11 +502,12 @@ def plot_forward_panel(
     n_col = len(top_models)
     base_cv = cv_bps_for(prep, baseline_vars, config, backend)
 
-    # Bottom panels: one per transition (under columns 1..n_col-1). Each shows,
-    # for every still-available main effect, the PER-FOLD paired Δ bits/spike over
-    # the current model (mean ± SD across the 10 condition-stratified folds — the
-    # same paired per-fold Δ the signed-rank selection consumes). The chosen term
-    # is highlighted with its one-sided Wilcoxon signed-rank p-value.
+    # Bottom panels: one per transition (under columns 1..n_col-1). For every
+    # still-available main effect, `_candidates` returns the PER-FOLD paired Δ
+    # bits/spike over the current model (mean ± SD across the 10 condition-
+    # stratified folds — the same paired Δ the signed-rank selection consumes);
+    # the plotting loop below anchors each onto the cumulative axis. The chosen
+    # term is highlighted with its one-sided Wilcoxon signed-rank p-value.
     def _candidates(cur, chosen, chosen_color):
         f_cur = cv_folds_for(prep, cur, config, backend)
         out = []
@@ -515,13 +519,24 @@ def plot_forward_panel(
                         p if hl else None))
         return out
 
-    bottom = []  # (col_index, list[(cand, mean, sd, is_highlight, color, pval)])
+    # Bottom panels are anchored on a CUMULATIVE-over-baseline bits/spike axis:
+    # each candidate sits at (running cumulative) + (its paired fold-mean Δ), so
+    # the panels climb left→right and the chosen term's height carries into the
+    # next column. `carried` = the cumulative of the current model (0 = baseline);
+    # `is_accepted` gates the green accepted-step segment (the rejected column
+    # shows where its term would land but takes no step, so cum does not advance).
+    bottom = []  # (col_index, carried_cum, is_accepted, cands)
     cur = list(baseline_vars)
+    cum = 0.0
     for i, v in enumerate(accepted):
-        bottom.append((i + 1, _candidates(cur, v, "black")))
+        cands = _candidates(cur, v, "black")
+        bottom.append((i + 1, cum, True, cands))
+        chosen_mean = next((mn for m, mn, *_ in cands if m == v), float("nan"))
+        cum = cum + (chosen_mean if np.isfinite(chosen_mean) else 0.0)
         cur = cur + [v]
-    # Rejected example: the term that did NOT clear the signed-rank test.
-    bottom.append((n_col - 1, _candidates(cur, rejected, "#d62728")))
+    # Rejected example: the term that did NOT clear the signed-rank test — it is
+    # plotted against the final accepted cumulative but does not advance it.
+    bottom.append((n_col - 1, cum, False, _candidates(cur, rejected, "#d62728")))
 
     fig, axes = plt.subplots(
         2, n_col, figsize=(2.5 * n_col, 4.6),
@@ -560,34 +575,46 @@ def plot_forward_panel(
         else:
             ax.set_yticklabels([])
 
-    # Bottom row: per-candidate mean ± SD of the paired per-fold Δ (shared y).
+    # Bottom row: each candidate plotted at the CUMULATIVE bits/spike its model
+    # would reach (carried-in cumulative + its paired fold-mean Δ), error bar =
+    # the paired per-fold Δ SD (the signed-rank input), shared y across columns.
+    # A green vertical segment marks the accepted step (carried → chosen height).
     axes[1, 0].axis("off")  # no transition produces the baseline column
-    finite = [(mn, sd) for _, cands in bottom for _, mn, sd, _, _, _ in cands
-              if np.isfinite(mn)]
-    ymax = max((mn + sd for mn, sd in finite), default=0.1)
-    ymin = min([mn - sd for mn, sd in finite] + [0.0], default=-0.02)
-    for col, cands in bottom:
+    pts = [(cc + mn, sd) for _, cc, _, cands in bottom for _, mn, sd, _, _, _ in cands
+           if np.isfinite(mn)]
+    ymax = max((y + sd for y, sd in pts), default=0.1)
+    ymin = min([y - sd for y, sd in pts] + [0.0], default=-0.02)
+    for col, carried, is_accepted, cands in bottom:
         ax = axes[1, col]
+        # faint anchor at the cumulative carried in from the current model
+        ax.axhline(carried, color="0.8", lw=0.7, ls=":")
         for xi, (m, mn, sd, hl, color, p) in enumerate(cands):
             if not np.isfinite(mn):
                 continue
-            ax.errorbar([xi], [mn], yerr=[sd], fmt="o",
+            y = carried + mn
+            # green segment = the accepted increment (Δ) this step adds to the model
+            if hl and is_accepted:
+                ax.plot([xi, xi], [carried, y], color="#2ca02c", lw=2.4,
+                        solid_capstyle="round", zorder=2.5)
+            ax.errorbar([xi], [y], yerr=[sd], fmt="o",
                         ms=7 if hl else 4, color=color if hl else "0.6",
                         ecolor=color if hl else "0.7",
                         elinewidth=1.4 if hl else 0.9, capsize=3,
                         markeredgecolor="black" if hl else "none",
                         zorder=3 if hl else 2)
             if hl and p is not None and np.isfinite(p):
-                ax.annotate(f"signed-rank\np={p:.3f}", (xi, mn + sd),
+                ax.annotate(f"signed-rank\np={p:.3f}", (xi, y + sd),
                             textcoords="offset points", xytext=(0, 4),
                             ha="center", va="bottom", fontsize=6, color=color)
-        ax.axhline(0, color="0.85", lw=0.6)
         ax.set_xticks(range(len(cands)))
         ax.set_xticklabels([ABBR.get(m, m) for m, *_ in cands], fontsize=7)
         ax.set_ylim(min(-0.02, 1.2 * ymin), 1.3 * ymax)
         ax.spines[["top", "right"]].set_visible(False)
         if col == 1:
-            ax.set_ylabel("per-fold Δ bits/spike (mean ± SD)", fontsize=8)
+            ax.set_ylabel("cumulative bits/spike (over baseline)", fontsize=8)
+            ax.legend([Line2D([0], [0], color="#2ca02c", lw=2.4)],
+                      ["accepted Δ (step)"], fontsize=6, loc="upper left",
+                      framealpha=0.9)
 
     fig.suptitle(
         f"{probe_id}  cluster {cluster_id}  trial {tid}  —  forward selection "
