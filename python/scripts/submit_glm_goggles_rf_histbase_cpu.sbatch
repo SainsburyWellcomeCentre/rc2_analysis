@@ -8,22 +8,23 @@
 #SBATCH --error=/ceph/margrie/laura/motion_clouds/_glm_logs/%j.err
 #
 # Goggles rf_local GLM, History-in-baseline — PARALLEL CPU run (maximise-compute:
-# never the serial path). The IRLS CPU backend has no GPU JIT/transfer overhead
-# (which dominates the small per-cluster fits — feedback_maximise_compute), so we
-# process-parallelise the per-cluster fits across the node's cores with loky,
-# BLAS/OMP pinned to 1 thread per worker (no oversubscription + removes the IRLS
-# cv-bps thread-nondeterminism). Both probes in ONE job so aggregate() + root
-# figs/ + diagnostics/ fire once, after all fits finish.
+# never the serial path). IRLS CPU backend (no GPU JIT, which dominates the small
+# per-cluster fits), per-cluster fits process-parallelised with loky, BLAS/OMP
+# pinned to 1 thread/worker (no oversubscription + removes the IRLS cv-bps
+# thread-nondeterminism).
 #
-# One node on the cpu partition (20 cores / 180 G). NOTE on granularity: the
-# parallelism is over CLUSTERS within a node (loky); fanning across many nodes
-# would re-load the 1.4 GB probe .mat per node, so the data load would dominate.
-# For a ~212-fit cohort, one node at full core-parallelism is the sweet spot
-# (a 2-node per-probe split is the most that helps; beyond that is wasteful).
-# CPU partition, no GPU. Outputs land on ceph; scp the CSVs/PDFs back after.
+# THREE MODES via env vars (PER-PROBE SPLIT = the way to use 2 nodes):
+#   PROBE=<id>            -> fit ONLY that probe (writes _runs/<probe>/, no aggregate)
+#   RUN_MODE=aggregate    -> skip fitting; aggregate() + diagnostics over both probes
+#   (neither)             -> full run: both probes serial + aggregate (single node)
+# Submit the split as:
+#   A=$(sbatch --parsable --export=ALL,PROBE=<p1> this.sbatch)
+#   B=$(sbatch --parsable --export=ALL,PROBE=<p2> this.sbatch)
+#   sbatch --dependency=afterok:$A:$B --export=ALL,RUN_MODE=aggregate this.sbatch
+# Both probe jobs run in parallel on 2 cpu nodes; aggregate fires once both finish.
 #
 # Prereqs: repo at $REPO on branch glm-improvements; venv at $REPO/python/.venv;
-# ceph data staged (as for submit_glm_goggles_rf_histbase.sbatch).
+# ceph data staged.
 
 set -euo pipefail
 
@@ -38,8 +39,12 @@ export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
        VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 
 N_JOBS="${SLURM_CPUS_PER_TASK:-20}"
+DRIVER="scripts/run_glm_goggles_rf_sfor_20ms.py"
 
-python scripts/run_glm_goggles_rf_sfor_20ms.py \
-    --history-in-baseline \
-    --backend irls \
-    --n-jobs "$N_JOBS"
+if [ "${RUN_MODE:-}" = "aggregate" ]; then
+    python "$DRIVER" --history-in-baseline --backend irls --aggregate-only
+elif [ -n "${PROBE:-}" ]; then
+    python "$DRIVER" --history-in-baseline --backend irls --n-jobs "$N_JOBS" --probe "$PROBE"
+else
+    python "$DRIVER" --history-in-baseline --backend irls --n-jobs "$N_JOBS"
+fi

@@ -390,6 +390,12 @@ def main() -> int:
                          "For a deterministic parallel run pin BLAS to 1 thread/worker: "
                          "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 "
                          "VECLIB_MAXIMUM_THREADS=1 python scripts/run_glm_...py --n-jobs 8.")
+    ap.add_argument("--aggregate-only", action="store_true",
+                    help="Skip fitting; only aggregate()+diagnostics over the existing "
+                         "per-probe _runs/<probe>/ outputs. For the PER-PROBE SPLIT: run "
+                         "one job per --probe (each fits + writes its own _runs dir, no "
+                         "aggregate), then one --aggregate-only job with an afterok "
+                         "dependency on both. Doubles throughput across 2 nodes.")
     args = ap.parse_args()
 
     global OUT_ROOT, _CONFIG_FN, _RUN_LABEL
@@ -419,11 +425,16 @@ def main() -> int:
     if args.dry_run:
         return dry_run()
 
-    probes = (args.probe,) if args.probe else PROBES
-    for probe in probes:
-        run_probe(probe, max_clusters=args.max_clusters,
-                  backend=args.backend, device=args.device, n_jobs=args.n_jobs)
-    if args.max_clusters is None:
+    if not args.aggregate_only:
+        probes = (args.probe,) if args.probe else PROBES
+        for probe in probes:
+            run_probe(probe, max_clusters=args.max_clusters,
+                      backend=args.backend, device=args.device, n_jobs=args.n_jobs)
+    # aggregate()+diagnostics run ONLY on a full run (all probes) or an explicit
+    # --aggregate-only job — never after a single --probe fit (that would aggregate
+    # on incomplete data; the per-probe split runs aggregate as a separate
+    # afterok-dependent job once both probes finish).
+    if args.aggregate_only or (args.probe is None and args.max_clusters is None):
         aggregate()
         # Diagnostics are PART OF THE PIPELINE — generated at the end of every
         # full run (both probes), never a separate manual step (Laura 2026-06-15).
