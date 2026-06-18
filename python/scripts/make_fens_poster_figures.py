@@ -633,15 +633,18 @@ def plot_forward_panel(
 # Fig 2 — population forward-selection summary + acid-stack (evolution of
 # forward_selection_summary + acid_stack_sorted).
 #   (1,1) histogram of #selected predictors per cluster (single colour).
-#   (1,2) main effects: bar = Σ LOO-unique cv-bps over clusters; #clusters that
-#         selected it annotated on top.
+#   (1,2) main effects: VIOLIN of per-cluster LOO-unique cv-bps (all points
+#         overlaid), over the clusters that selected each term; linear axis.
 #   (1,3) same for interaction terms (LOO-unique computed on the fly to match
 #         variance_partition's full-additive / condition-stratified-5-fold defn).
-#   (2,1) per-cluster stacked unique Δ cv-bps, all regressors except History,
-#         sorted, symlog y.
+#   (2,1) per-cluster stacked unique Δ cv-bps, all main effects except History &
+#         Onset, sorted by stack total (symlog full / linear+zoom split).
+#   (3,1) Onset LOO-unique Δ cv-bps per cluster, SAME sort as (2,1), single gray,
+#         signed; mirrors the (2,1) total + zoom layout.
 # --------------------------------------------------------------------------- #
 # Single per-predictor colour map shared by (1,2), (1,3), and (2,1). History and
-# Onset are deliberately NOT shown in any panel (baseline/nuisance terms).
+# Onset are not in those panels (baseline/nuisance terms); Onset gets its own
+# row (3,1), History is NaN in the histbase run so it is not shown.
 PREDICTOR_COLORS = {"Speed": "tab:green", "Acceleration": "tab:cyan", "TF": "tab:orange",
                     "SF": "tab:olive", "OR": "tab:red", "ME_face": "tab:purple"}
 DISPLAY = {"Speed": "Speed", "Acceleration": "Accel", "TF": "TF", "SF": "SF",
@@ -681,11 +684,13 @@ def _cv_with_folds(prep, vars_, folds, config, backend="irls"):
 
 
 def compute_interaction_uniques(config, probes, mc, backend="irls"):
-    """Σ LOO-unique cv-bps + selection count per interaction term, over all
-    clusters that selected it. unique_I = cv(full_additive ∪ I) − cv(full_additive),
-    condition-stratified 5-fold (matches variance_partition_accel.partition)."""
+    """Per-cluster LOO-unique cv-bps per interaction term, over the clusters that
+    selected it. unique_I = cv(full_additive ∪ I) − cv(full_additive),
+    condition-stratified 5-fold (matches variance_partition_accel.partition).
+    Returns ``{term: [per-cluster unique, ...]}`` (RAW Δ, negatives kept — the
+    violin panel shows the full distribution)."""
     from rc2_glm.cross_validation import make_trial_folds
-    sums, counts = {}, {}
+    per = {}
     for probe_id in probes:
         sub = mc[mc["probe_id"] == probe_id]
         need = {int(r.cluster_id): [v for v in _sel_terms(r.time_selected_vars) if "_x_" in v]
@@ -711,19 +716,25 @@ def compute_interaction_uniques(config, probes, mc, backend="irls"):
             cv_full = _cv_with_folds(prep, FULL_ADD, folds, config, backend)
             for I in inters:
                 u = _cv_with_folds(prep, FULL_ADD + [I], folds, config, backend) - cv_full
-                sums[I] = sums.get(I, 0.0) + max(u, 0.0)
-                counts[I] = counts.get(I, 0) + 1
+                per.setdefault(I, []).append(u)
             log.info("interaction uniques: %s cluster %d done", probe_id, cid)
-    return sums, counts
+    return per
 
 
-def _draw_acid_stack(ax, df_sub, present, *, ylim=None):
-    """Per-cluster stacked unique Δ cv-bps for a (sub)set of clusters, sorted by
-    stack total. ``present`` = [(label, column, colour)]. Negatives clipped to 0."""
-    heights = {lab: np.clip(pd.to_numeric(df_sub[col], errors="coerce").fillna(0).to_numpy(),
-                            0, None) for lab, col, _ in present}
+def _draw_acid_stack(ax, df_sub, present, *, ylim=None, order=None, signed=False):
+    """Per-cluster stacked unique Δ cv-bps for a (sub)set of clusters.
+    ``present`` = [(label, column, colour)]. By default negatives are clipped to 0
+    and the columns are sorted ascending by stack total; pass ``signed=True`` to
+    keep negative bars (used for the single-series Onset row, so every datapoint
+    shows) and pass an explicit ``order`` (positional indices) to reuse another
+    panel's cluster ordering so columns align. Returns ``(tot, order)``."""
+    def _col(col):
+        v = pd.to_numeric(df_sub[col], errors="coerce").fillna(0).to_numpy()
+        return v if signed else np.clip(v, 0, None)
+    heights = {lab: _col(col) for lab, col, _ in present}
     tot = np.sum(list(heights.values()), axis=0) if heights else np.zeros(len(df_sub))
-    order = np.argsort(tot)
+    if order is None:
+        order = np.argsort(tot)
     x = np.arange(len(df_sub)); bottom = np.zeros(len(df_sub))
     for lab, col, c in present:
         h = heights[lab][order]
@@ -732,20 +743,22 @@ def _draw_acid_stack(ax, df_sub, present, *, ylim=None):
     ax.set_xlim(-0.5, len(df_sub) - 0.5)
     if ylim is not None:
         ax.set_ylim(*ylim)
-    return tot
+    return tot, order
 
 
-def plot_fig2_summary(mc, vp, inter_sums, inter_counts, out_path, config, *, zoom_split=False):
+def plot_fig2_summary(mc, vp, inter_per, out_path, config, *, zoom_split=False):
     n = len(mc)
-    fig = plt.figure(figsize=(16, 9) if zoom_split else (15, 9), constrained_layout=True)
-    gs = fig.add_gridspec(2, 6, height_ratios=[1.0, 1.0])
+    fig = plt.figure(figsize=(16, 13) if zoom_split else (15, 13), constrained_layout=True)
+    gs = fig.add_gridspec(3, 6, height_ratios=[1.0, 1.0, 1.0])
     ax11 = fig.add_subplot(gs[0, 0:2])
     ax12 = fig.add_subplot(gs[0, 2:4])
     ax13 = fig.add_subplot(gs[0, 4:6])
     if zoom_split:
         ax2 = fig.add_subplot(gs[1, 0:4]); ax2z = fig.add_subplot(gs[1, 4:6])
+        ax3 = fig.add_subplot(gs[2, 0:4]); ax3z = fig.add_subplot(gs[2, 4:6])
     else:
         ax2 = fig.add_subplot(gs[1, :]); ax2z = None
+        ax3 = fig.add_subplot(gs[2, :]); ax3z = None
 
     # (1,1) model-size histogram, single colour. History excluded from the count
     # (nuisance term, not shown anywhere); interactions counted.
@@ -759,50 +772,75 @@ def plot_fig2_summary(mc, vp, inter_sums, inter_counts, out_path, config, *, zoo
     ax11.set_title(f"Model complexity (n={n})", fontsize=10)
     ax11.set_xticks(vc.index)
 
-    # (1,2) main effects: Σ LOO-unique cv-bps + selection count, both over the
-    # clusters that SELECTED the term (same basis as the n= annotation and (1,3)).
+    # (1,2) main effects: per-cluster LOO-unique cv-bps distribution (violin + all
+    # points), over the clusters that SELECTED the term (same basis as (1,3)).
     sel_map = {(r.probe_id, int(r.cluster_id)): set(_sel_terms(r.time_selected_vars))
                for r in mc.itertuples()}
-    me_labels, me_sums, me_counts = [], [], []
+    me_labels, me_data = [], []
     for lab, col in ME_UNIQUE:
         if col not in vp.columns:
             continue
         mask = np.array([lab in sel_map.get((r.probe_id, int(r.cluster_id)), set())
                          for r in vp.itertuples()])
-        vals = np.clip(pd.to_numeric(vp[col], errors="coerce").fillna(0).to_numpy(), 0, None)
-        me_labels.append(lab); me_sums.append(float(vals[mask].sum())); me_counts.append(int(mask.sum()))
-    _bar_bps(ax12, [DISPLAY[m] for m in me_labels], me_sums, me_counts, "main effects",
-             facecolors=[PREDICTOR_COLORS[m] for m in me_labels])
+        vals = pd.to_numeric(vp[col], errors="coerce").to_numpy()
+        me_labels.append(lab); me_data.append(vals[mask])
+    _violin_panel(ax12, [DISPLAY[m] for m in me_labels], me_data, "main effects",
+                  [PREDICTOR_COLORS[m] for m in me_labels])
 
-    # (1,3) interactions: Σ LOO-unique cv-bps + count; oblique two-colour stripes
-    # (facecolour = 1st constituent, hatch colour = 2nd).
-    it_labels = sorted(inter_sums, key=lambda k: -inter_sums[k])
-    fcs = [_interaction_colors(k)[0] for k in it_labels]
-    ecs = [_interaction_colors(k)[1] for k in it_labels]
-    _bar_bps(ax13, [_INT_ABBR(k) for k in it_labels],
-             [inter_sums[k] for k in it_labels],
-             [inter_counts[k] for k in it_labels], "interaction terms",
-             facecolors=fcs, edgecolors=ecs, hatches=["////"] * len(it_labels))
+    # (1,3) interactions: per-cluster LOO-unique cv-bps distribution (sorted by
+    # Σ of positive uniques, so the strongest interaction is leftmost).
+    it_labels = sorted(inter_per, key=lambda k: -float(np.nansum(np.clip(inter_per[k], 0, None))))
+    _violin_panel(ax13, [_INT_ABBR(k) for k in it_labels],
+                  [inter_per[k] for k in it_labels], "interaction terms",
+                  [_interaction_colors(k)[0] for k in it_labels])
 
-    # (2,1) acid stack, History & Onset excluded.
+    # (2,1) acid stack, main effects (History & Onset excluded). Capture the
+    # cluster ORDER so the Onset row (3,1) below aligns column-for-column.
     present = [(lab, col, c) for lab, col, c in ACID_VARS if col in vp.columns]
-    tot = _draw_acid_stack(ax2, vp, present)
+    tot, order_all = _draw_acid_stack(ax2, vp, present)
     ax2.set_xlabel("cluster (sorted; History & Onset excluded)")
     ax2.legend(ncol=len(present), fontsize=8, frameon=False, loc="upper left")
+
+    # (3,1) Onset row: SAME cluster sort as row 2, single gray, signed (negatives
+    # kept — Onset is a small ±0.025 nuisance term and we want every datapoint).
+    onset_present = [("Onset", "unique_Onset", "0.45")]
+    has_onset = "unique_Onset" in vp.columns
+
     if zoom_split:
         ax2.set_ylabel("stacked unique Δ cv-bps (linear)")
         ax2.set_title(f"Per-cluster unique contributions — all clusters (n={len(vp)})",
                       fontsize=10, fontweight="bold")
         mask = tot < 0.2
-        _draw_acid_stack(ax2z, vp[mask], present, ylim=(0, 0.2))
+        vp_zoom = vp[mask]
+        _, order_zoom = _draw_acid_stack(ax2z, vp_zoom, present, ylim=(0, 0.2))
         ax2z.set_xlabel(f"cluster (cumulative < 0.2, n={int(mask.sum())})")
         ax2z.set_ylabel("stacked unique Δ cv-bps")
         ax2z.set_title("magnified: cumulative < 0.2 bits/spike", fontsize=10)
+        if has_onset:
+            _draw_acid_stack(ax3, vp, onset_present, order=order_all, signed=True)
+            _draw_acid_stack(ax3z, vp_zoom, onset_present, order=order_zoom, signed=True)
+            ax3z.set_xlabel(f"cluster (same {int(mask.sum())} as above)")
+            ax3z.set_ylabel("Onset unique Δ cv-bps (signed)")
+            ax3z.set_title("magnified: same low-cumulative clusters", fontsize=10)
     else:
         ax2.set_yscale("symlog", linthresh=0.01)
         ax2.set_ylabel("stacked unique Δ cv-bps (symlog)")
         ax2.set_title(f"Per-cluster unique contributions — except History & Onset (n={len(vp)})",
                       fontsize=10, fontweight="bold")
+        if has_onset:
+            _draw_acid_stack(ax3, vp, onset_present, order=order_all, signed=True)
+
+    if has_onset:
+        ax3.axhline(0, color="0.6", lw=0.6)
+        ax3.set_xlabel("cluster (same sort as row above; Onset only)")
+        ax3.set_ylabel("Onset unique Δ cv-bps (signed)")
+        ax3.set_title(f"Per-cluster Onset contribution — baseline nuisance (n={len(vp)})",
+                      fontsize=10, fontweight="bold")
+    else:
+        ax3.text(0.5, 0.5, "unique_Onset not in variance_partition.csv",
+                 ha="center", va="center", transform=ax3.transAxes, fontsize=9)
+        if ax3z is not None:
+            ax3z.axis("off")
 
     fig.suptitle("FENS fig 2 — forward-selection summary + acid stack (goggles, "
                  f"{RUN_ALL_DIR.name})", fontsize=11, fontweight="bold")
@@ -817,25 +855,31 @@ def _INT_ABBR(name):
     return name.replace("ME_face", "ME").replace("Acceleration", "A").replace("_x_", "×")
 
 
-def _bar_bps(ax, labels, sums, counts, title, facecolors=None, edgecolors=None, hatches=None):
+def _violin_panel(ax, labels, data_lists, title, colors):
+    """Per-term distribution of per-cluster LOO-unique cv-bps as a violin with
+    every datapoint overlaid (jittered strip + median bar). Linear axis (no log),
+    negatives kept. ``data_lists[i]`` = the per-cluster uniques for ``labels[i]``;
+    ``n=`` is the count of finite points."""
     xs = np.arange(len(labels))
-    bars = ax.bar(
-        xs, sums,
-        color=facecolors if facecolors is not None else "#55a868",
-        edgecolor=edgecolors if edgecolors is not None else "0.3",
-        width=0.75, linewidth=1.3,
-    )
-    if hatches is not None:
-        for b, h in zip(bars, hatches):
-            b.set_hatch(h)
-    for xi, (s, c) in enumerate(zip(sums, counts)):
-        ax.text(xi, s, f"n={c}", ha="center", va="bottom", fontsize=7)
-    pos = [s for s in sums if s > 0]
-    if pos and max(pos) / min(pos) > 50:
-        ax.set_yscale("log")
+    for xi, (data, c) in enumerate(zip(data_lists, colors)):
+        data = np.asarray([d for d in np.asarray(data, float) if np.isfinite(d)])
+        if data.size == 0:
+            continue
+        if data.size >= 2 and np.ptp(data) > 0:
+            parts = ax.violinplot([data], positions=[xi], widths=0.8,
+                                  showmeans=False, showextrema=False)
+            for b in parts["bodies"]:
+                b.set_facecolor(c); b.set_edgecolor(c); b.set_alpha(0.30)
+        jit = (np.random.RandomState(xi).rand(data.size) - 0.5) * 0.28
+        ax.scatter(xi + jit, data, s=10, color=c, edgecolor="0.2",
+                   linewidth=0.3, alpha=0.85, zorder=3)
+        ax.hlines(np.median(data), xi - 0.22, xi + 0.22, color="0.1", lw=1.4, zorder=4)
+        ax.annotate(f"n={data.size}", (xi, data.max()), textcoords="offset points",
+                    xytext=(0, 3), ha="center", va="bottom", fontsize=7)
+    ax.axhline(0, color="0.85", lw=0.6)
     ax.set_xticks(xs); ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=8)
-    ax.set_ylabel("Σ LOO-unique cv-bps (over clusters)")
-    ax.set_title(f"Cumulative cv-bps — {title}", fontsize=10)
+    ax.set_ylabel("LOO-unique cv-bps (per cluster)")
+    ax.set_title(f"Per-cluster cv-bps — {title}", fontsize=10)
 
 
 # --------------------------------------------------------------------------- #
@@ -898,10 +942,10 @@ def main() -> int:
         vp = pd.read_csv(RUN_ALL_DIR / "diagnostics" / "variance_partition.csv")
         log.info("fig2: %d clusters (model_comparison), %d (variance_partition)",
                  len(mc), len(vp))
-        inter_sums, inter_counts = compute_interaction_uniques(config, PROBES, mc, backend)
-        plot_fig2_summary(mc, vp, inter_sums, inter_counts,
+        inter_per = compute_interaction_uniques(config, PROBES, mc, backend)
+        plot_fig2_summary(mc, vp, inter_per,
                           OUT_DIR / "fig2_forward_selection_summary", config)
-        plot_fig2_summary(mc, vp, inter_sums, inter_counts,
+        plot_fig2_summary(mc, vp, inter_per,
                           OUT_DIR / "fig2_forward_selection_summary_zoom", config,
                           zoom_split=True)
         return 0
