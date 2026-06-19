@@ -17,6 +17,7 @@ diagnostics are part of the pipeline and never skipped. Runs: main / histme / al
 from __future__ import annotations
 
 import argparse
+import functools
 
 import numpy as np
 import pandas as pd
@@ -64,15 +65,29 @@ def _rf_bases(df, cfg):
     return B_sf, B_or
 
 
-def compute_partition(run: str, limit: int | None = None) -> tuple[pd.DataFrame, object, object]:
+def _partition_one(df, B_sf, B_or, probe, cluster_id, *, cfg, stim,
+                   include_me, include_hist, include_accel):
+    """Per-cluster LOO variance partition (the expensive refit) — a module-level
+    worker so it pickles cleanly to loky processes."""
+    res = partition(df, cfg, B_sf=B_sf, B_or=B_or, stim=stim,
+                    include_me=include_me, include_hist=include_hist,
+                    include_accel=include_accel)
+    if res is None:
+        return None
+    res.update(probe_id=probe, cluster_id=cluster_id)
+    return res
+
+
+def compute_partition(run: str, limit: int | None = None,
+                      n_jobs: int = 1) -> tuple[pd.DataFrame, object, object]:
     cfg_fn, folder = RUNS[run]
     cfg = cfg_fn()
     # The condition's non-degenerate stimulus set (V has no Speed; T_Vstatic no
     # TF/SF/OR) — so the partition drops degenerate blocks instead of fitting
     # constant columns. Derived from the run's own main_effects.
     stim = tuple(v for v in cfg.main_effects if v in _STIM)
-    rows = []
     spike_rows = []
+    tasks = []  # (df, B_sf, B_or, probe, cluster_id) for clusters that pass the floor
     for probe in drv.PROBES:
         mc = folder / "_runs" / probe / "glm_model_comparison.csv"
         if not mc.exists():
@@ -103,19 +118,28 @@ def compute_partition(run: str, limit: int | None = None) -> tuple[pd.DataFrame,
                 pt_min=q[0], pt_q1=q[1], pt_med=q[2], pt_q3=q[3], pt_max=q[4]))
             if not passed:
                 continue
-            B_sf, B_or = _rf_bases(df, cfg)
             # Pass the run's ACTUAL predictor set so the partition matches what
             # was fit (the main run has no ME/History; histme/all have both).
-            res = partition(
-                df, cfg, B_sf=B_sf, B_or=B_or, stim=stim,
-                include_me=getattr(cfg, "include_me_face", False),
-                include_hist=getattr(cfg, "include_history", False),
-                include_accel=getattr(cfg, "include_acceleration", False),
-            )
-            if res is None:
-                continue
-            res.update(probe_id=probe, cluster_id=int(cl.cluster_id))
-            rows.append(res)
+            B_sf, B_or = _rf_bases(df, cfg)
+            tasks.append((df, B_sf, B_or, probe, int(cl.cluster_id)))
+    # bin_cluster above is cheap; the per-cluster LOO refit in partition() is the
+    # cost (~70 s/cluster), so fan it across processes (loky). Pin BLAS to 1
+    # thread/worker in the ENV (OMP/OPENBLAS/MKL/VECLIB=1) for no oversubscription
+    # + deterministic cv-bps — matching the fit runs. Serial fallback at n_jobs=1.
+    worker = functools.partial(
+        _partition_one, cfg=cfg, stim=stim,
+        include_me=getattr(cfg, "include_me_face", False),
+        include_hist=getattr(cfg, "include_history", False),
+        include_accel=getattr(cfg, "include_acceleration", False),
+    )
+    if n_jobs and n_jobs != 1 and len(tasks) > 1:
+        from joblib import Parallel, delayed
+        results = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(worker)(*t) for t in tasks)
+    else:
+        results = [worker(*t) for t in tasks]
+    rows = [r for r in results if r is not None]
+    for probe in drv.PROBES:
         print(f"{run}/{probe}: {sum(r['probe_id'] == probe for r in rows)} clusters partitioned")
     return pd.DataFrame(rows), pd.DataFrame(spike_rows), cfg, folder
 
@@ -152,10 +176,11 @@ def _render(df: pd.DataFrame, spike_df, cfg, folder, run: str) -> None:
     plot_acid_stack_sorted(m, out_dir / "acid_stack_sorted")                       # all regressors, sorted by stack ± History
 
 
-def generate(run: str, limit: int | None = None) -> int:
+def generate(run: str, limit: int | None = None, n_jobs: int = 1) -> int:
     """Compute the rf_local variance partition for ``run``, save the CSV, and
-    render every diagnostic figure into ``<run>/diagnostics/``. Pipeline entry."""
-    df, spike_df, cfg, folder = compute_partition(run, limit=limit)
+    render every diagnostic figure into ``<run>/diagnostics/``. Pipeline entry.
+    ``n_jobs`` parallelises the per-cluster refits (pin BLAS=1/worker)."""
+    df, spike_df, cfg, folder = compute_partition(run, limit=limit, n_jobs=n_jobs)
     (folder / "diagnostics").mkdir(parents=True, exist_ok=True)
     if spike_df is not None and len(spike_df):
         spike_df.to_csv(folder / "diagnostics" / "spike_stats.csv", index=False)
@@ -188,10 +213,14 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None, help="first N clusters/probe (smoke)")
     ap.add_argument("--figures-only", action="store_true",
                     help="re-render figures from the saved variance_partition.csv (no recompute)")
+    ap.add_argument("--n-jobs", type=int, default=1,
+                    help="Parallel per-cluster partition refits (loky). Pin BLAS to "
+                         "1 thread/worker: OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 "
+                         "MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python ... --n-jobs 8.")
     args = ap.parse_args()
     if args.figures_only:
         return figures_only(args.run)
-    return generate(args.run, limit=args.limit)
+    return generate(args.run, limit=args.limit, n_jobs=args.n_jobs)
 
 
 if __name__ == "__main__":

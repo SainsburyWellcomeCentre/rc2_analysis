@@ -20,6 +20,8 @@
 #                           Many small tasks pack into a fragmented cpu partition.
 #   PROBE=<id>            -> fit ONLY that probe (writes _runs/<probe>/, no aggregate)
 #   RUN_MODE=aggregate    -> skip fitting; merge shards + aggregate() + diagnostics
+#   RUN_MODE=diagnostics  -> only (re)compute variance_partition + diagnostic figs
+#                           (parallel over the node's cores; a GLM-refit workload)
 #   (none)                -> full run: both probes + aggregate (single node)
 # Submit the SHARD ARRAY (M shards/probe, few cores each) + dependent aggregate:
 #   J=$(sbatch --parsable --array=0-$((2*M-1)) --cpus-per-task=6 \
@@ -53,6 +55,11 @@ if [ -n "${N_SHARDS:-}" ]; then
     SID="$((IDX % N_SHARDS))"
     python "$DRIVER" --history-in-baseline --backend irls --n-jobs "$N_JOBS" \
         --probe "$PR" --n-shards "$N_SHARDS" --shard-id "$SID"
+elif [ "${RUN_MODE:-}" = "diagnostics" ]; then
+    # variance_partition refits the GLM ~40x/cluster (LOO-unique x CV) -> a
+    # cluster-class job, not a plotting one. Parallelise over the node's cores.
+    # Run via -m so the loky worker (_partition_one) pickles cleanly.
+    python -m scripts.diagnostics_rf_sfor --run histbase --n-jobs "$N_JOBS"
 elif [ "${RUN_MODE:-}" = "aggregate" ]; then
     python "$DRIVER" --history-in-baseline --backend irls --aggregate-only
 elif [ -n "${PROBE:-}" ]; then

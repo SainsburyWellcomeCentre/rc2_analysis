@@ -518,7 +518,10 @@ def main() -> int:
         try:
             from scripts.diagnostics_rf_sfor import generate as _generate_diagnostics
             log.info("pipeline: generating diagnostics for the %s run", run_key)
-            _generate_diagnostics(run_key)
+            # variance_partition REFITS the GLM ~40x/cluster (LOO-unique x CV), so
+            # parallelise it with the job's cores (else it dwarfs the fits and times
+            # out — it did on the cluster aggregate). BLAS pinned to 1/worker in env.
+            _generate_diagnostics(run_key, n_jobs=args.n_jobs)
         except Exception as exc:  # noqa: BLE001 — keep the run's outputs even if diag fails
             log.warning("diagnostics step failed (run outputs intact): %s", exc)
     return 0
