@@ -120,12 +120,13 @@ def make_config() -> GLMConfig:
         time_bin_width=0.02,
         sf_or_source="rf_local",
         rf_sf_or_parquet_dir=RF_PARQUET_DIR,
-        # Goggles motion = the PHOTODIODE visual-stimulus window for V/VT (the
-        # cloud displays ~0.7 s after the velocity command — that latency is the
-        # real stationary↔motion gap, excluded; T_Vstatic falls back to
-        # velocity). Screens keep the velocity default. See
-        # reference_motion_clouds_goggles_trial_structure.
-        motion_window_source="photodiode",
+        # Goggles motion = the VELOCITY mask (stationary | motion ABUT, no gap):
+        # the cloud displays IN SYNC with stage motion, no command→display latency
+        # (vr_motionClouds: pos += speed·dt, frame redrawn each Flip). Rail-clip V
+        # (ReplayOnly) trials like VT so V and VT motion masks match (V carries
+        # forward_limit=NaN → backfilled from a StageOnly trial). See
+        # project_motion_clouds_goggles_motion_mask_fix.
+        replay_rail_clip=True,
         fit_condition=None,
         main_effects=MAIN_EFFECTS,
         interactions=INTERACTIONS,

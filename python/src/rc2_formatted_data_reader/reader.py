@@ -293,7 +293,26 @@ class FormattedDataReader:
         """Returns True if the trial is a replay protocol."""
         return self.trial_protocol(trial_idx) in ("StageOnly", "ReplayOnly")
 
-    def trial_analysis_mask(self, trial_idx: int) -> np.ndarray:
+    def stageonly_forward_limit(self) -> float | None:
+        """``forward_limit`` (rail config) from the first StageOnly trial, used to
+        backfill ReplayOnly (V) trials whose own ``forward_limit`` is NaN so their
+        analysis-window rail clip works. ``None`` if no StageOnly trial has a finite
+        value. Cached."""
+        cached = getattr(self, "_so_fwd_limit_cache", "UNSET")
+        if cached != "UNSET":
+            return cached
+        val: float | None = None
+        for i in range(self.n_trials):
+            if self.trial_protocol(i) == "StageOnly":
+                fl = self._trial_config_scalar(i, "forward_limit", default=float("nan"))
+                if np.isfinite(fl):
+                    val = float(fl)
+                    break
+        self._so_fwd_limit_cache = val
+        return val
+
+    def trial_analysis_mask(self, trial_idx: int,
+                            replay_forward_limit: float | None = None) -> np.ndarray:
         """Returns the boolean analysis window mask replicating AlignedTrial logic."""
         fs = self.fs
         start, end = self.trial_bounds(trial_idx)
@@ -349,6 +368,14 @@ class FormattedDataReader:
 
             c_start_pos = self._trial_config_scalar(trial_idx, "start_pos")
             c_fwd_limit = self._trial_config_scalar(trial_idx, "forward_limit")
+            # ReplayOnly (V) trials store forward_limit=NaN → the rail clip below
+            # no-ops and V motion runs to the velocity end. Backfill the rail clip
+            # from a StageOnly trial (opt-in, config.replay_rail_clip) so V and VT
+            # motion masks are defined the same way (MATLAB to_aligned does this via
+            # the original StageOnly trial). See project_motion_clouds_goggles_motion_mask_fix.
+            if (replay_forward_limit is not None and protocol == "ReplayOnly"
+                    and not np.isfinite(c_fwd_limit)):
+                c_fwd_limit = replay_forward_limit
             thresh = 0.98 * (c_start_pos - c_fwd_limit) / 10.0
 
             pos_high = np.where(position_tr > thresh)[0]
@@ -374,46 +401,6 @@ class FormattedDataReader:
                 baseline = (rc2_t > (t_ref + 2.0)) & (rc2_t < (t_ref + 4.0))
 
         return mask | baseline
-
-    def trial_visual_window(
-        self,
-        trial_idx: int,
-        *,
-        min_range: float = 0.05,
-        min_toggles: int = 10,
-    ) -> tuple[int, int] | None:
-        """Visual-stimulus on/off window from the photodiode, as trial-relative
-        sample indices ``(onset, offset)``, or ``None`` when there is no visual
-        stimulus (flat photodiode).
-
-        During visual display the goggles photodiode **toggles** between two
-        distinct levels (the cloud flicker); the pre/post-stimulus baseline is
-        flat. We threshold at the mid-level and take the first and last toggle.
-        This is the PRINCIPLED motion boundary for the *visual* conditions (V,
-        VT): the cloud only appears ~0.6–1.0 s after the velocity command starts
-        (the command→display latency = the stationary↔motion gap), and ends ~4 s
-        later. ``T_Vstatic`` has no visual stimulus → flat photodiode → ``None``
-        (callers fall back to the velocity motion mask).
-
-        The goggles photodiode is small-amplitude (raw range ≈ 0.22; "~8 after
-        ×20 scaling", per master ``get_parameters_for_photodiode`` →
-        ``sparse_noise_goggles``). ``min_range``/``min_toggles`` reject a flat or
-        barely-fluctuating trace. Validated on CAA-1124370/371: V & VT give a
-        clean ~0.6–4.75 s window (≈4 s, 1.4–3.1 k toggles); T_Vstatic → None.
-        """
-        s, e = self.trial_bounds(trial_idx)
-        pd = self.session_channel("photodiode", s, e)
-        if pd is None:
-            return None
-        pd = np.asarray(pd, dtype=np.float64)
-        rng = float(np.nanmax(pd) - np.nanmin(pd))
-        if not np.isfinite(rng) or rng < min_range:
-            return None
-        hi = pd > (np.nanmin(pd) + 0.5 * rng)
-        toggles = np.flatnonzero(np.diff(hi.astype(np.int64)) != 0)
-        if toggles.size < min_toggles:
-            return None
-        return int(toggles[0]), int(toggles[-1])
 
     # --- Session-level arrays (lazy slicing) ---
 

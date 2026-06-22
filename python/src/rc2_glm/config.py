@@ -16,17 +16,21 @@ class GLMConfig:
     acceleration_threshold: float = 0.5         # m/s^2
     min_stationary_duration: float = 0.2        # seconds
 
-    # --- Motion-window source -------------------------------------------------
-    # "velocity" (default): motion = velocity/accel threshold mask ∩ analysis
-    #   window (the published RC2 / screens behaviour; byte-identical).
-    # "photodiode": for the VISUAL conditions (V, VT) of the goggles cohort,
-    #   motion = the PHOTODIODE visual-stimulus window (reader.trial_visual_window)
-    #   — the cloud only displays ~0.6–1.0 s after the velocity command (that
-    #   command→display latency is the real stationary↔motion GAP, excluded from
-    #   both periods), and ends ~4 s later. T_Vstatic (no visual → flat
-    #   photodiode) and any trial without a usable photodiode fall back to
-    #   "velocity". See reference_motion_clouds_goggles_trial_structure.
-    motion_window_source: str = "velocity"
+    # --- Motion window --------------------------------------------------------
+    # Motion = velocity/accel threshold mask ∩ analysis window; stationary = the
+    # complement (they abut, no gap). Correct for goggles too: the cloud displays
+    # IN SYNC with motion (no command→display latency), and the SF/OR cloud-frame
+    # clock anchors at the true motion onset. (A photodiode-window mode was
+    # removed 2026-06-22 — its "gap" was a misconception; see
+    # reference_motion_clouds_goggles_trial_structure.)
+
+    # Rail-clip ReplayOnly (V) trials like StageOnly. V trials carry
+    # forward_limit=NaN, so the analysis-window rail clip no-ops and V motion
+    # runs to the velocity end instead of the rail (MATLAB to_aligned gives
+    # ~3.8 s). When True, backfill the rail clip from a StageOnly trial so V and
+    # VT motion masks are defined the same way. Default False = screens
+    # byte-identical; the goggles run turns it on.
+    replay_rail_clip: bool = False
 
     # --- Velocity filter (matches lib/fcn/general/filter_trace.m) ---
     apply_velocity_filter: bool = True
