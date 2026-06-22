@@ -50,6 +50,7 @@ for _v in (
 
 import argparse
 import logging
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -72,6 +73,18 @@ from rc2_glm.cross_validation import cross_validate_glm, make_trial_folds
 from rc2_glm.design_matrix import assemble_design_matrix_selected
 from rc2_glm.fitting import fit_poisson_glm
 from rc2_glm.io import load_probe_data
+from rc2_glm.tuning_significance import (
+    LINEAR_FAMILIES as LINEAR_FAMILIES_TS,
+    MIN_TRIALS,
+    TuningSignificance,
+    evaluate as eval_tuning_fit,
+    fit_tuning,
+    per_trial_bin_matrix,
+    rsq_against_mean,
+    select_best,
+    tuning_significance,
+)
+from rc2_glm.precomputed_bins import load_precomputed_bin_edges
 from rc2_glm.rf_sf_or import load_rf_sf_or
 from rc2_glm.time_binning import bin_cluster
 
@@ -389,7 +402,319 @@ def select_v_trial(
     return int(t), int(pick.iloc[0]["motion"]), int(pick.iloc[0]["baseline"])
 
 
+def rank_clusters_by_firing_rate(probe, by_id, rf_lookup, config):
+    """Rank the probe's selected cohort by overall mean firing rate, for browsing.
+
+    Ranking by tuning R² surfaced near-silent cells whose 'tuning' was a few
+    spikes (cluster 360: 3 Hz peak, p=0.08) — so instead pick the most ACTIVE
+    cells, which have meaningful tuning curves to read. Score = mean FR
+    (spike_count / bin_width) over all the cluster's motion bins. Returns a list
+    of (cluster_id, mean_fr_hz) sorted descending."""
+    bw = float(config.time_bin_width)
+    scored = []
+    for cid, cluster in by_id.items():
+        df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
+        if df.empty:
+            continue
+        mot = df[df["condition"] != "stationary"]
+        if mot.empty:
+            continue
+        mean_fr = float(mot["spike_count"].mean()) / bw
+        scored.append((cid, mean_fr))
+    scored.sort(key=lambda kv: kv[1], reverse=True)
+    return scored
+
+
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Observed FR-vs-value tuning (right block of the trial-structure figure).
+# Delegates the binning to rc2_glm.tuning_significance.per_trial_bin_matrix —
+# the ONE shared path (20 equal-count 5%-quantile bins, per-trial mean FR) the
+# significance test also uses, parametrised by CONDITION (V or VT). From that
+# (n_trials × n_bins) matrix we derive the per-bin spread (mean — the model's
+# fit target — plus median and Q1/Q3 IQR); the model + p come from
+# tuning_significance() on the same matrix. Returns None when there is nothing
+# to bin (no rows in the condition, missing column, degenerate value range).
+# --------------------------------------------------------------------------- #
+def _tuning_stats(matrix, centres, source):
+    """Per-bin mean/SD/median/IQR across trials from a (n_trials × n_bins) matrix."""
+    # Pooled/empty bins → all-NaN columns; silence the expected empty-slice
+    # warning, matching plots.py.
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        mean = np.nanmean(matrix, axis=0)
+        sd = np.nanstd(matrix, axis=0)
+        n_per_bin = np.sum(np.isfinite(matrix), axis=0)
+        sem = sd / np.sqrt(np.where(n_per_bin > 0, n_per_bin, np.nan))
+        median = np.nanmedian(matrix, axis=0)
+        q1 = np.nanquantile(matrix, 0.25, axis=0)
+        q3 = np.nanquantile(matrix, 0.75, axis=0)
+    return dict(centres=np.asarray(centres, float), matrix=matrix, mean=mean,
+                sd=sd, sem=sem, median=median, q1=q1, q3=q3,
+                n_trials=matrix.shape[0], source=source)
+
+
+def _observed_value_tuning(df, value_col, key, cond, bw, *, cluster_id=None,
+                           pc=None, n_bins=20):
+    """Per-trial-per-bin tuning stats for (value, condition).
+
+    For **TF** (and Speed), prefer the MATLAB precomputed cache (``pc``) — its
+    20 quantile bins + per-trial FR (own per-bin duration denominator) are what
+    MATLAB's tuning-curve PDFs plot, so they MATCH (the convention,
+    reference_motion_clouds_tuning_curve_20bins). Recomputing quantile bins from
+    20 ms spike counts does NOT match. For **SF/OR** there is no MATLAB cache
+    (rf_local Gabor values) → recompute via the shared per_trial_bin_matrix."""
+    if pc is not None and cluster_id is not None and key in ("tf", "speed"):
+        get_tun = pc.tf_tuning if key == "tf" else pc.speed_tuning
+        get_cen = pc.tf_centres if key == "tf" else pc.speed_centres
+        matrix, centres = get_tun(cond, cluster_id), get_cen(cond)
+        if matrix is not None and centres is not None:
+            return _tuning_stats(matrix, centres, source="matlab_cache")
+    # SF/OR (rf_local, no MATLAB cache): recompute, but with edges POOLED across
+    # the visual conditions (V+VT) so bin k is the same interval in both columns
+    # — the project convention (_pooled_quantile_edges / _plot_sf_or_scatter).
+    from rc2_glm.plots import _pooled_quantile_edges
+    pooled = np.array([])
+    if value_col in df.columns:
+        pooled = df.loc[df["condition"].isin(("V", "VT")), value_col].to_numpy(float)
+        pooled = pooled[np.isfinite(pooled)]
+    edges = None
+    if pooled.size >= n_bins:
+        edges, _ = _pooled_quantile_edges(pooled, n_bins=n_bins)
+    matrix, centres = per_trial_bin_matrix(
+        df, value_col, bw, condition=cond, n_bins=n_bins, edges=edges)
+    if matrix is None:
+        return None
+    return _tuning_stats(matrix, centres, source="recomputed")
+
+
+# Tuning rendering shared by the trial-structure column and the tuning-only grid.
+TUN_XLABEL = {"tf": "TF (Hz)", "sf": "SF (cpd)", "or": "orientation (deg)"}
+ASYM_ONLY = ("asym_gaussian",)   # TF/SF: asymmetric Gaussian only
+LINEAR_ONLY = ("linear",)        # TF/SF: straight-line fit only
+# Default TF/SF family set = the full MATLAB ModelSelectionTuning classes
+# (linear/quadratic/cubic/Gaussian/asymmetric-Gaussian/sigmoid), BIC-selected.
+TUN_LINEAR_FAMILIES = LINEAR_FAMILIES_TS  # imported from rc2_glm.tuning_significance
+
+
+def _render_tuning_panel(ax, df, value_col, key, cond, bw, col, *,
+                         probe_id=None, cluster_id=None, pc=None, aggregate="flat",
+                         select_criterion="bic", display="median_iqr",
+                         fits_lookup=None, tuning_n_reps=1000,
+                         linear_families=TUN_LINEAR_FAMILIES):
+    """Draw one observed-tuning + best-fit-model panel for (value, condition).
+
+    Observed points (TF from the MATLAB cache when ``pc`` is given; SF/OR
+    recomputed) are connected by a line with error bars chosen by ``display``:
+    ``"median_iqr"`` (median + asymmetric Q1/Q3 IQR), ``"mean_sd"`` (mean ± SD),
+    or ``"mean_sem"`` (mean ± SEM = SD/√n per bin). The model (black) is the
+    BIC-best of ``linear_families`` for TF/SF, or the von Mises for OR, with its
+    bootstrap-null p. When ``fits_lookup`` (a ``{(cluster_id, value, condition):
+    row}`` dict from a prior ``tuning_fits.csv``) supplies a row, the fit + p are
+    REUSED from it — no re-fit / re-bootstrap (the fits are deterministic). Only
+    the observed binning is redone (cheap). Returns the TuningSignificance, or
+    None when there is no data."""
+    kind = "circular" if key == "or" else "linear"
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel(TUN_XLABEL[key], fontsize=7)
+    t = _observed_value_tuning(df, value_col, key, cond, bw,
+                               cluster_id=cluster_id, pc=pc)
+    if t is None:
+        ax.text(0.5, 0.5, f"no {cond}\ntuning data", ha="center", va="center",
+                transform=ax.transAxes, color="#888", fontsize=8)
+        ax.set_xticks([]); ax.set_yticks([])
+        return None
+    cen = t["centres"]
+    if display in ("mean_sd", "mean_sem"):
+        centre, gm = t["mean"], np.isfinite(t["mean"])
+        yerr = (t["sem"] if display == "mean_sem" else t["sd"])[gm]  # symmetric
+    else:
+        centre, gm = t["median"], np.isfinite(t["median"])
+        yerr = np.vstack([t["median"][gm] - t["q1"][gm],
+                          t["q3"][gm] - t["median"][gm]])  # asymmetric IQR
+    ax.errorbar(cen[gm], centre[gm], yerr=yerr,
+                fmt="o-", color=col, ms=3.5, lw=1.1, capsize=2.5,
+                elinewidth=0.8, zorder=2)
+    cached = (None if fits_lookup is None
+              else fits_lookup.get((probe_id, cluster_id, key, cond)))
+    if cached is not None:
+        sig = _sig_from_cache(cached)  # reuse stored fit + p, skip the bootstrap
+        if np.isnan(sig.rsq_mean) and sig.params is not None:
+            # old CSV without the column → recompute the (cheap) mean-curve R².
+            sig.rsq_mean = rsq_against_mean(t["matrix"], cen, sig.best_model, sig.params)
+    else:
+        sig = tuning_significance(t["matrix"], cen, value=key, condition=cond,
+                                  kind=kind, aggregate=aggregate,
+                                  select_criterion=select_criterion,
+                                  n_reps=tuning_n_reps, linear_families=linear_families)
+        sig.data_source = t["source"]  # matlab_cache (TF) | recomputed (SF/OR)
+    if sig.best_model is not None:
+        xs = np.linspace(float(np.nanmin(cen)), float(np.nanmax(cen)), 200)
+        ax.plot(xs, eval_tuning_fit(
+                    dict(name=sig.best_model, params=sig.params), xs),
+                color="black", lw=1.6, zorder=3)
+        if np.isfinite(sig.p):
+            pstr = "p<0.001" if sig.p < 1e-3 else f"p={sig.p:.3f}"
+        else:
+            pstr = "p=n/a"
+        # R²(mean) = fit-vs-mean-curve; R²(trials) = across all per-trial points.
+        ax.text(0.04, 0.96,
+                f"{sig.best_model}\nR²mean={sig.rsq_mean:.2f} · "
+                f"R²trials={sig.rsq:.3f}\n{pstr}",
+                transform=ax.transAxes, ha="left", va="top", fontsize=6.0,
+                color="black", zorder=5,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.7", alpha=0.85))
+    return sig
+
+
+# --------------------------------------------------------------------------- #
+# Tuning-only browsing figure: rows TF/SF/OR × cols V|VT, observed tuning + the
+# best-fit model. No time-series block — for picking which cells carry tuning.
+# --------------------------------------------------------------------------- #
+def _sig_from_cache(row):
+    """Rebuild a TuningSignificance from a cached tuning_fits.csv row (for reuse
+    of the deterministic fit + bootstrap p, skipping recomputation)."""
+    bm = row.get("best_model")
+    if bm is None or (isinstance(bm, float) and np.isnan(bm)) or str(bm) == "nan":
+        bm, params = None, None
+    else:
+        bm = str(bm)
+        ps = str(row.get("params", "") or "")
+        params = (np.array([float(x) for x in ps.split(";")], float) if ps else None)
+    return TuningSignificance(
+        value=str(row["value"]), condition=str(row["condition"]),
+        kind=str(row["kind"]), best_model=bm, params=params,
+        rsq=float(row["rsq"]), rsq_mean=float(row.get("rsq_mean", np.nan)),
+        bic=float(row["bic"]), p=float(row["p"]),
+        aggregate=str(row.get("aggregate", "")),
+        select_criterion=str(row.get("select_criterion", "bic")),
+        data_source=str(row.get("data_source", "")),
+        n_trials=int(row.get("n_trials", 0)), n_bins=int(row.get("n_bins", 0)),
+        n_reps=int(row.get("n_reps", 0)), seed=int(row.get("seed", 1)),
+        null_scheme=str(row.get("null_scheme", "")),
+    )
+
+
+def _load_fits_lookup(csv_path):
+    """``{(probe_id, cluster_id, value, condition): row}`` from a tuning_fits.csv.
+
+    Keyed on probe_id too: cluster IDs are NOT unique across the two goggles
+    probes (6 collide), so omitting probe_id would cross-wire those cells."""
+    fits = pd.read_csv(csv_path)
+    return {(str(r["probe_id"]), int(r["cluster_id"]),
+             str(r["value"]), str(r["condition"])): r
+            for r in fits.to_dict("records")}
+
+
+def _sig_row(probe_id, cluster_id, sig):
+    """One flat record (the BIC-selected fit) for the tuning-fits CSV."""
+    params = ("" if sig.params is None
+              else ";".join(f"{v:.6g}" for v in np.asarray(sig.params, float)))
+    return dict(
+        probe_id=probe_id, cluster_id=cluster_id, value=sig.value,
+        condition=sig.condition, kind=sig.kind, aggregate=sig.aggregate,
+        select_criterion=sig.select_criterion,
+        data_source=sig.data_source, best_model=sig.best_model,
+        n_params=(0 if sig.params is None else int(np.asarray(sig.params).size)),
+        params=params, rsq=sig.rsq, rsq_mean=sig.rsq_mean, bic=sig.bic, p=sig.p,
+        n_trials=sig.n_trials, n_bins=sig.n_bins,
+        null_scheme=sig.null_scheme, n_reps=sig.n_reps, seed=sig.seed,
+    )
+
+
+ERR_LABEL = {"median_iqr": "median + IQR", "mean_sd": "mean ± SD",
+             "mean_sem": "mean ± SEM"}
+
+
+def plot_tuning_grid(probe_id, cluster_id, df, config, out_path, *,
+                     pc=None, display="median_iqr", select_criterion="bic",
+                     fits_lookup=None, tuning_n_reps=1000,
+                     linear_families=TUN_LINEAR_FAMILIES):
+    """Render the TF/SF/OR × V|VT grid; return the per-panel fit rows (for CSV)."""
+    bw = float(config.time_bin_width)
+    rows = [("tf", "tf", "#d1701a"), ("sf", "sf", "#6b8e23"),
+            ("or", "orientation", "#c0392b")]
+    conds = ("V", "VT")
+    fig, axes = plt.subplots(len(rows), len(conds), figsize=(7.5, 8.6),
+                             constrained_layout=True)
+    axes = np.atleast_2d(axes)
+    fit_rows = []
+    for r, (key, vcol, col) in enumerate(rows):
+        for c, cond in enumerate(conds):
+            ax = axes[r, c]
+            sig = _render_tuning_panel(
+                ax, df, vcol, key, cond, bw, col,
+                probe_id=probe_id, cluster_id=cluster_id, pc=pc, display=display,
+                select_criterion=select_criterion, fits_lookup=fits_lookup,
+                tuning_n_reps=tuning_n_reps, linear_families=linear_families)
+            if sig is not None:
+                fit_rows.append(_sig_row(probe_id, cluster_id, sig))
+            if r == 0:
+                ax.set_title(cond, fontsize=11, fontweight="bold")
+            if c == 0:
+                ax.set_ylabel("FR (Hz)", fontsize=8)
+    probe_short = probe_id.split("_rec")[0]
+    fam = (linear_families[0] if len(linear_families) == 1 else "BIC-best")
+    err_lbl = ERR_LABEL.get(display, display)
+    fig.suptitle(
+        f"{probe_short} cl {cluster_id} · observed FR tuning ({err_lbl} "
+        f"error bars, 20 equal-count bins) + {fam} fit / von Mises (OR) · "
+        f"R² across all trials (MATLAB way) · bootstrap-p",
+        fontsize=8.5, fontweight="bold")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+    return fit_rows
+
+
+def run_tuning_browse(probe_id, config, out_dir, *, all_clusters=False,
+                      top_fr=None, display="median_iqr", select_criterion="bic",
+                      fits_lookup=None, tuning_n_reps=1000):
+    """Load ONE goggles probe and emit per-cluster tuning grids into ``out_dir``.
+
+    Cohort = the formatted .mat ``selected_clusters`` (``cluster_set="selected"``,
+    the 49/57 goggles cohort — NOT Kilosort/VISp). With ``all_clusters`` every
+    selected cluster is rendered; otherwise the top-``top_fr`` by mean firing
+    rate. ``display`` picks the error bars; ``fits_lookup`` (from a prior
+    tuning_fits.csv) reuses the cached fits instead of recomputing."""
+    log.info("loading %s ...", probe_id)
+    probe = load_probe_data(
+        FORMATTED_DIR / f"{probe_id}.mat", config=config,
+        stimulus_lookup=_lookup(), cluster_set="selected",
+    )
+    rf_lookup = load_rf_sf_or(
+        config.rf_sf_or_parquet_dir, probe.probe_id,
+        min_concentration=getattr(config, "rf_min_concentration", 0.0),
+    )
+    by_id = {c.cluster_id: c for c in probe.clusters}
+    pc = load_precomputed_bin_edges(FORMATTED_DIR / f"{probe_id}.mat")
+
+    ranked = rank_clusters_by_firing_rate(probe, by_id, rf_lookup, config)
+    if all_clusters:
+        cids = [cid for cid, _fr in ranked]  # every selected cluster (FR order)
+        log.info("%s: all %d selected clusters (FR-ordered)", probe_id, len(cids))
+    else:
+        cids = [cid for cid, _fr in ranked[:top_fr]]
+        log.info("%s: top %d/%d clusters by mean FR: %s", probe_id, len(cids),
+                 len(ranked), ", ".join(f"{c}({fr:.1f}Hz)"
+                                        for c, fr in ranked[:top_fr]))
+    fit_rows = []
+    for cid in cids:
+        df = bin_cluster(probe, by_id[cid], rf_lookup=rf_lookup)
+        if df.empty:
+            log.warning("cluster %d: empty binned df — skipping", cid)
+            continue
+        fit_rows += plot_tuning_grid(
+            probe.probe_id, cid, df, config,
+            out_dir / f"tuning_{probe.probe_id}_cluster_{cid}",
+            pc=pc, display=display, select_criterion=select_criterion,
+            fits_lookup=fits_lookup, tuning_n_reps=tuning_n_reps,
+        )
+    return fit_rows
+
+
 # Poster column 1 — TRIAL-STRUCTURE schematic (mirrors the MATLAB trial
 # layout). For one V (ReplayOnly) trial of a defined-RF cluster, a stacked
 # column on a SHARED onset-relative time axis (x = bin_centre − motion_onset,
@@ -410,7 +735,7 @@ def select_v_trial(
 # --------------------------------------------------------------------------- #
 def plot_trial_structure(
     probe_id, cluster_id, df, config, tid, trial, spike_times, out_path,
-    trials_by_id,
+    trials_by_id, tuning_n_reps=1000, pc=None,
 ):
     # SOLENOID-aligned continuous axis: x = 0 at the velocity-command (solenoid)
     # onset. Stationary < 0; the REAL gap [0, gap] command→photodiode-onset drawn
@@ -530,10 +855,35 @@ def plot_trial_structure(
         ("OR−tok\n(deg)", "or", "#c0392b"),
         ("FR\n(Hz)", "fr", "#ff4da6"),
     ]
-    fig, axes = plt.subplots(
-        len(rows), 2, figsize=(11.5, 8.6), sharex=True, sharey="row",
-        constrained_layout=True,
-    )
+    # Layout: GridSpec — LEFT time-series block (cols 0,1: shared time x-axis,
+    # shared y per row, as before) and a RIGHT tuning block of TWO columns, one
+    # per condition (col 2 = V, col 3 = VT). Each tuning cell has its OWN x
+    # (binned value) and y (FR) so it can't share with the time-series; it is
+    # populated only for the TF/SF/OR rows, and the VF/T/FR cells are off.
+    # T_Vstatic is omitted: TF≡0 and no visual cloud → no value variation to bin.
+    TUNING = {"tf": "tf", "sf": "sf", "or": "orientation"}  # row key → df column
+    TUN_CONDS = ("V", "VT")                                  # one column each
+    n_rows = len(rows)
+    fig = plt.figure(figsize=(16.0, 8.6), constrained_layout=True)
+    gs = fig.add_gridspec(n_rows, 4, width_ratios=[1.2, 1.2, 1.0, 1.0])
+    axes = np.empty((n_rows, 2), dtype=object)
+    for r in range(n_rows):
+        for c in range(2):
+            kw = {}
+            if not (r == 0 and c == 0):
+                kw["sharex"] = axes[0, 0]   # all time-series share the time axis
+            if c == 1:
+                kw["sharey"] = axes[r, 0]   # col1 shares y with col0 (per row)
+            axes[r, c] = fig.add_subplot(gs[r, c], **kw)
+    # Right block: observed FR-vs-value tuning + best-fit model, V | VT.
+    tun_axes = {}
+    for r, (_ylab, key, _col) in enumerate(rows):
+        for j, cond in enumerate(TUN_CONDS):
+            ax = fig.add_subplot(gs[r, 2 + j])
+            if key in TUNING:
+                tun_axes[(key, cond)] = ax
+            else:
+                ax.axis("off")
 
     def _decorate(ax, key):
         """Shared chrome: period bands (real gap to scale), boundaries, refs."""
@@ -604,6 +954,24 @@ def plot_trial_structure(
                          lw=1.1 if s else 0.7, zorder=4 if s else 1,
                          **(dict(marker="o", ms=2) if s and key != "vf" else {}))
 
+    # ---- right block: observed FR-vs-value tuning (median line + IQR band) +
+    # the best-fit model, one column per condition (V | VT). Shared renderer with
+    # the tuning-only grid (_render_tuning_panel): asym-Gaussian for TF/SF, von
+    # Mises for OR, fit to the MEAN curve, with the bootstrap-null p.
+    bw = float(config.time_bin_width)
+    for r, (_ylab, key, col) in enumerate(rows):
+        if key not in TUNING:
+            continue
+        for cond in TUN_CONDS:
+            ax = tun_axes[(key, cond)]
+            _render_tuning_panel(ax, df, TUNING[key], key, cond, bw, col,
+                                 cluster_id=cluster_id, pc=pc,
+                                 tuning_n_reps=tuning_n_reps)
+            if cond == "V":
+                ax.set_ylabel("FR (Hz)", fontsize=7.5)
+            if key == "tf":
+                ax.set_title(f"{cond} · obs tuning + BIC-best model", fontsize=7.5)
+
     # Period labels above both top axes.
     for ax in (axes[0, 0], axes[0, 1]):
         tr_ax = ax.get_xaxis_transform()
@@ -625,8 +993,10 @@ def plot_trial_structure(
     probe_short = probe_id.split("_rec")[0]
     fig.suptitle(
         f"{probe_short} cl {cluster_id} · V trials · solenoid-aligned (real gap; "
-        f"SF/OR only when photodiode on)\nLEFT: trial {tid} ({n_spk} spk) · RIGHT: "
-        f"{n_v} V trials (α0.2, selected solid; FR = median) · {dur_note}",
+        f"SF/OR only when photodiode on)\nLEFT: trial {tid} ({n_spk} spk) · MID: "
+        f"{n_v} V trials (α0.2, selected solid; FR = median) · RIGHT: observed FR "
+        f"tuning (median+IQR, 20 equal-count bins) + BIC-best model & bootstrap-p, "
+        f"V | VT · {dur_note}",
         fontsize=8.5, fontweight="bold",
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1207,6 +1577,33 @@ def main() -> int:
                     help="Poster column 1: trial-structure schematic (VF, flat T, "
                          "TF, SF, OR, pink FR) for one V trial per --clusters cluster. "
                          "Auto-picks a V trial unless --trial is given.")
+    ap.add_argument("--top-fr", type=int, default=None,
+                    help="Tuning-only browsing grids (TF/SF/OR × V|VT, no "
+                         "time-series) for the top-N most active clusters (mean "
+                         "firing rate) → FENS_figures_poster/tuning_browse/. For "
+                         "picking cells.")
+    ap.add_argument("--all-clusters", action="store_true",
+                    help="With the tuning-browse path: render EVERY selected "
+                         "cluster (not just top-N).")
+    ap.add_argument("--probes", nargs="+", default=None,
+                    help="Probe list for the tuning-browse path (default: --probe). "
+                         "Goggles cohort = CAA-1124370_rec1_rec2_rec3 "
+                         "CAA-1124371_rec1_rec2_rec3.")
+    ap.add_argument("--display", choices=("median_iqr", "mean_sd", "mean_sem"),
+                    default="median_iqr",
+                    help="Tuning error bars: per-bin median+IQR (default), mean±SD, "
+                         "or mean±SEM. Each writes to its own tuning_browse[_*]/ folder.")
+    ap.add_argument("--select", choices=("bic", "rsq_mean"), default="bic",
+                    help="Model-selection criterion for TF/SF: lowest BIC (default) "
+                         "or highest R²-on-the-mean-curve (the MATLAB "
+                         "ModelSelectionTuning rule). rsq_mean → a *_selR2mean/ folder.")
+    ap.add_argument("--reuse-fits", default=None,
+                    help="Path to an existing tuning_fits.csv; reuse its cached "
+                         "model fits + bootstrap-p instead of recomputing (e.g. to "
+                         "re-render the SAME fits with a different --display).")
+    ap.add_argument("--tuning-n-reps", type=int, default=1000,
+                    help="Bootstrap reps for the tuning-significance p (default 1000; "
+                         "drop to ~200 for fast browsing).")
     args = ap.parse_args()
 
     config = make_config_histbase_all()
@@ -1226,6 +1623,36 @@ def main() -> int:
                           zoom_split=True)
         return 0
 
+    # Tuning-only browsing grids over one or more probes (loads each itself).
+    # mean_sd → its own folder so the median+IQR set isn't overwritten.
+    if args.top_fr is not None or args.all_clusters:
+        probes = args.probes if args.probes else [args.probe]
+        sub = {"mean_sd": "tuning_browse_mean_sd",
+               "mean_sem": "tuning_browse_mean_sem"}.get(args.display, "tuning_browse")
+        if args.select == "rsq_mean":
+            sub += "_selR2mean"  # alternative selection → its own folder
+        out_dir = OUT_DIR / sub
+        fits_lookup = None
+        if args.reuse_fits:
+            fits_lookup = _load_fits_lookup(args.reuse_fits)
+            log.info("reusing %d cached fits from %s (no re-fit/bootstrap)",
+                     len(fits_lookup), args.reuse_fits)
+        all_rows = []
+        for probe_id in probes:
+            all_rows += run_tuning_browse(
+                probe_id, config, out_dir,
+                all_clusters=args.all_clusters, top_fr=args.top_fr,
+                display=args.display, select_criterion=args.select,
+                fits_lookup=fits_lookup, tuning_n_reps=args.tuning_n_reps,
+            )
+        # One combined CSV of the BIC-selected fits (cluster × value × condition)
+        # across all probes rendered this run.
+        if all_rows:
+            csv_path = out_dir / "tuning_fits.csv"
+            pd.DataFrame(all_rows).to_csv(csv_path, index=False)
+            log.info("wrote %d tuning-fit rows → %s", len(all_rows), csv_path)
+        return 0
+
     log.info("loading %s ...", args.probe)
     probe = load_probe_data(
         FORMATTED_DIR / f"{args.probe}.mat", config=config,
@@ -1237,6 +1664,9 @@ def main() -> int:
     )
     by_id = {c.cluster_id: c for c in probe.clusters}
     trials_by_id = {t.trial_id: t for t in probe.trials}
+    # MATLAB precomputed TF/Speed tuning cache (per-condition 20 quantile bins +
+    # per-trial FR); TF tuning is read from here so it matches MATLAB's PDFs.
+    pc = load_precomputed_bin_edges(FORMATTED_DIR / f"{args.probe}.mat")
 
     if args.trial_structure:
         for cid in args.clusters:
@@ -1265,7 +1695,7 @@ def main() -> int:
             plot_trial_structure(
                 probe.probe_id, cid, df, config, tid, trial, cluster.spike_times,
                 OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}_trial_{tid}",
-                trials_by_id,
+                trials_by_id, tuning_n_reps=args.tuning_n_reps, pc=pc,
             )
         return 0
 
