@@ -80,6 +80,9 @@ class PrecomputedBinEdges:
     """
     speed_by_group: dict[str, PerConditionTuning] = field(default_factory=dict)
     tf_by_group: dict[str, PerConditionTuning] = field(default_factory=dict)
+    # Acceleration cache — StageOnly conditions only (VT, T_Vstatic); empty when
+    # the recording has no acceleration_tuning_curves cache (screens / older runs).
+    accel_by_group: dict[str, PerConditionTuning] = field(default_factory=dict)
 
     # --- Edge accessors (unchanged signature) ---
 
@@ -101,6 +104,10 @@ class PrecomputedBinEdges:
         c = self.tf_by_group.get(condition)
         return c.bin_centres if c is not None else None
 
+    def accel_centres(self, condition: str) -> np.ndarray | None:
+        c = self.accel_by_group.get(condition)
+        return c.bin_centres if c is not None else None
+
     # --- Per-cluster tuning data (new) ---
 
     def speed_tuning(self, condition: str, cluster_id: int) -> np.ndarray | None:
@@ -110,6 +117,10 @@ class PrecomputedBinEdges:
 
     def tf_tuning(self, condition: str, cluster_id: int) -> np.ndarray | None:
         c = self.tf_by_group.get(condition)
+        return None if c is None else c.tuning.get(int(cluster_id))
+
+    def accel_tuning(self, condition: str, cluster_id: int) -> np.ndarray | None:
+        c = self.accel_by_group.get(condition)
         return None if c is None else c.tuning.get(int(cluster_id))
 
     def speed_trial_ids(self, condition: str, cluster_id: int) -> np.ndarray | None:
@@ -164,14 +175,38 @@ def load_precomputed_bin_edges(
         )
         return None
 
+    # Acceleration cache — optional, StageOnly conditions only (VT + T_Vstatic;
+    # no 'V' group). Absent on screens / older runs → acceleration tuning then
+    # falls back to the recompute path. Best-effort: a present-but-unreadable
+    # accel cache must not break Speed/TF.
+    accel_by_group: dict[str, PerConditionTuning] = {}
+    accel_path = csvs_dir / "acceleration_tuning_curves" / f"{probe_stem}.mat"
+    if accel_path.exists():
+        try:
+            accel_by_group = _read_cache_file(
+                accel_path, required_groups=("VT", "T_Vstatic"))
+        except (OSError, KeyError, ValueError) as exc:
+            logger.warning(
+                "acceleration cache present but unreadable for %r (%s) — "
+                "acceleration tuning will recompute",
+                probe_stem, exc,
+            )
+
     return PrecomputedBinEdges(
         speed_by_group=speed_by_group,
         tf_by_group=tf_by_group,
+        accel_by_group=accel_by_group,
     )
 
 
-def _read_cache_file(path: Path) -> dict[str, PerConditionTuning]:
-    """Return ``{'VT': PerConditionTuning, ...}`` from one cache file."""
+def _read_cache_file(
+    path: Path, required_groups: tuple[str, ...] = _TRIAL_GROUPS,
+) -> dict[str, PerConditionTuning]:
+    """Return ``{'VT': PerConditionTuning, ...}`` from one cache file.
+
+    ``required_groups`` are the trial groups that MUST be present (a missing one
+    raises). The acceleration cache passes ``("VT", "T_Vstatic")`` — it has no
+    'V' group because acceleration is undefined for the replay (V) condition."""
     out: dict[str, PerConditionTuning] = {}
     with h5py.File(path, "r") as f:
         trial_groups = f["trial_groups"]
@@ -254,10 +289,10 @@ def _read_cache_file(path: Path) -> dict[str, PerConditionTuning]:
                 stationary_fr=stat_fr,
                 stationary_time=stat_time,
             )
-    missing = [g for g in _TRIAL_GROUPS if g not in out]
+    missing = [g for g in required_groups if g not in out]
     if missing:
         raise KeyError(
-            f"{path}: expected trial groups {_TRIAL_GROUPS}, missing {missing}"
+            f"{path}: expected trial groups {required_groups}, missing {missing}"
         )
     return out
 

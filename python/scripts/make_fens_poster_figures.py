@@ -403,6 +403,33 @@ def select_v_trial(
     return int(t), int(pick.iloc[0]["motion"]), int(pick.iloc[0]["baseline"])
 
 
+def select_matched_cloud_trials(df, trials_by_id):
+    """Pick a V trial and a VT trial that show the SAME motion cloud, so the two
+    figures are directly comparable. Each goggles cloud is presented in both V and
+    VT (2 repeats each); we pick the cloud where this cluster is most active across
+    V+VT, then the most-active V and VT trial of that cloud. Returns
+    (cloud_name, v_tid, vt_tid, v_motion_spk, vt_motion_spk) or None when no cloud
+    has both a V and a VT trial."""
+    cloud = {int(tid): getattr(tr, "cloud_name", None)
+             for tid, tr in trials_by_id.items()}
+    spk = (df[df["condition"].isin(("V", "VT"))]
+           .groupby(["trial_id", "condition"])["spike_count"].sum())
+    best: dict[str, dict[str, tuple[int, int]]] = {}
+    for (tid, cond), s in spk.items():
+        c = cloud.get(int(tid))
+        if c is None:
+            continue
+        d = best.setdefault(c, {})
+        if cond not in d or int(s) > d[cond][1]:
+            d[cond] = (int(tid), int(s))
+    cands = [(c, d["V"], d["VT"]) for c, d in best.items() if "V" in d and "VT" in d]
+    if not cands:
+        return None
+    cands.sort(key=lambda x: x[1][1] + x[2][1], reverse=True)
+    c, (v_tid, v_spk), (vt_tid, vt_spk) = cands[0]
+    return c, v_tid, vt_tid, v_spk, vt_spk
+
+
 def rank_clusters_by_firing_rate(probe, by_id, rf_lookup, config):
     """Rank the probe's selected cohort by overall mean firing rate, for browsing.
 
@@ -465,9 +492,12 @@ def _observed_value_tuning(df, value_col, key, cond, bw, *, cluster_id=None,
     reference_motion_clouds_tuning_curve_20bins). Recomputing quantile bins from
     20 ms spike counts does NOT match. For **SF/OR** there is no MATLAB cache
     (rf_local Gabor values) → recompute via the shared per_trial_bin_matrix."""
-    if pc is not None and cluster_id is not None and key in ("tf", "speed"):
-        get_tun = pc.tf_tuning if key == "tf" else pc.speed_tuning
-        get_cen = pc.tf_centres if key == "tf" else pc.speed_centres
+    if pc is not None and cluster_id is not None and key in ("tf", "speed", "accel"):
+        get_tun, get_cen = {
+            "tf": (pc.tf_tuning, pc.tf_centres),
+            "speed": (pc.speed_tuning, pc.speed_centres),
+            "accel": (pc.accel_tuning, pc.accel_centres),
+        }[key]
         matrix, centres = get_tun(cond, cluster_id), get_cen(cond)
         if matrix is not None and centres is not None:
             return _tuning_stats(matrix, centres, source="matlab_cache")
@@ -490,7 +520,8 @@ def _observed_value_tuning(df, value_col, key, cond, bw, *, cluster_id=None,
 
 
 # Tuning rendering shared by the trial-structure column and the tuning-only grid.
-TUN_XLABEL = {"tf": "TF (Hz)", "sf": "SF (cpd)", "or": "orientation (deg)"}
+TUN_XLABEL = {"tf": "TF (Hz)", "sf": "SF (cpd)", "or": "orientation (deg)",
+              "speed": "speed (cm/s)", "accel": "acceleration (cm/s²)"}
 ASYM_ONLY = ("asym_gaussian",)   # TF/SF: asymmetric Gaussian only
 LINEAR_ONLY = ("linear",)        # TF/SF: straight-line fit only
 # Default TF/SF family set = the full MATLAB ModelSelectionTuning classes
@@ -517,7 +548,7 @@ def _render_tuning_panel(ax, df, value_col, key, cond, bw, col, *,
     None when there is no data."""
     kind = "circular" if key == "or" else "linear"
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlabel(TUN_XLABEL[key], fontsize=7)
+    ax.set_xlabel(TUN_XLABEL[key], fontsize=8.5)
     t = _observed_value_tuning(df, value_col, key, cond, bw,
                                cluster_id=cluster_id, pc=pc)
     if t is None:
@@ -737,7 +768,16 @@ def run_tuning_browse(probe_id, config, out_dir, *, all_clusters=False,
 def plot_trial_structure(
     probe_id, cluster_id, df, config, tid, trial, spike_times, out_path,
     trials_by_id, tuning_n_reps=1000, pc=None, condition="V",
+    tuning_clusters=None, save=True,
 ):
+    # ``tuning_clusters`` = [(cid, cluster_df), ...] for the RIGHT tuning grid
+    # (one column per cluster). The LEFT trial-structure block (incl. the pink FR)
+    # is always the PRIMARY cluster (``cluster_id``/``df``/``spike_times``). Default
+    # = a single column for the primary. ``save=False`` returns ``(fig, tun_axes)``
+    # without writing, so the caller can harmonise FR y-limits across the V and VT
+    # figures (the per-regressor tuning y-axis is shared across cluster columns and
+    # between conditions) before saving. ``tun_axes`` maps regressor-key → [axes].
+    tuning_clusters = list(tuning_clusters) if tuning_clusters else [(cluster_id, df)]
     # SOLENOID-aligned continuous axis: x = 0 at the velocity-command (solenoid)
     # onset. Stationary < 0; the REAL gap [0, gap] command→photodiode-onset drawn
     # TO SCALE; motion [gap, x_mend]. The command→motion-end interval is fixed
@@ -759,7 +799,7 @@ def plot_trial_structure(
     # line SEAM-BROKEN at the 0/180 wrap so circular jumps don't draw as streaks.
     or_raw = sub["orientation"].to_numpy(float)
     or_token = float(np.degrees(trial.orientation)) % 180.0
-    or_off = ((or_raw - or_token + 90.0) % 180.0) - 90.0  # token at 0, ∈ (−90, 90]
+    or_real = or_raw % 180.0  # REAL orientation degrees (0–180); token = ref line
     sf_token_cpd = float(trial.sf) * 9.77  # cpp token × screen calib (units note)
 
     def _seam_break(x, y, thr=90.0):
@@ -844,11 +884,23 @@ def plot_trial_structure(
         if key == "tf":
             return x[vis], vs["tf"].to_numpy(float)[vis]
         if key in ("sf", "or"):
+            # SF/OR are defined only inside the visual window, BUT during the
+            # stationary baseline the cloud sits at its first frame (static), so
+            # its SF/OR are well-defined and constant: prepend that first-frame
+            # value across the stationary window (xs_start → motion onset).
             if key == "sf":
-                return x[vis], vs["sf"].to_numpy(float)[vis]
-            vor = vs["orientation"].to_numpy(float)[vis]
-            tok = float(np.degrees(tr.orientation)) % 180.0
-            return _seam_break(x[vis], ((vor - tok + 90.0) % 180.0) - 90.0)
+                yv = vs["sf"].to_numpy(float)[vis]
+                xv = x[vis]
+                if len(yv):
+                    xv = np.concatenate([[p["xs_start"]], xv])
+                    yv = np.concatenate([[yv[0]], yv])
+                return xv, yv
+            yor = vs["orientation"].to_numpy(float)[vis] % 180.0  # real degrees
+            xor = x[vis]
+            if len(yor):
+                xor = np.concatenate([[p["xs_start"]], xor])
+                yor = np.concatenate([[yor[0]], yor])
+            return _seam_break(xor, yor)
         if key in ("vf", "t"):
             src = _vel_source(key, tr)
             if src is None:
@@ -874,20 +926,29 @@ def plot_trial_structure(
         (t_ylab, "t", "#7a4a12"),
         ("TF\n(Hz)", "tf", "#d1701a"),
         ("SF\n(cpd)", "sf", "#6b8e23"),
-        ("OR−tok\n(deg)", "or", "#c0392b"),
+        ("OR\n(deg)", "or", "#c0392b"),
         ("FR\n(Hz)", "fr", "#ff4da6"),
     ]
-    # Layout: GridSpec — LEFT time-series block (cols 0,1: shared time x-axis,
-    # shared y per row, as before) and a RIGHT tuning block of TWO columns, one
-    # per condition (col 2 = V, col 3 = VT). Each tuning cell has its OWN x
-    # (binned value) and y (FR) so it can't share with the time-series; it is
-    # populated only for the TF/SF/OR rows, and the VF/T/FR cells are off.
-    # T_Vstatic is omitted: TF≡0 and no visual cloud → no value variation to bin.
-    TUNING = {"tf": "tf", "sf": "sf", "or": "orientation"}  # row key → df column
-    TUN_CONDS = ("V", "VT")                                  # one column each
+    # Layout: LEFT time-series block (cols 0,1: shared time x-axis, shared y per
+    # row) + a RIGHT tuning column for THIS figure's OWN condition only, with a
+    # condition-appropriate regressor set — V is visual {TF,SF,OR}; VT also carries
+    # the stage-translation regressors {Speed, Acceleration}. (Speed≡0 / no stage
+    # accel in V replay, so V omits them — "only fits relevant for their
+    # condition".) The tuning panels are a standalone vertical stack, decoupled
+    # from the 6 time-series rows since the regressor count differs by condition.
+    # Speed/Accel/TF observed tuning come from the MATLAB cache (pc); SF/OR are
+    # recomputed (rf_local, no cache).
+    TUN_REG = {
+        "V":  [("tf", "tf"), ("sf", "sf"), ("or", "orientation")],
+        "VT": [("speed", "speed"), ("accel", "acceleration"),
+               ("tf", "tf"), ("sf", "sf"), ("or", "orientation")],
+    }[condition]
+    TUN_COL = {"speed": "#7a4a12", "accel": "#8e44ad", "tf": "#d1701a",
+               "sf": "#6b8e23", "or": "#c0392b"}
     n_rows = len(rows)
-    fig = plt.figure(figsize=(16.0, 8.6), constrained_layout=True)
-    gs = fig.add_gridspec(n_rows, 4, width_ratios=[1.2, 1.2, 1.0, 1.0])
+    n_tcl = len(tuning_clusters)
+    fig = plt.figure(figsize=(13.5 + 3.2 * n_tcl, 13.5), constrained_layout=True)
+    gs = fig.add_gridspec(n_rows, 3, width_ratios=[1.2, 1.2, 1.25 * n_tcl])
     axes = np.empty((n_rows, 2), dtype=object)
     for r in range(n_rows):
         for c in range(2):
@@ -897,15 +958,17 @@ def plot_trial_structure(
             if c == 1:
                 kw["sharey"] = axes[r, 0]   # col1 shares y with col0 (per row)
             axes[r, c] = fig.add_subplot(gs[r, c], **kw)
-    # Right block: observed FR-vs-value tuning + best-fit model, V | VT.
+    # Right tuning GRID: K regressor-rows × n_tcl cluster-columns. FR (y) is shared
+    # across the cluster columns of a regressor row (sharey); cross-condition (V↔VT)
+    # harmonisation is done by the caller. tun_axes[key] = [ax per cluster column].
+    tun_gs = gs[:, 2].subgridspec(len(TUN_REG), n_tcl, hspace=0.6, wspace=0.3)
     tun_axes = {}
-    for r, (_ylab, key, _col) in enumerate(rows):
-        for j, cond in enumerate(TUN_CONDS):
-            ax = fig.add_subplot(gs[r, 2 + j])
-            if key in TUNING:
-                tun_axes[(key, cond)] = ax
-            else:
-                ax.axis("off")
+    for i, (key, _vc) in enumerate(TUN_REG):
+        row_axes = []
+        for j in range(n_tcl):
+            shared = {"sharey": row_axes[0]} if j else {}
+            row_axes.append(fig.add_subplot(tun_gs[i, j], **shared))
+        tun_axes[key] = row_axes
 
     def _decorate(ax, key):
         """Shared chrome: period bands (real gap to scale), boundaries, refs."""
@@ -922,9 +985,9 @@ def plot_trial_structure(
             ax.axhline(sf_token_cpd, ls="--", color="0.35", lw=0.8)
             ax.set_ylim(*SF_YLIM_CPD)  # fixed to the global possible range
         elif key == "or":
-            ax.axhline(0.0, ls="--", color="r", lw=0.8)
-            ax.set_ylim(-90, 90)
-            ax.set_yticks([-90, -45, 0, 45, 90])
+            ax.axhline(or_token, ls="--", color="r", lw=0.8)  # token reference (deg)
+            ax.set_ylim(0, 180)
+            ax.set_yticks([0, 45, 90, 135, 180])
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_xlim(x_lo, x_hi)
 
@@ -951,15 +1014,23 @@ def plot_trial_structure(
         elif key == "tf":
             ax0.plot(sel["gap"] + tso[vis], tf[vis], color=col, lw=1.0, marker="o", ms=2)
         elif key == "sf":
-            ax0.plot(sel["gap"] + tso[vis], sf[vis], color=col, lw=1.0, marker="o", ms=2)
+            # baseline: cloud at its first frame → constant SF across stationary.
+            yv, xv = sf[vis], sel["gap"] + tso[vis]
+            if len(yv):
+                xv = np.concatenate([[sel["xs_start"]], xv])
+                yv = np.concatenate([[yv[0]], yv])
+            ax0.plot(xv, yv, color=col, lw=1.0, marker="o", ms=2)
             ax0.text(0.985, 0.04, f"token {sf_token_cpd:.3f}", transform=ax0.transAxes,
                      ha="right", va="bottom", fontsize=6, color="0.4")
         elif key == "or":
-            ax0.plot(*_seam_break(sel["gap"] + tso[vis], or_off[vis]),
-                     color=col, lw=1.0, marker="o", ms=2)
+            yo, xv = or_real[vis], sel["gap"] + tso[vis]
+            if len(yo):
+                xv = np.concatenate([[sel["xs_start"]], xv])
+                yo = np.concatenate([[yo[0]], yo])
+            ax0.plot(*_seam_break(xv, yo), color=col, lw=1.0, marker="o", ms=2)
             ax0.text(0.985, 0.04, f"token {or_token:.0f}°", transform=ax0.transAxes,
                      ha="right", va="bottom", fontsize=6, color="0.4")
-        ax0.set_ylabel(ylab, fontsize=8, rotation=0, ha="right", va="center")
+        ax0.set_ylabel(ylab, fontsize=10, rotation=0, ha="right", va="center")
 
         # ---- column 2: all this-condition trials overlaid (selected solid);
         # FR = median ----
@@ -980,22 +1051,19 @@ def plot_trial_structure(
                          **(dict(marker="o", ms=2) if s and key not in ("vf", "t") else {}))
 
     # ---- right block: observed FR-vs-value tuning (median line + IQR band) +
-    # the best-fit model, one column per condition (V | VT). Shared renderer with
-    # the tuning-only grid (_render_tuning_panel): asym-Gaussian for TF/SF, von
-    # Mises for OR, fit to the MEAN curve, with the bootstrap-null p.
+    # the best-fit model, for THIS condition only, over its own regressor set.
+    # Shared renderer (_render_tuning_panel): asym-Gaussian/linear families for
+    # Speed/Accel/TF/SF (BIC-best), von Mises for OR. Speed/Accel/TF observed come
+    # from the MATLAB cache (pc.{speed,accel,tf}_tuning); SF/OR are recomputed.
     bw = float(config.time_bin_width)
-    for r, (_ylab, key, col) in enumerate(rows):
-        if key not in TUNING:
-            continue
-        for cond in TUN_CONDS:
-            ax = tun_axes[(key, cond)]
-            _render_tuning_panel(ax, df, TUNING[key], key, cond, bw, col,
-                                 cluster_id=cluster_id, pc=pc,
-                                 tuning_n_reps=tuning_n_reps)
-            if cond == "V":
-                ax.set_ylabel("FR (Hz)", fontsize=7.5)
-            if key == "tf":
-                ax.set_title(f"{cond} · obs tuning + BIC-best model", fontsize=7.5)
+    for i, (key, vcol) in enumerate(TUN_REG):
+        for j, (cid, cdf) in enumerate(tuning_clusters):
+            ax = tun_axes[key][j]
+            _render_tuning_panel(ax, cdf, vcol, key, condition, bw, TUN_COL[key],
+                                 cluster_id=cid, pc=pc, tuning_n_reps=tuning_n_reps)
+            ax.set_ylabel("FR (Hz)" if j == 0 else "", fontsize=9)
+            if i == 0:                       # cluster id labels the column (top row)
+                ax.set_title(f"cl {cid}", fontsize=11, fontweight="bold")
 
     # Period labels above both top axes.
     for ax in (axes[0, 0], axes[0, 1]):
@@ -1018,28 +1086,29 @@ def plot_trial_structure(
     dur_note = (f"stat {-sel['xs_start']:.1f}s · gap {sel['gap']:.2f}s · "
                 f"motion {sel['x_mend'] - sel['gap']:.1f}s")
     probe_short = probe_id.split("_rec")[0]
-    if condition == "V":
-        head = (
-            f"{probe_short} cl {cluster_id} · V trials · solenoid-aligned (real gap; "
-            f"SF/OR only when photodiode on)\nLEFT: trial {tid} ({n_spk} spk) · MID: "
-            f"{n_ov} V trials (α0.2, selected solid; FR = median) · RIGHT: observed FR "
-            f"tuning (median+IQR, 20 equal-count bins) + BIC-best model & bootstrap-p, "
-            f"V | VT · {dur_note}"
-        )
-    else:
-        head = (
-            f"{probe_short} cl {cluster_id} · VT trials · solenoid-aligned "
-            f"(VF = visual command, T = stage translation; SF/OR only when visual on)\n"
-            f"LEFT: trial {tid} ({n_spk} spk) · MID: {n_ov} VT trials (α0.2, selected "
-            f"solid; FR = median) · RIGHT: observed FR tuning (median+IQR, 20 "
-            f"equal-count bins) + BIC-best model & bootstrap-p, V | VT · {dur_note}"
-        )
-    fig.suptitle(head, fontsize=8.5, fontweight="bold")
+    tcl_ids = ", ".join(str(c) for c, _ in tuning_clusters)
+    reg_lab = "TF·SF·OR" if condition == "V" else "Speed·Accel·TF·SF·OR"
+    left_note = ("OR real deg; SF/OR held at first frame through baseline"
+                 if condition == "V" else
+                 "VF = visual command, T = stage translation; OR real deg; "
+                 "SF/OR held at first frame through baseline")
+    head = (
+        f"{probe_short} · {condition} trials · solenoid-aligned ({left_note})\n"
+        f"LEFT (FR = cl {cluster_id}): trial {tid} ({n_spk} spk) + {n_ov}-trial overlay "
+        f"(FR = median) · RIGHT: {condition} tuning [{reg_lab}] per cluster "
+        f"[{tcl_ids}] — FR y shared across clusters & V↔VT; 20 bins"
+        + ("; Speed/Accel/TF from MATLAB cache" if condition == "VT" else "")
+        + f" + BIC-best & bootstrap-p · {dur_note}"
+    )
+    fig.suptitle(head, fontsize=11, fontweight="bold")
+    if not save:
+        return fig, tun_axes
     out_path.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
         fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
     plt.close(fig)
     log.info("wrote %s.{pdf,png}", out_path)
+    return fig, tun_axes
 
 
 # --------------------------------------------------------------------------- #
@@ -1617,6 +1686,11 @@ def main() -> int:
                     help="--trial-structure: trial condition. V (ReplayOnly, "
                          "default) → VF = visual command, T ≡ 0. VT (StageOnly) → "
                          "VF = visual command, T = stage TRANSLATION speed.")
+    ap.add_argument("--match-clouds", action="store_true",
+                    help="--trial-structure: per cluster, render BOTH a V and a VT "
+                         "figure from the SAME motion cloud (the cloud where the "
+                         "cluster is most active across V+VT). Ignores --condition/"
+                         "--trial.")
     ap.add_argument("--top-fr", type=int, default=None,
                     help="Tuning-only browsing grids (TF/SF/OR × V|VT, no "
                          "time-series) for the top-N most active clusters (mean "
@@ -1709,6 +1783,68 @@ def main() -> int:
     pc = load_precomputed_bin_edges(FORMATTED_DIR / f"{args.probe}.mat")
 
     if args.trial_structure:
+        # --match-clouds: ONE combined figure per condition. All --clusters become
+        # the tuning columns; the FIRST is the primary (drives the trial-structure
+        # block + its FR + the matched-cloud trial pick). FR y-limits are harmonised
+        # across the cluster columns AND between the V and VT figures.
+        if args.match_clouds:
+            tcl = []  # (cid, cluster_df, cluster)
+            for cid in args.clusters:
+                if cid not in by_id:
+                    log.warning("cluster %d not on probe %s — skipping", cid, args.probe)
+                    continue
+                cdf = bin_cluster(probe, by_id[cid], rf_lookup=rf_lookup)
+                if cdf.empty:
+                    log.warning("cluster %d: empty binned df — skipping", cid)
+                    continue
+                tcl.append((cid, cdf, by_id[cid]))
+            if not tcl:
+                log.warning("no usable clusters for --match-clouds")
+                return 0
+            primary_cid, primary_df, primary_cluster = tcl[0]
+            pair = select_matched_cloud_trials(primary_df, trials_by_id)
+            if pair is None:
+                log.warning("primary cl %d: no cloud shared by V and VT — abort",
+                            primary_cid)
+                return 0
+            cloud, v_tid, vt_tid, v_spk, vt_spk = pair
+            log.info("matched cloud %s (primary cl %d) → V trial %d (%d spk) / VT "
+                     "trial %d (%d spk); tuning cols %s", cloud, primary_cid, v_tid,
+                     v_spk, vt_tid, vt_spk, [c for c, _, _ in tcl])
+            tuning_clusters = [(c, d) for c, d, _ in tcl]
+            ids = "-".join(str(c) for c, _, _ in tcl)
+            rendered = []  # (fig, tun_axes, out_path)
+            for cond, ctid in (("V", v_tid), ("VT", vt_tid)):
+                trial = trials_by_id.get(ctid)
+                if trial is None or np.flatnonzero(trial.motion_mask).size == 0:
+                    log.warning("%s trial %s missing/no motion — skipping", cond, ctid)
+                    continue
+                out = (OUT_DIR / f"trial_structure_{probe.probe_id}_cl{ids}"
+                                 f"_{cond}_trial_{ctid}")
+                fig, taxes = plot_trial_structure(
+                    probe.probe_id, primary_cid, primary_df, config, ctid, trial,
+                    primary_cluster.spike_times, out, trials_by_id,
+                    tuning_n_reps=args.tuning_n_reps, pc=pc, condition=cond,
+                    tuning_clusters=tuning_clusters, save=False)
+                rendered.append((fig, taxes, out))
+            # Shared per-regressor FR y-limit across the V and VT figures.
+            ymax: dict[str, float] = {}
+            for _fig, taxes, _out in rendered:
+                for key, axlist in taxes.items():
+                    for ax in axlist:
+                        ymax[key] = max(ymax.get(key, 0.0), float(ax.get_ylim()[1]))
+            for fig, taxes, out in rendered:
+                for key, axlist in taxes.items():
+                    for ax in axlist:
+                        ax.set_ylim(0.0, ymax[key])
+                out.parent.mkdir(parents=True, exist_ok=True)
+                for ext in ("pdf", "png"):
+                    fig.savefig(out.with_suffix(f".{ext}"), dpi=150)
+                plt.close(fig)
+                log.info("wrote %s.{pdf,png}", out)
+            return 0
+
+        # Single-cluster path (per --condition / --trial).
         for cid in args.clusters:
             if cid not in by_id:
                 log.warning("cluster %d not on probe %s — skipping", cid, args.probe)
@@ -1731,15 +1867,14 @@ def main() -> int:
                          cid, args.condition, tid, motion_spk, base_spk)
             trial = trials_by_id.get(tid)
             if trial is None or np.flatnonzero(trial.motion_mask).size == 0:
-                log.warning("cluster %d: trial %d missing/no motion — skipping", cid, tid)
+                log.warning("cluster %d: trial %s missing/no motion — skipping", cid, tid)
                 continue
             plot_trial_structure(
                 probe.probe_id, cid, df, config, tid, trial, cluster.spike_times,
                 OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}"
                           f"_{args.condition}_trial_{tid}",
                 trials_by_id, tuning_n_reps=args.tuning_n_reps, pc=pc,
-                condition=args.condition,
-            )
+                condition=args.condition)
         return 0
 
     if args.fig2c:
