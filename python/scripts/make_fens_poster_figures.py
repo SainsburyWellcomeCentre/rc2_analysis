@@ -1598,6 +1598,157 @@ def plot_fig2_summary(mc, vp, inter_per, out_path, config, *, zoom_split=False):
     log.info("wrote %s.{pdf,png}", out_path)
 
 
+# --------------------------------------------------------------------------- #
+# FORWARD-Δ variant of fig 2: the SAME acid layout, but every value is the
+# per-step ACCEPTED forward-selection gain (glm_selection_history_full.csv,
+# ``added_this_round``) instead of the LOO variance partition. No LOO anywhere —
+# the Onset/LOO reference row is dropped entirely.
+# --------------------------------------------------------------------------- #
+_FWD_MAIN_COL = {"Speed": "unique_Speed", "Acceleration": "unique_Accel",
+                 "TF": "unique_TF", "SF": "unique_SF", "OR": "unique_OR",
+                 "ME_face": "unique_ME"}
+
+
+def _load_forward_deltas(run_dir, probes):
+    """Per-cluster ACCEPTED forward-selection Δ cv-bps from each probe's
+    glm_selection_history_full.csv (the sequential gain a term added when it was
+    admitted: ``added_this_round`` True). Returns ``(fvp, inter_fwd)``:
+      ``fvp`` — one row per cluster, ``unique_<main>`` columns (NaN if the term was
+                not selected) so the existing acid/violin helpers consume it as-is;
+      ``inter_fwd`` — ``{interaction_candidate: array of accepted Δ}`` over the
+                clusters that admitted it."""
+    main_rows, inter = [], {}
+    for probe in probes:
+        csv = run_dir / "_runs" / probe / "glm_selection_history_full.csv"
+        if not csv.exists():
+            continue
+        df = pd.read_csv(csv)
+        adm = df[df["added_this_round"].astype(str).str.lower().isin(("true", "1"))]
+        for cid in sorted(df["cluster_id"].unique()):
+            csub = adm[adm["cluster_id"] == cid]
+            row = {"probe_id": probe, "cluster_id": int(cid)}
+            for cand, col in _FWD_MAIN_COL.items():
+                m = csub[csub["candidate"] == cand]
+                row[col] = float(m["delta_bps"].iloc[0]) if len(m) else np.nan
+            main_rows.append(row)
+        for r in adm.itertuples():
+            if "_x_" in str(r.candidate):
+                inter.setdefault(str(r.candidate), []).append(float(r.delta_bps))
+    fvp = pd.DataFrame(main_rows)
+    inter_fwd = {k: np.asarray(v, float) for k, v in inter.items()}
+    return fvp, inter_fwd
+
+
+def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False):
+    """Fig 2, FORWARD-Δ version (NO LOO): model-complexity histogram + accepted
+    forward-Δ violins for main effects / interactions (row 1), and the per-cluster
+    stacked forward-Δ acid bars + low-cumulative zoom (row 2). Row 3 is the same
+    per-regressor data as a heatmap: ``log_heat=False`` → linear colour + a rescaled
+    low-cumulative zoom panel; ``log_heat=True`` → a single full-width LOG-colour
+    heatmap (big + small clusters legible at once, so no zoom)."""
+    fig = plt.figure(figsize=(16, 12), constrained_layout=True)
+    gs = fig.add_gridspec(3, 6, height_ratios=[1.0, 1.0, 0.7])
+    ax11 = fig.add_subplot(gs[0, 0:2]); ax12 = fig.add_subplot(gs[0, 2:4])
+    ax13 = fig.add_subplot(gs[0, 4:6])
+    ax2 = fig.add_subplot(gs[1, 0:4]); ax2z = fig.add_subplot(gs[1, 4:6])
+    if log_heat:
+        ax3 = fig.add_subplot(gs[2, :]); ax3z = None      # single full-width heatmap
+    else:
+        ax3 = fig.add_subplot(gs[2, 0:4]); ax3z = fig.add_subplot(gs[2, 4:6])
+
+    # (1,1) model-complexity histogram (from the real model_comparison).
+    sizes = mc["time_selected_vars"].map(
+        lambda s: len([t for t in _sel_terms(s) if t != "History"]))
+    vc = sizes.value_counts().sort_index()
+    ax11.bar(vc.index, vc.values, color="#4c72b0", edgecolor="0.3", width=0.8)
+    for x, c in zip(vc.index, vc.values):
+        ax11.text(x, c, str(int(c)), ha="center", va="bottom", fontsize=8)
+    ax11.set_xlabel("# selected predictors (excl. History)"); ax11.set_ylabel("# clusters")
+    ax11.set_title(f"Model complexity (n={len(mc)})", fontsize=10); ax11.set_xticks(vc.index)
+
+    # (1,2) main-effect accepted forward Δ, over the clusters that selected each term.
+    me_labels, me_data = [], []
+    for lab, col in ME_UNIQUE:
+        if col not in fvp.columns:
+            continue
+        vals = pd.to_numeric(fvp[col], errors="coerce").to_numpy()
+        me_labels.append(lab); me_data.append(vals[np.isfinite(vals)])
+    _violin_panel(ax12, [DISPLAY[m] for m in me_labels], me_data, "main effects",
+                  [PREDICTOR_COLORS[m] for m in me_labels])
+    ax12.set_ylabel("accepted forward Δ bits/spike")
+    ax12.set_title("Per-cluster forward Δ — main effects", fontsize=10)
+
+    # (1,3) interaction accepted forward Δ, sorted by Σ of positive gains.
+    it_labels = sorted(inter_fwd, key=lambda k: -float(np.nansum(np.clip(inter_fwd[k], 0, None))))
+    _violin_panel(ax13, [_INT_ABBR(k) for k in it_labels],
+                  [inter_fwd[k] for k in it_labels], "interaction terms",
+                  [_interaction_colors(k)[0] for k in it_labels])
+    ax13.set_ylabel("accepted forward Δ bits/spike")
+    ax13.set_title("Per-cluster forward Δ — interaction terms", fontsize=10)
+
+    # (2,*) per-cluster stacked accepted forward Δ + low-cumulative zoom.
+    present = [(lab, col, c) for lab, col, c in ACID_VARS if col in fvp.columns]
+    tot, order_all = _draw_acid_stack(ax2, fvp, present)
+    ax2.set_xlabel("cluster (sorted; History & Onset are baseline, not forward-selected)")
+    ax2.set_ylabel("stacked forward Δ bits/spike (linear)")
+    ax2.set_title(f"Per-cluster forward-Δ contributions — all clusters (n={len(fvp)})",
+                  fontsize=10, fontweight="bold")
+    ax2.legend(ncol=len(present), fontsize=8, frameon=False, loc="upper left")
+    mask = tot < 0.2
+    _, order_zoom = _draw_acid_stack(ax2z, fvp[mask], present, ylim=(0, 0.2))
+    ax2z.set_xlabel(f"cluster (cumulative < 0.2, n={int(mask.sum())})")
+    ax2z.set_ylabel("stacked forward Δ bits/spike")
+    ax2z.set_title("magnified: cumulative < 0.2 bits/spike", fontsize=10)
+
+    # (3,*) SAME per-regressor forward Δ as row 2, as a HEATMAP: y = main-effect
+    # regressors (no interactions), x = clusters in the SAME sort as row 2, colour =
+    # forward Δ bits/spike (white = the term was not selected for that cluster). The
+    # zoom reuses row-2's low-cumulative subset with the colour scale RESCALED to it.
+    reg_labels = [lab for lab, _col, _c in present]
+    M = np.vstack([pd.to_numeric(fvp[col], errors="coerce").to_numpy()
+                   for _lab, col, _c in present])              # (n_regressors, n_clusters)
+    cmap = plt.get_cmap("magma").copy(); cmap.set_bad("white")
+
+    def _heat(ax, mat, xlabel, title, *, vmax=None, norm=None):
+        kw = {"norm": norm} if norm is not None else {"vmin": 0.0, "vmax": vmax}
+        im = ax.imshow(np.ma.masked_invalid(mat), aspect="auto", cmap=cmap,
+                       interpolation="nearest", **kw)
+        ax.set_yticks(range(len(reg_labels))); ax.set_yticklabels(reg_labels, fontsize=8)
+        ax.set_xlabel(xlabel); ax.set_title(title, fontsize=10)
+        fig.colorbar(im, ax=ax, fraction=0.04, pad=0.01, label="forward Δ bits/spike")
+
+    finite = M[np.isfinite(M)]
+    if log_heat:
+        # LOG colour over the full range → big + small clusters legible in ONE
+        # panel, so no separate zoom is needed.
+        from matplotlib.colors import LogNorm
+        pos = M[np.isfinite(M) & (M > 0)]
+        vmin = max(float(pos.min()), 1e-3) if pos.size else 1e-3
+        vmax = float(pos.max()) if pos.size else 1.0
+        _heat(ax3, M[:, order_all], "cluster (same sort as row 2)",
+              "Per-cluster forward Δ — heatmap (main effects, LOG colour, all clusters)",
+              norm=LogNorm(vmin=vmin, vmax=vmax))
+    else:
+        vmax_all = float(np.percentile(finite, 99)) if finite.size else 1.0
+        _heat(ax3, M[:, order_all], "cluster (same sort as row 2)",
+              "Per-cluster forward Δ — heatmap (main effects)", vmax=vmax_all)
+        zoom_idx = np.where(mask)[0]
+        Mz = M[:, zoom_idx][:, order_zoom]
+        finite_z = Mz[np.isfinite(Mz)]
+        vmax_z = float(np.percentile(finite_z, 99)) if finite_z.size else vmax_all
+        _heat(ax3z, Mz, f"cluster (cumulative < 0.2, n={int(mask.sum())})",
+              "magnified: same clusters (colour scale rescaled)", vmax=vmax_z)
+
+    fig.suptitle("FENS fig 2 — forward-selection summary, FORWARD-Δ version "
+                 "(stacked accepted sequential gains, not LOO-unique)",
+                 fontsize=12, fontweight="bold")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
 def _INT_ABBR(name):
     return name.replace("ME_face", "ME").replace("Acceleration", "A").replace("_x_", "×")
 
@@ -1678,6 +1829,10 @@ def main() -> int:
     ap.add_argument("--fig2-summary", action="store_true",
                     help="Fig 2: population forward-selection summary + acid stack "
                          "(all clusters, both probes). Ignores --clusters/--trial.")
+    ap.add_argument("--fig2-forward-deltas", action="store_true",
+                    help="Fig 2, FORWARD-Δ version: same acid layout driven by the "
+                         "accepted forward-selection gains (glm_selection_history_full.csv) "
+                         "instead of the LOO variance partition. No LOO; no Onset row.")
     ap.add_argument("--trial-structure", action="store_true",
                     help="Poster column 1: trial-structure schematic (VF, T, "
                          "TF, SF, OR, pink FR) for one trial per --clusters cluster. "
@@ -1735,6 +1890,21 @@ def main() -> int:
         plot_fig2_summary(mc, vp, inter_per,
                           OUT_DIR / "fig2_forward_selection_summary_zoom", config,
                           zoom_split=True)
+
+    if args.fig2_forward_deltas:
+        from run_glm_goggles_rf_sfor_20ms import PROBES
+        mc = pd.read_csv(RUN_ALL_DIR / "glm_model_comparison.csv")
+        fvp, inter_fwd = _load_forward_deltas(RUN_ALL_DIR, PROBES)
+        log.info("fig2 forward-Δ: %d clusters (model_comparison), %d (selection history), "
+                 "%d interaction terms", len(mc), len(fvp), len(inter_fwd))
+        plot_fig2_forward_deltas(
+            mc, fvp, inter_fwd,
+            OUT_DIR / "fig2_forward_selection_summary_zoom_forwarddeltas")
+        plot_fig2_forward_deltas(
+            mc, fvp, inter_fwd,
+            OUT_DIR / "fig2_forward_selection_summary_forwarddeltas_logheat",
+            log_heat=True)
+        return 0
         return 0
 
     # Tuning-only browsing grids over one or more probes (loads each itself).
