@@ -456,6 +456,34 @@ class FormattedDataReader:
             return raw
         return _filter_trace(raw, self.fs, cutoff_hz=cutoff_hz, order=filter_order)
 
+    def trial_visual_velocity(
+        self,
+        trial_idx: int,
+        *,
+        apply_filter: bool = True,
+        cutoff_hz: float = 50.0,
+        filter_order: int = 3,
+    ) -> np.ndarray:
+        """Per-trial visual-command trace from the ``multiplexer_output`` channel,
+        filtered the same way as ``trial_velocity``.
+
+        For ``ReplayOnly`` (V) trials this IS the channel ``trial_velocity``
+        already returns (``PROTOCOL_VELOCITY_CHANNEL["ReplayOnly"]``); exposed
+        explicitly so a figure can draw the visual flow (VF) for ANY trial —
+        including ``StageOnly`` / VT trials, whose protocol velocity is the
+        ``stage`` (translation) channel, not the visual command. Returns an
+        empty array when the channel is absent.
+        """
+        if "multiplexer_output" not in self._sess_group:
+            return np.empty(0, dtype=np.float64)
+        start, end = self.trial_bounds(trial_idx)
+        raw = np.asarray(
+            self._sfield("multiplexer_output")[0, start:end], dtype=np.float64
+        )
+        if not apply_filter:
+            return raw
+        return _filter_trace(raw, self.fs, cutoff_hz=cutoff_hz, order=filter_order)
+
     def session_channel(self, name: str, start: int, end: int) -> np.ndarray | None:
         """Return a slice of a named session channel, or ``None`` if missing.
 

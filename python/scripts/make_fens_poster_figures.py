@@ -383,13 +383,14 @@ def select_vt_trials(
 
 
 def select_v_trial(
-    df: pd.DataFrame, baseline_max: int = 10,
+    df: pd.DataFrame, baseline_max: int = 10, condition: str = "V",
 ) -> tuple[int, int, int] | None:
-    """Pick a representative V (ReplayOnly) trial for the trial-structure
-    schematic: rank V trials by motion-spike count (so the pink FR is
-    illustrative), preferring a sane handful of baseline spikes (≤baseline_max)
-    when available. Returns (trial_id, motion_spk, baseline_spk) or None."""
-    mot = df[df["condition"] == "V"].groupby("trial_id")["spike_count"].sum()
+    """Pick a representative trial of ``condition`` (V or VT) for the
+    trial-structure schematic: rank that condition's trials by motion-spike count
+    (so the pink FR is illustrative), preferring a sane handful of baseline spikes
+    (≤baseline_max) when available. Returns (trial_id, motion_spk, baseline_spk)
+    or None."""
+    mot = df[df["condition"] == condition].groupby("trial_id")["spike_count"].sum()
     if mot.empty:
         return None
     stat = df[df["condition"] == "stationary"].groupby("trial_id")["spike_count"].sum()
@@ -735,7 +736,7 @@ def run_tuning_browse(probe_id, config, out_dir, *, all_clusters=False,
 # --------------------------------------------------------------------------- #
 def plot_trial_structure(
     probe_id, cluster_id, df, config, tid, trial, spike_times, out_path,
-    trials_by_id, tuning_n_reps=1000, pc=None,
+    trials_by_id, tuning_n_reps=1000, pc=None, condition="V",
 ):
     # SOLENOID-aligned continuous axis: x = 0 at the velocity-command (solenoid)
     # onset. Stationary < 0; the REAL gap [0, gap] command→photodiode-onset drawn
@@ -794,35 +795,52 @@ def plot_trial_structure(
 
     sel = _periods(trial)
 
-    # --- The cluster's V trials, for the across-trial overlay (col 2). ---
-    v_ids = pd.unique(df.loc[df["condition"] == "V", "trial_id"])
-    v_trials = [(int(vt), trials_by_id.get(int(vt))) for vt in v_ids]
-    v_trials = [
-        (vt, tr) for vt, tr in v_trials
+    # --- The cluster's trials of THIS condition (V or VT), for the across-trial
+    # overlay (col 2). ---
+    ov_ids = pd.unique(df.loc[df["condition"] == condition, "trial_id"])
+    ov_trials = [(int(vt), trials_by_id.get(int(vt))) for vt in ov_ids]
+    ov_trials = [
+        (vt, tr) for vt, tr in ov_trials
         if tr is not None and np.flatnonzero(np.asarray(tr.motion_mask, bool)).size
     ]
-    v_sub = {vt: sub_v.iloc[np.argsort(sub_v["time_since_onset"].to_numpy(float))]
-             for vt, _ in v_trials
-             for sub_v in [df[df["trial_id"] == vt]]}
-    n_v = len(v_trials)
-    per = {vt: _periods(tr) for vt, tr in v_trials}
+    ov_sub = {vt: sub_v.iloc[np.argsort(sub_v["time_since_onset"].to_numpy(float))]
+              for vt, _ in ov_trials
+              for sub_v in [df[df["trial_id"] == vt]]}
+    n_ov = len(ov_trials)
+    per = {vt: _periods(tr) for vt, tr in ov_trials}
 
     # Command-aligned window (0 = solenoid command onset).
     x_lo = sel["xs_start"] - 0.2
     x_hi = sel["x_mend"] + 0.3
-    log.info("cluster %d trial %d (solenoid-aligned): stationary %.2fs | gap(real) "
-             "%.2fs | motion %.2fs | x_mend(motion end rel command) %.2fs",
-             cluster_id, tid, -sel["xs_start"], sel["gap"],
+    log.info("cluster %d %s trial %d (solenoid-aligned): stationary %.2fs | "
+             "gap(real) %.2fs | motion %.2fs | x_mend(motion end rel command) %.2fs",
+             cluster_id, condition, tid, -sel["xs_start"], sel["gap"],
              sel["x_mend"] - sel["gap"], sel["x_mend"])
 
+    def _vel_source(key, tr):
+        """Probe_t-sampled source trace for the two velocity rows, or None when
+        the row is the flat ``≡ 0`` line. VF = the visual command
+        (``multiplexer_output``); T = the stage TRANSLATION (the ``stage``
+        channel, which IS ``velocity`` for a StageOnly/VT trial). For V
+        (ReplayOnly) the stage is ~0 so the T row is drawn flat, and VF reads the
+        protocol ``velocity`` (= the multiplexer command)."""
+        if key == "vf":
+            src = tr.visual_velocity if condition == "VT" else tr.velocity
+            return np.asarray(src, float)
+        if key == "t":
+            if condition == "V":
+                return None                          # replay: no translation
+            return np.asarray(tr.velocity, float)    # VT: stage translation
+        return None
+
     def _xy(key, vt, tr):
-        """One V trial's command-aligned (x, y) for a row. SF/OR are restricted
-        to the photodiode window (tso ≥ 0)."""
-        vs = v_sub[vt]
+        """One trial's command-aligned (x, y) for a row. SF/OR/TF are restricted
+        to the visual window (tso ≥ 0); the velocity rows span probe_t."""
+        vs = ov_sub[vt]
         p = per[vt]
         vtso = vs["time_since_onset"].to_numpy(float)
         x = p["gap"] + vtso                       # bins → command-aligned
-        vis = vtso >= -1e-9                        # only where the photodiode is on
+        vis = vtso >= -1e-9                        # only where the visual cloud is on
         if key == "tf":
             return x[vis], vs["tf"].to_numpy(float)[vis]
         if key in ("sf", "or"):
@@ -831,25 +849,29 @@ def plot_trial_structure(
             vor = vs["orientation"].to_numpy(float)[vis]
             tok = float(np.degrees(tr.orientation)) % 180.0
             return _seam_break(x[vis], ((vor - tok + 90.0) % 180.0) - 90.0)
-        if key == "vf":
+        if key in ("vf", "t"):
+            src = _vel_source(key, tr)
+            if src is None:
+                return None, None
             vpt = np.asarray(tr.probe_t, float)
             xx = vpt - p["t_cmd"]
             m = (xx >= x_lo) & (xx <= x_hi)
-            return xx[m], np.asarray(tr.velocity, float)[m]
+            return xx[m], src[m]
         return None, None
 
     # --- FR (Gaussian σ20 ms): convolved per trial on the command-aligned grid;
-    # continuous through the (realistic) gap. col 2 = median across V trials. ---
+    # continuous through the (realistic) gap. col 2 = median across the trials. ---
     x_grid = np.arange(x_lo, x_hi + 1e-9, 0.001)
     fr_pink = fr_convolution(spike_times, sel["t_cmd"] + x_grid)
     fr_stack = [fr_convolution(spike_times, per[vt]["t_cmd"] + x_grid)
-                for vt, _ in v_trials]
+                for vt, _ in ov_trials]
     with np.errstate(all="ignore"):
         fr_med = np.nanmedian(np.vstack(fr_stack), 0) if fr_stack else fr_pink
 
+    t_ylab = "T tread.\n(cm/s)" if condition == "V" else "T stage\n(cm/s)"
     rows = [
         ("VF\n(cm/s)", "vf", "#1f4e79"),
-        ("T tread.\n(cm/s)", "t", "#7a4a12"),
+        (t_ylab, "t", "#7a4a12"),
         ("TF\n(Hz)", "tf", "#d1701a"),
         ("SF\n(cpd)", "sf", "#6b8e23"),
         ("OR−tok\n(deg)", "or", "#c0392b"),
@@ -894,8 +916,8 @@ def plot_trial_structure(
         # dashed: stationary start · command onset (0) · visual onset · motion end
         for xb in (sel["xs_start"], 0.0, sel["gap"], sel["x_mend"]):
             ax.axvline(xb, color="0.4", ls="--", lw=0.9, zorder=2)
-        if key == "t":
-            ax.set_ylim(-1, 1)
+        if key == "t" and condition == "V":
+            ax.set_ylim(-1, 1)             # V: flat ≡ 0; VT autoscales to stage
         elif key == "sf":
             ax.axhline(sf_token_cpd, ls="--", color="0.35", lw=0.8)
             ax.set_ylim(*SF_YLIM_CPD)  # fixed to the global possible range
@@ -913,17 +935,19 @@ def plot_trial_structure(
         vis = tso >= -1e-9  # photodiode-on mask for SF/OR (selected trial)
 
         # ---- column 1: the selected trial (single-trial detail) ----
-        if key == "t":
-            ax0.axhline(0.0, color=col, lw=1.4)
-            ax0.text(0.985, 0.78, "≡ 0 (replay trial)", transform=ax0.transAxes,
-                     ha="right", va="top", fontsize=6.5, color="0.4")
+        if key in ("vf", "t"):
+            src = _vel_source(key, trial)
+            if src is None:                       # V: stage ≡ 0 (no translation)
+                ax0.axhline(0.0, color=col, lw=1.4)
+                ax0.text(0.985, 0.78, "≡ 0 (replay trial)", transform=ax0.transAxes,
+                         ha="right", va="top", fontsize=6.5, color="0.4")
+            else:
+                vpt = np.asarray(trial.probe_t, float)
+                xx = vpt - sel["t_cmd"]
+                m = (xx >= x_lo) & (xx <= x_hi)
+                ax0.plot(xx[m], src[m], color=col, lw=1.0)
         elif key == "fr":
             ax0.plot(x_grid, fr_pink, color=col, lw=1.0)
-        elif key == "vf":
-            vpt = np.asarray(trial.probe_t, float)
-            xx = vpt - sel["t_cmd"]
-            m = (xx >= x_lo) & (xx <= x_hi)
-            ax0.plot(xx[m], np.asarray(trial.velocity, float)[m], color=col, lw=1.0)
         elif key == "tf":
             ax0.plot(sel["gap"] + tso[vis], tf[vis], color=col, lw=1.0, marker="o", ms=2)
         elif key == "sf":
@@ -937,22 +961,23 @@ def plot_trial_structure(
                      ha="right", va="bottom", fontsize=6, color="0.4")
         ax0.set_ylabel(ylab, fontsize=8, rotation=0, ha="right", va="center")
 
-        # ---- column 2: all V trials overlaid (selected solid); FR = median ----
-        if key == "t":
-            ax1.axhline(0.0, color=col, lw=1.4)
+        # ---- column 2: all this-condition trials overlaid (selected solid);
+        # FR = median ----
+        if key == "t" and condition == "V":
+            ax1.axhline(0.0, color=col, lw=1.4)   # replay: no stage translation
         elif key == "fr":
             ax1.plot(x_grid, fr_med, color=col, lw=1.4)
-            ax1.text(0.985, 0.92, f"median of {n_v} trials", transform=ax1.transAxes,
+            ax1.text(0.985, 0.92, f"median of {n_ov} trials", transform=ax1.transAxes,
                      ha="right", va="top", fontsize=6.5, color="0.4")
         else:
-            for vt, tr in v_trials:
+            for vt, tr in ov_trials:
                 x, y = _xy(key, vt, tr)
                 if x is None or not len(x):
                     continue
                 s = vt == tid
                 ax1.plot(x, y, color=col, alpha=1.0 if s else 0.2,
                          lw=1.1 if s else 0.7, zorder=4 if s else 1,
-                         **(dict(marker="o", ms=2) if s and key != "vf" else {}))
+                         **(dict(marker="o", ms=2) if s and key not in ("vf", "t") else {}))
 
     # ---- right block: observed FR-vs-value tuning (median line + IQR band) +
     # the best-fit model, one column per condition (V | VT). Shared renderer with
@@ -979,7 +1004,9 @@ def plot_trial_structure(
                 ha="center", va="bottom", fontsize=7, color="#2b5d8a")
         ax.text(0.5 * sel["gap"], 1.06, "gap", transform=tr_ax,
                 ha="center", va="bottom", fontsize=6.5, color="0.35")
-        ax.text(0.5 * (sel["gap"] + sel["x_mend"]), 1.04, "motion\n(visual stimulus)",
+        motion_lab = ("motion\n(visual stimulus)" if condition == "V"
+                      else "motion\n(stage + visual)")
+        ax.text(0.5 * (sel["gap"] + sel["x_mend"]), 1.04, motion_lab,
                 transform=tr_ax, ha="center", va="bottom", fontsize=7, color="#7a4a12")
     for c in (0, 1):
         axes[-1, c].set_xlabel(
@@ -991,14 +1018,23 @@ def plot_trial_structure(
     dur_note = (f"stat {-sel['xs_start']:.1f}s · gap {sel['gap']:.2f}s · "
                 f"motion {sel['x_mend'] - sel['gap']:.1f}s")
     probe_short = probe_id.split("_rec")[0]
-    fig.suptitle(
-        f"{probe_short} cl {cluster_id} · V trials · solenoid-aligned (real gap; "
-        f"SF/OR only when photodiode on)\nLEFT: trial {tid} ({n_spk} spk) · MID: "
-        f"{n_v} V trials (α0.2, selected solid; FR = median) · RIGHT: observed FR "
-        f"tuning (median+IQR, 20 equal-count bins) + BIC-best model & bootstrap-p, "
-        f"V | VT · {dur_note}",
-        fontsize=8.5, fontweight="bold",
-    )
+    if condition == "V":
+        head = (
+            f"{probe_short} cl {cluster_id} · V trials · solenoid-aligned (real gap; "
+            f"SF/OR only when photodiode on)\nLEFT: trial {tid} ({n_spk} spk) · MID: "
+            f"{n_ov} V trials (α0.2, selected solid; FR = median) · RIGHT: observed FR "
+            f"tuning (median+IQR, 20 equal-count bins) + BIC-best model & bootstrap-p, "
+            f"V | VT · {dur_note}"
+        )
+    else:
+        head = (
+            f"{probe_short} cl {cluster_id} · VT trials · solenoid-aligned "
+            f"(VF = visual command, T = stage translation; SF/OR only when visual on)\n"
+            f"LEFT: trial {tid} ({n_spk} spk) · MID: {n_ov} VT trials (α0.2, selected "
+            f"solid; FR = median) · RIGHT: observed FR tuning (median+IQR, 20 "
+            f"equal-count bins) + BIC-best model & bootstrap-p, V | VT · {dur_note}"
+        )
+    fig.suptitle(head, fontsize=8.5, fontweight="bold")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
         fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
@@ -1574,9 +1610,13 @@ def main() -> int:
                     help="Fig 2: population forward-selection summary + acid stack "
                          "(all clusters, both probes). Ignores --clusters/--trial.")
     ap.add_argument("--trial-structure", action="store_true",
-                    help="Poster column 1: trial-structure schematic (VF, flat T, "
-                         "TF, SF, OR, pink FR) for one V trial per --clusters cluster. "
-                         "Auto-picks a V trial unless --trial is given.")
+                    help="Poster column 1: trial-structure schematic (VF, T, "
+                         "TF, SF, OR, pink FR) for one trial per --clusters cluster. "
+                         "Auto-picks a trial of --condition unless --trial is given.")
+    ap.add_argument("--condition", choices=("V", "VT"), default="V",
+                    help="--trial-structure: trial condition. V (ReplayOnly, "
+                         "default) → VF = visual command, T ≡ 0. VT (StageOnly) → "
+                         "VF = visual command, T = stage TRANSLATION speed.")
     ap.add_argument("--top-fr", type=int, default=None,
                     help="Tuning-only browsing grids (TF/SF/OR × V|VT, no "
                          "time-series) for the top-N most active clusters (mean "
@@ -1681,21 +1721,24 @@ def main() -> int:
             if args.trial is not None:
                 tid = args.trial
             else:
-                pick = select_v_trial(df)
+                pick = select_v_trial(df, condition=args.condition)
                 if pick is None:
-                    log.warning("cluster %d: no V trial available — skipping", cid)
+                    log.warning("cluster %d: no %s trial available — skipping",
+                                cid, args.condition)
                     continue
                 tid, motion_spk, base_spk = pick
-                log.info("cluster %d: V trial %d (%d motion / %d baseline spk)",
-                         cid, tid, motion_spk, base_spk)
+                log.info("cluster %d: %s trial %d (%d motion / %d baseline spk)",
+                         cid, args.condition, tid, motion_spk, base_spk)
             trial = trials_by_id.get(tid)
             if trial is None or np.flatnonzero(trial.motion_mask).size == 0:
                 log.warning("cluster %d: trial %d missing/no motion — skipping", cid, tid)
                 continue
             plot_trial_structure(
                 probe.probe_id, cid, df, config, tid, trial, cluster.spike_times,
-                OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}_trial_{tid}",
+                OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}"
+                          f"_{args.condition}_trial_{tid}",
                 trials_by_id, tuning_n_reps=args.tuning_n_reps, pc=pc,
+                condition=args.condition,
             )
         return 0
 

@@ -32,6 +32,13 @@ class TrialData:
     velocity: np.ndarray      # filtered velocity (cm/s)
     motion_mask: np.ndarray   # treadmill_motion_mask logic
     stationary_mask: np.ndarray
+    # Visual-command trace (the ``multiplexer_output`` session channel), filtered
+    # like ``velocity``. This is the channel V/ReplayOnly ``velocity`` already
+    # reads; carried for ALL conditions so a figure can draw visual flow (VF)
+    # even when ``velocity`` is the protocol channel — e.g. ``stage`` for VT,
+    # where ``velocity`` is the stage TRANSLATION and VF must come from here.
+    # Empty array when the channel is absent. Does NOT feed the GLM or the masks.
+    visual_velocity: np.ndarray = field(default_factory=lambda: np.empty(0))
     sf: float = float("nan")
     orientation: float = float("nan")
     batch_gain: float = float("nan")
@@ -280,6 +287,16 @@ def _load_trial(
         cutoff_hz=config.filter_cutoff_hz,
         filter_order=config.filter_order,
     )
+    # Visual flow (multiplexer_output), filtered IDENTICALLY to the protocol
+    # velocity, for the trial-structure figure's VF row. For ReplayOnly (V) this
+    # equals ``v``; for StageOnly (VT) ``v`` is the stage TRANSLATION, so the
+    # visual command must come from this separate channel.
+    visual_velocity = reader.trial_visual_velocity(
+        trial_idx,
+        apply_filter=config.apply_velocity_filter,
+        cutoff_hz=config.filter_cutoff_hz,
+        filter_order=config.filter_order,
+    )
 
     accel = acceleration_from_velocity(v)
     vel_motion = masks.treadmill_motion_mask(
@@ -325,6 +342,7 @@ def _load_trial(
         velocity=v,
         motion_mask=m_mask,
         stationary_mask=s_mask,
+        visual_velocity=visual_velocity,
         sf=sf,
         orientation=orient,
         batch_gain=gain,
