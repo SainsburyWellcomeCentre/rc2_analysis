@@ -1639,7 +1639,7 @@ def _load_forward_deltas(run_dir, probes):
     return fvp, inter_fwd
 
 
-def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False):
+def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False, unit_heat=False):
     """Fig 2, FORWARD-Δ version (NO LOO): model-complexity histogram + accepted
     forward-Δ violins for main effects / interactions (row 1), and the per-cluster
     stacked forward-Δ acid bars + low-cumulative zoom (row 2). Row 3 is the same
@@ -1651,7 +1651,7 @@ def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False):
     ax11 = fig.add_subplot(gs[0, 0:2]); ax12 = fig.add_subplot(gs[0, 2:4])
     ax13 = fig.add_subplot(gs[0, 4:6])
     ax2 = fig.add_subplot(gs[1, 0:4]); ax2z = fig.add_subplot(gs[1, 4:6])
-    if log_heat:
+    if log_heat or unit_heat:
         ax3 = fig.add_subplot(gs[2, :]); ax3z = None      # single full-width heatmap
     else:
         ax3 = fig.add_subplot(gs[2, 0:4]); ax3z = fig.add_subplot(gs[2, 4:6])
@@ -1718,7 +1718,32 @@ def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False):
         fig.colorbar(im, ax=ax, fraction=0.04, pad=0.01, label="forward Δ bits/spike")
 
     finite = M[np.isfinite(M)]
-    if log_heat:
+    if unit_heat:
+        # Per-cluster min-max to [0, 1]: divide each cluster's forward Δ by its own
+        # max, so the dominant regressor = 1 and the profile is comparable across
+        # clusters regardless of absolute magnitude. Not-selected = 0 (low end of
+        # the colour map, same as a near-zero gain). Single panel, no zoom.
+        M0 = np.nan_to_num(M, nan=0.0)
+        cmax = M0.max(axis=0)
+        Mn = np.zeros_like(M0)
+        nz = cmax > 0
+        Mn[:, nz] = M0[:, nz] / cmax[nz]
+        # Order clusters by their TOP contributor — Speed, Accel, TF, SF, OR, ME (the
+        # row order); no-main-effect clusters last; within a group the strongest top
+        # contributor first. White lines mark the group boundaries.
+        top_reg = np.where(nz, M0.argmax(axis=0), len(reg_labels))
+        heat_order = np.lexsort((-cmax, top_reg))
+        im = ax3.imshow(Mn[:, heat_order], aspect="auto", cmap="magma",
+                        vmin=0.0, vmax=1.0, interpolation="nearest")
+        for b in np.where(np.diff(top_reg[heat_order]) != 0)[0]:
+            ax3.axvline(b + 0.5, color="white", lw=0.8, alpha=0.7)
+        ax3.set_yticks(range(len(reg_labels))); ax3.set_yticklabels(reg_labels, fontsize=8)
+        ax3.set_xlabel("cluster (grouped by top contributor: " + "→".join(reg_labels) + ")")
+        ax3.set_title("Per-cluster forward Δ — heatmap (per-cluster 0–1, grouped by top predictor)",
+                      fontsize=10)
+        fig.colorbar(im, ax=ax3, fraction=0.04, pad=0.01,
+                     label="forward Δ (per-cluster max = 1)")
+    elif log_heat:
         # LOG colour over the full range → big + small clusters legible in ONE
         # panel, so no separate zoom is needed.
         from matplotlib.colors import LogNorm
@@ -1904,6 +1929,10 @@ def main() -> int:
             mc, fvp, inter_fwd,
             OUT_DIR / "fig2_forward_selection_summary_forwarddeltas_logheat",
             log_heat=True)
+        plot_fig2_forward_deltas(
+            mc, fvp, inter_fwd,
+            OUT_DIR / "fig2_forward_selection_summary_forwarddeltas_unitheat",
+            unit_heat=True)
         return 0
         return 0
 
