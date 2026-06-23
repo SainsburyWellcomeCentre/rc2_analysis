@@ -2,8 +2,12 @@
 #SBATCH --job-name=glm_histbase_cpu
 #SBATCH --partition=cpu
 #SBATCH --cpus-per-task=20
-#SBATCH --mem=180G
-#SBATCH --time=2:00:00
+# mem/time right-sized 2026-06-23: 180G locked the job out of the idle 60G nodes
+# (peak RSS ~18G even in both-probes mode); 2h timed out a both-probes run. 56G fits
+# an idle 60G node and schedules instantly; 6h covers the serial both-probes path.
+# Override per-run with --mem/--time as needed (and prefer probe-split: PROBE=<id>).
+#SBATCH --mem=56G
+#SBATCH --time=06:00:00
 #SBATCH --output=/ceph/margrie/laura/motion_clouds/_glm_logs/%j.out
 #SBATCH --error=/ceph/margrie/laura/motion_clouds/_glm_logs/%j.err
 #
