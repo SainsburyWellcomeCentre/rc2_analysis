@@ -654,6 +654,155 @@ def _sig_row(probe_id, cluster_id, sig):
     )
 
 
+# ---------------------------------------------------------------------------
+# Population tuning-significance summaries (read tuning_fits.csv; no re-fit).
+# ---------------------------------------------------------------------------
+# Cohort-level views over the per-cluster tuning-significance fits: one strip
+# per variable (V tuned vs not-tuned), and the V→VT transition of that
+# significance call. Both consume an existing tuning_fits.csv — they launch no
+# compute. "tuned" is the same p<0.05 call used per cluster.
+TUNING_VARS = (("tf", "TF"), ("sf", "SF"), ("or", "OR"))
+TUNED_ALPHA = 0.05
+_C_TUNED, _C_NOT = "#d62728", "#4c72b0"   # tuned (red) / not-tuned (blue)
+_C_V, _C_VT = "#4c72b0", "#dd8452"        # V (blue) / VT (orange) in the pair
+
+
+def tuning_transition_category(tuned_v, tuned_vt, model_v, model_vt):
+    """V→VT transition class for one (cluster, variable) significance pair.
+
+    1 = tuned in V, not in VT;  2 = not in V, tuned in VT;
+    3 = tuned in both, *different* selected best_model;
+    4 = tuned in both, *same* selected best_model;
+    0 = not tuned in either (excluded from the transition figure).
+    Same/different is exact best_model string identity. Pure — unit-tested."""
+    tuned_v, tuned_vt = bool(tuned_v), bool(tuned_vt)
+    if tuned_v and not tuned_vt:
+        return 1
+    if not tuned_v and tuned_vt:
+        return 2
+    if tuned_v and tuned_vt:
+        return 4 if str(model_v) == str(model_vt) else 3
+    return 0
+
+
+def _p_floor(values):
+    """Half the smallest positive p — a display floor so exact-zero bootstrap
+    p's (0 of n_reps beat the real fit) are visible on a log axis. Display
+    only; never used for the p<0.05 classification."""
+    pos = np.asarray(values, float)
+    pos = pos[pos > 0]
+    return (pos.min() / 2.0) if pos.size else 1e-3
+
+
+def plot_tuning_significance_summary(fits_df, out_path, *, condition="V"):
+    """2×3 strip plot for one condition: tuned vs not-tuned p per TF/SF/OR.
+
+    Top row = all clusters; bottom row = only rsq_mean above that variable's
+    median (good-fit subset). y is the bootstrap tuning p on a log axis."""
+    v = fits_df[(fits_df.condition == condition) & fits_df.p.notna()].copy()
+    v["tuned"] = v.p < TUNED_ALPHA
+    floor = _p_floor(v.p.values)
+    v["p_plot"] = v.p.clip(lower=floor)
+    med = {k: v[v.value == k].rsq_mean.median() for k, _ in TUNING_VARS}
+    cats = [("tuned\n(p<%.2g)" % TUNED_ALPHA, True, _C_TUNED),
+            ("not tuned", False, _C_NOT)]
+    rng = np.random.default_rng(0)
+
+    def panel(ax, s, title):
+        for i, (_lab, tuned, col) in enumerate(cats):
+            ss = s[s.tuned == tuned]
+            x = i + rng.uniform(-0.18, 0.18, len(ss))
+            ax.scatter(x, ss.p_plot, s=24, c=col, alpha=0.7, edgecolors="none")
+            ax.text(i, 1.5, f"n={len(ss)}", ha="center", fontsize=9)
+        ax.set_yscale("log")
+        ax.axhline(TUNED_ALPHA, ls="--", lw=1, color="k", alpha=0.6)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels([c[0] for c in cats])
+        ax.set_xlim(-0.5, 1.5)
+        ax.set_title(title, pad=22)
+
+    fig, axes = plt.subplots(2, 3, figsize=(9.5, 8.8), sharey=True)
+    for j, (key, lab) in enumerate(TUNING_VARS):
+        s = v[v.value == key]
+        panel(axes[0, j], s, f"{lab}  (all, n={len(s)})")
+        sf = s[s.rsq_mean > med[key]]
+        panel(axes[1, j], sf, f"{lab}  (rsq>{med[key]:.2f}, n={len(sf)})")
+    for r in range(2):
+        axes[r, 0].set_ylabel("tuning p-value (log)")
+    fig.suptitle(
+        f"{condition} condition — tuning significance  "
+        f"(top: all  |  bottom: rsq_mean > per-variable median)", y=1.0)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
+def plot_tuning_transitions(fits_df, out_path):
+    """Paired V→VT significance transitions, one subplot per TF/SF/OR.
+
+    Each cluster pairs its V (left) and VT (right) tuning-p, joined by a line,
+    grouped into the four transition categories. Subplot title carries the
+    VT-tuned count. Excludes cells not tuned in either condition (cat 0)."""
+    d = fits_df[fits_df.p.notna()].copy()
+    d["tuned"] = d.p < TUNED_ALPHA
+    key = ["probe_id", "cluster_id", "value"]
+    piv = d.pivot_table(index=key, columns="condition",
+                        values=["p", "tuned", "best_model"], aggfunc="first")
+    piv.columns = [f"{a}_{b}" for a, b in piv.columns]
+    piv = piv.reset_index().dropna(subset=["p_V", "p_VT"])
+    piv["tuned_V"] = piv["tuned_V"].astype(bool)
+    piv["tuned_VT"] = piv["tuned_VT"].astype(bool)
+    piv["cat"] = [tuning_transition_category(r.tuned_V, r.tuned_VT,
+                                             r.best_model_V, r.best_model_VT)
+                  for r in piv.itertuples()]
+    floor = _p_floor(np.r_[piv.p_V.values, piv.p_VT.values])
+    clip = lambda a: np.clip(a, floor, None)  # noqa: E731
+    catlabels = {1: "tuned→\nnot tuned", 2: "not tuned\n→tuned",
+                 3: "tuned→tuned\ndiff model", 4: "tuned→tuned\nsame model"}
+    gap, step = 0.32, 1.4
+    rng = np.random.default_rng(0)
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 5.2), sharey=True)
+    for ax, (key_, lab) in zip(axes, TUNING_VARS):
+        s = piv[piv.value == key_]
+        n_vt = int(s.tuned_VT.sum())
+        centers = []
+        for k, c in enumerate((1, 2, 3, 4)):
+            sc = s[s.cat == c]
+            xV, xVT = k * step - gap / 2, k * step + gap / 2
+            centers.append(k * step)
+            pv, pvt = clip(sc.p_V.values), clip(sc.p_VT.values)
+            jV = rng.uniform(-0.05, 0.05, len(sc))
+            jVT = rng.uniform(-0.05, 0.05, len(sc))
+            for a, b, ya, yb in zip(xV + jV, xVT + jVT, pv, pvt):
+                ax.plot([a, b], [ya, yb], color="0.7", lw=0.5, alpha=0.6, zorder=1)
+            ax.scatter(xV + jV, pv, s=20, c=_C_V, alpha=0.8, edgecolors="none", zorder=2)
+            ax.scatter(xVT + jVT, pvt, s=20, c=_C_VT, alpha=0.8, edgecolors="none", zorder=2)
+            ax.text(k * step, 1.6, f"n={len(sc)}", ha="center", fontsize=9)
+        ax.set_yscale("log")
+        ax.axhline(TUNED_ALPHA, ls="--", lw=1, color="k", alpha=0.6)
+        ax.set_xticks(centers)
+        ax.set_xticklabels([catlabels[c] for c in (1, 2, 3, 4)], fontsize=8)
+        ax.set_title(f"{lab}  ({n_vt}/{len(s)} tuned in VT)", pad=20)
+        ax.set_xlim(-step / 2, 3 * step + step / 2)
+    axes[0].set_ylabel("tuning p-value (log)")
+    axes[-1].legend(
+        handles=[Line2D([], [], marker="o", ls="", color=_C_V, label="V"),
+                 Line2D([], [], marker="o", ls="", color=_C_VT, label="VT")],
+        frameon=False, loc="lower right")
+    fig.suptitle("V→VT tuning-significance transitions "
+                 "(paired: V left, VT right)", y=1.0)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("pdf", "png"):
+        fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
+    plt.close(fig)
+    log.info("wrote %s.{pdf,png}", out_path)
+
+
 ERR_LABEL = {"median_iqr": "median + IQR", "mean_sd": "mean ± SD",
              "mean_sem": "mean ± SEM"}
 
@@ -1898,10 +2047,31 @@ def main() -> int:
     ap.add_argument("--tuning-n-reps", type=int, default=1000,
                     help="Bootstrap reps for the tuning-significance p (default 1000; "
                          "drop to ~200 for fast browsing).")
+    ap.add_argument("--tuning-significance-summary", action="store_true",
+                    help="Cohort tuning-significance summaries over an existing "
+                         "tuning_fits.csv (NO re-fit): a V-only 2×3 tuned/not-tuned "
+                         "strip (all + good-fit halves) and the V→VT transition plot "
+                         "→ FENS_figures_poster/. CSV from --reuse-fits, else the "
+                         "tuning_browse_mean_sem_selR2mean/ one.")
     args = ap.parse_args()
 
     config = make_config_histbase_all()
     backend = "irls"
+
+    if args.tuning_significance_summary:
+        csv_path = (Path(args.reuse_fits) if args.reuse_fits else
+                    OUT_DIR / "tuning_browse_mean_sem_selR2mean" / "tuning_fits.csv")
+        if not csv_path.exists():
+            ap.error(f"tuning_fits.csv not found: {csv_path} "
+                     "(run the tuning-browse path first, or pass --reuse-fits)")
+        fits_df = pd.read_csv(csv_path)
+        log.info("tuning-significance summary: %d fit rows from %s",
+                 len(fits_df), csv_path)
+        plot_tuning_significance_summary(
+            fits_df, OUT_DIR / "V_tuning_significance_summary", condition="V")
+        plot_tuning_transitions(
+            fits_df, OUT_DIR / "VtoVT_tuning_significance_transitions")
+        return 0
 
     if args.fig2_summary:
         from run_glm_goggles_rf_sfor_20ms import PROBES
