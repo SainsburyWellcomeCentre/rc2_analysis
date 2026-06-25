@@ -917,7 +917,7 @@ def run_tuning_browse(probe_id, config, out_dir, *, all_clusters=False,
 def plot_trial_structure(
     probe_id, cluster_id, df, config, tid, trial, spike_times, out_path,
     trials_by_id, tuning_n_reps=1000, pc=None, condition="V",
-    tuning_clusters=None, save=True,
+    tuning_clusters=None, save=True, fr_stat="median",
 ):
     # ``tuning_clusters`` = [(cid, cluster_df), ...] for the RIGHT tuning grid
     # (one column per cluster). The LEFT trial-structure block (incl. the pink FR)
@@ -1061,13 +1061,26 @@ def plot_trial_structure(
         return None, None
 
     # --- FR (Gaussian σ20 ms): convolved per trial on the command-aligned grid;
-    # continuous through the (realistic) gap. col 2 = median across the trials. ---
+    # continuous through the (realistic) gap. col 2 = the across-trial central
+    # trace, ``fr_stat``: "median" (the typical trial; no band) or "mean" (with a
+    # ± SEM band). On sparse cells the median collapses toward 0 because >half the
+    # trials are spike-empty at any instant, so "mean" reads the PSTH-like bump. ---
     x_grid = np.arange(x_lo, x_hi + 1e-9, 0.001)
     fr_pink = fr_convolution(spike_times, sel["t_cmd"] + x_grid)
     fr_stack = [fr_convolution(spike_times, per[vt]["t_cmd"] + x_grid)
                 for vt, _ in ov_trials]
     with np.errstate(all="ignore"):
-        fr_med = np.nanmedian(np.vstack(fr_stack), 0) if fr_stack else fr_pink
+        if fr_stack:
+            _st = np.vstack(fr_stack)
+            if fr_stat == "mean":
+                fr_central = np.nanmean(_st, 0)
+                _n = np.sum(np.isfinite(_st), 0)
+                fr_sem = np.nanstd(_st, 0, ddof=1) / np.sqrt(np.maximum(_n, 1))
+            else:
+                fr_central = np.nanmedian(_st, 0)
+                fr_sem = None
+        else:
+            fr_central, fr_sem = fr_pink, None
 
     t_ylab = "T tread.\n(cm/s)" if condition == "V" else "T stage\n(cm/s)"
     rows = [
@@ -1186,8 +1199,12 @@ def plot_trial_structure(
         if key == "t" and condition == "V":
             ax1.axhline(0.0, color=col, lw=1.4)   # replay: no stage translation
         elif key == "fr":
-            ax1.plot(x_grid, fr_med, color=col, lw=1.4)
-            ax1.text(0.985, 0.92, f"median of {n_ov} trials", transform=ax1.transAxes,
+            if fr_sem is not None:
+                ax1.fill_between(x_grid, fr_central - fr_sem, fr_central + fr_sem,
+                                 color=col, alpha=0.25, lw=0, zorder=1)
+            ax1.plot(x_grid, fr_central, color=col, lw=1.4, zorder=2)
+            _lbl = ("mean ± SEM" if fr_stat == "mean" else "median") + f" of {n_ov} trials"
+            ax1.text(0.985, 0.92, _lbl, transform=ax1.transAxes,
                      ha="right", va="top", fontsize=6.5, color="0.4")
         else:
             for vt, tr in ov_trials:
@@ -1244,7 +1261,8 @@ def plot_trial_structure(
     head = (
         f"{probe_short} · {condition} trials · solenoid-aligned ({left_note})\n"
         f"LEFT (FR = cl {cluster_id}): trial {tid} ({n_spk} spk) + {n_ov}-trial overlay "
-        f"(FR = median) · RIGHT: {condition} tuning [{reg_lab}] per cluster "
+        f"(FR = {'mean ± SEM' if fr_stat == 'mean' else 'median'}) · "
+        f"RIGHT: {condition} tuning [{reg_lab}] per cluster "
         f"[{tcl_ids}] — FR y shared across clusters & V↔VT; 20 bins"
         + ("; Speed/Accel/TF from MATLAB cache" if condition == "VT" else "")
         + f" + BIC-best & bootstrap-p · {dur_note}"
@@ -2011,6 +2029,11 @@ def main() -> int:
                     help="Poster column 1: trial-structure schematic (VF, T, "
                          "TF, SF, OR, pink FR) for one trial per --clusters cluster. "
                          "Auto-picks a trial of --condition unless --trial is given.")
+    ap.add_argument("--fr-stat", choices=("median", "mean"), default="median",
+                    help="--trial-structure: across-trial FR statistic in col 2. "
+                         "'median' (default, the typical trial; no band) or 'mean' "
+                         "(with a ± SEM band). On sparse cells the median collapses "
+                         "toward 0; 'mean' reads the PSTH-like bump.")
     ap.add_argument("--condition", choices=("V", "VT"), default="V",
                     help="--trial-structure: trial condition. V (ReplayOnly, "
                          "default) → VF = visual command, T ≡ 0. VT (StageOnly) → "
@@ -2194,7 +2217,8 @@ def main() -> int:
                     probe.probe_id, primary_cid, primary_df, config, ctid, trial,
                     primary_cluster.spike_times, out, trials_by_id,
                     tuning_n_reps=args.tuning_n_reps, pc=pc, condition=cond,
-                    tuning_clusters=tuning_clusters, save=False)
+                    tuning_clusters=tuning_clusters, save=False,
+                    fr_stat=args.fr_stat)
                 rendered.append((fig, taxes, out))
             # Shared per-regressor FR y-limit across the V and VT figures.
             ymax: dict[str, float] = {}
@@ -2243,7 +2267,7 @@ def main() -> int:
                 OUT_DIR / f"trial_structure_{probe.probe_id}_cluster_{cid}"
                           f"_{args.condition}_trial_{tid}",
                 trials_by_id, tuning_n_reps=args.tuning_n_reps, pc=pc,
-                condition=args.condition)
+                condition=args.condition, fr_stat=args.fr_stat)
         return 0
 
     if args.fig2c:
