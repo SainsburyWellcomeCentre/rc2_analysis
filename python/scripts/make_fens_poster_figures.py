@@ -834,6 +834,20 @@ def plot_tuning_grid(probe_id, cluster_id, df, config, out_path, *,
                 ax.set_title(cond, fontsize=11, fontweight="bold")
             if c == 0:
                 ax.set_ylabel("FR (Hz)", fontsize=8)
+    # Share the FR (Hz) y-axis across the V and VT columns within each row
+    # (TF/SF/OR) so the two conditions sit on the same scale and are directly
+    # comparable. Use the UNION range (lowest bottom, highest top) of the
+    # data-bearing panels — matplotlib has already autoscaled each to enclose its
+    # error-bar caps and fit curve, so the union top never truncates a curve.
+    # A "no data" placeholder panel (has_data() False) is left untouched.
+    for r in range(len(rows)):
+        drawn = [axes[r, c] for c in range(len(conds)) if axes[r, c].has_data()]
+        if len(drawn) < 2:
+            continue  # 0 or 1 condition has data → nothing to harmonise
+        lims = [ax.get_ylim() for ax in drawn]
+        lo, hi = min(b for b, _ in lims), max(t for _, t in lims)
+        for ax in drawn:
+            ax.set_ylim(lo, hi)
     probe_short = probe_id.split("_rec")[0]
     fam = (linear_families[0] if len(linear_families) == 1 else "BIC-best")
     err_lbl = ERR_LABEL.get(display, display)
