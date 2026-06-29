@@ -1413,13 +1413,16 @@ def _trial_window(df, config, tid, t_motion_start, spike_times):
     return order, t, onset_t, x_pink, fr_pink
 
 
-def plot_forward_panel(
-    probe_id, cluster_id, df, prep, config, tid, spike_times, t_motion_start,
-    baseline_vars, accepted, rejected, out_path, backend="irls",
+def compute_forward_panel(
+    probe_id, cluster_id, prep, config, baseline_vars, accepted, rejected,
+    backend="irls",
 ):
-    order, t, onset_t, x_pink, fr_pink = _trial_window(
-        df, config, tid, t_motion_start, spike_times)
-
+    """TRIAL-INDEPENDENT payload of the Hardcastle Fig-2C panel — fit ONCE per
+    cluster and reused to render every trial. Returns a context dict consumed by
+    ``render_forward_panel``. The expensive IRLS work (the cumulative in-sample
+    rates AND the bottom-row per-fold candidate Δ's) lives here; nothing in it
+    depends on which trial is drawn (the trial only selects a window into the
+    already-computed full-length ``rates_full`` + supplies the observed pink FR)."""
     # Columns: baseline, then one per accepted term, then the rejected example.
     top_models = [("baseline", list(baseline_vars))]
     cur = list(baseline_vars)
@@ -1428,7 +1431,6 @@ def plot_forward_panel(
         top_models.append((f"+ {v}", list(cur)))
     top_models.append((f"+ {rejected} (rejected)", list(cur) + [rejected]))
     n_col = len(top_models)
-    base_cv = cv_bps_for(prep, baseline_vars, config, backend)
 
     # Bottom panels: one per transition (under columns 1..n_col-1). For every
     # still-available main effect, `_candidates` returns the PER-FOLD paired Δ
@@ -1466,14 +1468,35 @@ def plot_forward_panel(
     # plotted against the final accepted cumulative but does not advance it.
     bottom.append((n_col - 1, cum, False, _candidates(cur, rejected, "#d62728")))
 
+    # Top-row reconstructions: the FULL-length in-sample rate per cumulative model
+    # (NOT yet windowed to a trial) and its cv-bps. Windowing by trial is the only
+    # per-trial step (done in render).
+    rates_full = [insample_rate_for(prep, v, config, backend) for _, v in top_models]
+    cvs = [cv_bps_for(prep, v, config, backend) for _, v in top_models]
+    return dict(
+        probe_id=probe_id, cluster_id=cluster_id, top_models=top_models,
+        n_col=n_col, bottom=bottom, rates_full=rates_full, cvs=cvs,
+    )
+
+
+def render_forward_panel(ctx, df, config, tid, spike_times, t_motion_start, out_path):
+    """Render ONE trial's Fig-2C panel from a precomputed ``ctx`` (see
+    ``compute_forward_panel``). The only per-trial computation here is the trial
+    window + the observed pink FR; the model fits are reused from ``ctx``."""
+    probe_id, cluster_id = ctx["probe_id"], ctx["cluster_id"]
+    top_models, n_col, bottom = ctx["top_models"], ctx["n_col"], ctx["bottom"]
+    cvs = ctx["cvs"]
+    order, t, onset_t, x_pink, fr_pink = _trial_window(
+        df, config, tid, t_motion_start, spike_times)
+
     fig, axes = plt.subplots(
         2, n_col, figsize=(2.5 * n_col, 4.6),
         gridspec_kw={"height_ratios": [1.1, 1.0]}, constrained_layout=True,
     )
 
     # Top row: reconstructions (shared y so the prediction visibly catches up).
-    rates = [insample_rate_for(prep, v, config, backend)[order] for _, v in top_models]
-    cvs = [cv_bps_for(prep, v, config, backend) for _, v in top_models]
+    # Rates are the precomputed full-length in-sample fits, windowed to this trial.
+    rates = [r[order] for r in ctx["rates_full"]]
     top_ymax = max(float(fr_pink.max()), max(float(r.max()) for r in rates))
     x_end = float(t[-1])
     for k, (label, vars_) in enumerate(top_models):
@@ -1555,6 +1578,19 @@ def plot_forward_panel(
         fig.savefig(out_path.with_suffix(f".{ext}"), dpi=150)
     plt.close(fig)
     log.info("wrote %s.{pdf,png}", out_path)
+
+
+def plot_forward_panel(
+    probe_id, cluster_id, df, prep, config, tid, spike_times, t_motion_start,
+    baseline_vars, accepted, rejected, out_path, backend="irls",
+):
+    """Single-trial Fig-2C panel — compute the trial-independent payload then
+    render this one trial. Behaviour-identical to the pre-refactor function; the
+    all-trials path instead calls compute ONCE and render per trial."""
+    ctx = compute_forward_panel(
+        probe_id, cluster_id, prep, config, baseline_vars, accepted, rejected,
+        backend)
+    render_forward_panel(ctx, df, config, tid, spike_times, t_motion_start, out_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -2028,6 +2064,13 @@ def main() -> int:
                          "(needs --trial).")
     ap.add_argument("--trial", type=int, default=None,
                     help="Trial id for --fig2c.")
+    ap.add_argument("--all-trials", action="store_true",
+                    help="--fig2c: render the panel for EVERY motion-mask trial "
+                         "(ignores --trial). The trial-independent payload (cumulative "
+                         "in-sample fits + the per-fold candidate Δ bottom row) is "
+                         "computed ONCE per cluster and reused; only the top-row trial "
+                         "window + observed FR recompute per trial. Output → "
+                         "FENS_figures_poster/fig2c_alltrials_<probe>_cluster_<cid>/.")
     ap.add_argument("--accepted", default="Acceleration,SF,Speed",
                     help="--fig2c: accepted terms (columns), in order.")
     ap.add_argument("--rejected", default="OR",
@@ -2285,16 +2328,42 @@ def main() -> int:
         return 0
 
     if args.fig2c:
-        if args.trial is None:
-            ap.error("--fig2c requires --trial")
+        if not args.all_trials and args.trial is None:
+            ap.error("--fig2c requires --trial (or --all-trials)")
         accepted = [s for s in args.accepted.split(",") if s]
         for cid in args.clusters:
+            if cid not in by_id:
+                log.warning("cluster %d not on probe %s — skipping", cid, args.probe)
+                continue
             cluster = by_id[cid]
             df = bin_cluster(probe, cluster, rf_lookup=rf_lookup)
             prep = prepare_cluster_design(df, config)
             oracle_check(prep, config, probe.probe_id, cid)
             selected = load_selection_order(probe.probe_id, cid) or []
             baseline_vars = ["History"] if "History" in selected else []
+
+            if args.all_trials:
+                # Trial-independent payload (the IRLS fits) ONCE; then render every
+                # motion-mask trial reusing it — only the top-row window recomputes.
+                ctx = compute_forward_panel(
+                    probe.probe_id, cid, prep, config, baseline_vars,
+                    accepted, args.rejected)
+                out_folder = (OUT_DIR /
+                              f"fig2c_alltrials_{probe.probe_id}_cluster_{cid}")
+                tids = [t.trial_id for t in probe.trials
+                        if np.flatnonzero(t.motion_mask).size > 0]
+                log.info("cluster %d: rendering fig2c for %d trials → %s",
+                         cid, len(tids), out_folder)
+                for tid in tids:
+                    trial = trials_by_id[tid]
+                    midx = np.flatnonzero(trial.motion_mask)
+                    t_motion_start = float(trial.probe_t[int(midx[0])])
+                    render_forward_panel(
+                        ctx, df, config, tid, cluster.spike_times, t_motion_start,
+                        out_folder / f"fig2c_{probe.probe_id}_cluster_{cid}"
+                                     f"_trial_{tid}")
+                continue
+
             trial = trials_by_id[args.trial]
             midx = np.flatnonzero(trial.motion_mask)
             t_motion_start = float(trial.probe_t[int(midx[0])])
