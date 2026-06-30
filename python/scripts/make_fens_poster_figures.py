@@ -50,6 +50,7 @@ for _v in (
 
 import argparse
 import logging
+import shutil
 import warnings
 from pathlib import Path
 
@@ -1829,12 +1830,16 @@ _FWD_MAIN_COL = {"Speed": "unique_Speed", "Acceleration": "unique_Accel",
 def _load_forward_deltas(run_dir, probes):
     """Per-cluster ACCEPTED forward-selection Δ cv-bps from each probe's
     glm_selection_history_full.csv (the sequential gain a term added when it was
-    admitted: ``added_this_round`` True). Returns ``(fvp, inter_fwd)``:
+    admitted: ``added_this_round`` True). Returns ``(fvp, inter_fwd, inter_pc)``:
       ``fvp`` — one row per cluster, ``unique_<main>`` columns (NaN if the term was
                 not selected) so the existing acid/violin helpers consume it as-is;
       ``inter_fwd`` — ``{interaction_candidate: array of accepted Δ}`` over the
-                clusters that admitted it."""
-    main_rows, inter = [], {}
+                clusters that admitted it (cluster identity dropped — the raw violins);
+      ``inter_pc`` — long-form DataFrame (probe_id, cluster_id, candidate, delta_bps)
+                of admitted interactions, KEEPING cluster identity so the normalised
+                violins can divide each interaction Δ by its cluster's own interaction
+                max (see ``plot_fig2_forward_deltas(norm_violins=True)``)."""
+    main_rows, inter, inter_rows = [], {}, []
     for probe in probes:
         csv = run_dir / "_runs" / probe / "glm_selection_history_full.csv"
         if not csv.exists():
@@ -1851,18 +1856,31 @@ def _load_forward_deltas(run_dir, probes):
         for r in adm.itertuples():
             if "_x_" in str(r.candidate):
                 inter.setdefault(str(r.candidate), []).append(float(r.delta_bps))
+                inter_rows.append({"probe_id": probe, "cluster_id": int(r.cluster_id),
+                                   "candidate": str(r.candidate),
+                                   "delta_bps": float(r.delta_bps)})
     fvp = pd.DataFrame(main_rows)
     inter_fwd = {k: np.asarray(v, float) for k, v in inter.items()}
-    return fvp, inter_fwd
+    inter_pc = pd.DataFrame(inter_rows,
+                            columns=["probe_id", "cluster_id", "candidate", "delta_bps"])
+    return fvp, inter_fwd, inter_pc
 
 
-def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False, unit_heat=False):
+def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False,
+                             unit_heat=False, norm_violins=False, inter_pc=None):
     """Fig 2, FORWARD-Δ version (NO LOO): model-complexity histogram + accepted
     forward-Δ violins for main effects / interactions (row 1), and the per-cluster
     stacked forward-Δ acid bars + low-cumulative zoom (row 2). Row 3 is the same
     per-regressor data as a heatmap: ``log_heat=False`` → linear colour + a rescaled
     low-cumulative zoom panel; ``log_heat=True`` → a single full-width LOG-colour
-    heatmap (big + small clusters legible at once, so no zoom)."""
+    heatmap (big + small clusters legible at once, so no zoom).
+
+    ``norm_violins=True`` rescales BOTH top-row violins to a per-cluster 0–1 axis so
+    they sit on the same scale as the unit-heatmap row: each main-effect Δ is divided
+    by that cluster's max OVER MAIN EFFECTS, and each interaction Δ by that cluster's
+    max OVER INTERACTIONS — every family is self-referenced (the interaction panel is
+    NOT scaled against the main-effect max). Needs ``inter_pc`` (the per-cluster
+    interaction long-form from ``_load_forward_deltas``)."""
     fig = plt.figure(figsize=(16, 12), constrained_layout=True)
     gs = fig.add_gridspec(3, 6, height_ratios=[1.0, 1.0, 0.7])
     ax11 = fig.add_subplot(gs[0, 0:2]); ax12 = fig.add_subplot(gs[0, 2:4])
@@ -1884,24 +1902,54 @@ def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False, un
     ax11.set_title(f"Model complexity (n={len(mc)})", fontsize=10); ax11.set_xticks(vc.index)
 
     # (1,2) main-effect accepted forward Δ, over the clusters that selected each term.
-    me_labels, me_data = [], []
-    for lab, col in ME_UNIQUE:
-        if col not in fvp.columns:
-            continue
-        vals = pd.to_numeric(fvp[col], errors="coerce").to_numpy()
-        me_labels.append(lab); me_data.append(vals[np.isfinite(vals)])
+    # In norm_violins mode each cluster's main-effect Δ is divided by that cluster's
+    # own max OVER MAIN EFFECTS (per-cluster 0–1, same scale as the unit-heatmap row).
+    me_present = [(lab, col) for lab, col in ME_UNIQUE if col in fvp.columns]
+    me_cols = [col for _lab, col in me_present]
+    me_mat = np.column_stack([pd.to_numeric(fvp[col], errors="coerce").to_numpy()
+                              for col in me_cols]) if me_cols else np.empty((len(fvp), 0))
+    if norm_violins and me_mat.size:
+        with warnings.catch_warnings():               # all-NaN rows = no main effect selected
+            warnings.simplefilter("ignore", RuntimeWarning)
+            me_rowmax = np.nanmax(me_mat, axis=1)              # per-cluster main-effect max
+        me_rowmax = np.where(np.isfinite(me_rowmax) & (me_rowmax > 0), me_rowmax, np.nan)
+        me_mat = me_mat / me_rowmax[:, None]
+    me_labels = [lab for lab, _col in me_present]
+    me_data = [me_mat[:, i][np.isfinite(me_mat[:, i])] for i in range(len(me_labels))]
     _violin_panel(ax12, [DISPLAY[m] for m in me_labels], me_data, "main effects",
                   [PREDICTOR_COLORS[m] for m in me_labels])
-    ax12.set_ylabel("accepted forward Δ bits/spike")
-    ax12.set_title("Per-cluster forward Δ — main effects", fontsize=10)
+    if norm_violins:
+        ax12.axhline(1.0, color="0.6", lw=0.8, ls=":")
+        ax12.set_ylabel("forward Δ / per-cluster max")
+        ax12.set_title("Per-cluster forward Δ — main effects (per-cluster 0–1)", fontsize=10)
+    else:
+        ax12.set_ylabel("accepted forward Δ bits/spike")
+        ax12.set_title("Per-cluster forward Δ — main effects", fontsize=10)
 
-    # (1,3) interaction accepted forward Δ, sorted by Σ of positive gains.
+    # (1,3) interaction accepted forward Δ, sorted by Σ of positive gains. In
+    # norm_violins mode each interaction Δ is divided by its cluster's own max OVER
+    # INTERACTIONS — self-referenced, exactly like the main-effect panel divides by
+    # the main-effect max (NOT the buggy preview, which divided by main-effect max).
     it_labels = sorted(inter_fwd, key=lambda k: -float(np.nansum(np.clip(inter_fwd[k], 0, None))))
-    _violin_panel(ax13, [_INT_ABBR(k) for k in it_labels],
-                  [inter_fwd[k] for k in it_labels], "interaction terms",
+    if norm_violins:
+        if inter_pc is None:
+            raise ValueError("norm_violins=True needs inter_pc (per-cluster interactions)")
+        ipc = inter_pc.copy()
+        ipc["_cmax"] = ipc.groupby(["probe_id", "cluster_id"])["delta_bps"].transform("max")
+        ipc["_norm"] = np.where(ipc["_cmax"] > 0, ipc["delta_bps"] / ipc["_cmax"], np.nan)
+        it_data = [ipc.loc[ipc["candidate"] == k, "_norm"].dropna().to_numpy()
+                   for k in it_labels]
+    else:
+        it_data = [inter_fwd[k] for k in it_labels]
+    _violin_panel(ax13, [_INT_ABBR(k) for k in it_labels], it_data, "interaction terms",
                   [_interaction_colors(k)[0] for k in it_labels])
-    ax13.set_ylabel("accepted forward Δ bits/spike")
-    ax13.set_title("Per-cluster forward Δ — interaction terms", fontsize=10)
+    if norm_violins:
+        ax13.axhline(1.0, color="0.6", lw=0.8, ls=":")
+        ax13.set_ylabel("forward Δ / per-cluster interaction max")
+        ax13.set_title("Per-cluster forward Δ — interactions (per-cluster 0–1)", fontsize=10)
+    else:
+        ax13.set_ylabel("accepted forward Δ bits/spike")
+        ax13.set_title("Per-cluster forward Δ — interaction terms", fontsize=10)
 
     # (2,*) per-cluster stacked accepted forward Δ + low-cumulative zoom.
     present = [(lab, col, c) for lab, col, c in ACID_VARS if col in fvp.columns]
@@ -1981,8 +2029,10 @@ def plot_fig2_forward_deltas(mc, fvp, inter_fwd, out_path, *, log_heat=False, un
         _heat(ax3z, Mz, f"cluster (cumulative < 0.2, n={int(mask.sum())})",
               "magnified: same clusters (colour scale rescaled)", vmax=vmax_z)
 
+    _norm_tag = (" — PER-CLUSTER-MAX-NORMALISED violins (each family self-referenced, "
+                 "same 0–1 scale as the unit heatmap)") if norm_violins else ""
     fig.suptitle("FENS fig 2 — forward-selection summary, FORWARD-Δ version "
-                 "(stacked accepted sequential gains, not LOO-unique)",
+                 "(stacked accepted sequential gains, not LOO-unique)" + _norm_tag,
                  fontsize=12, fontweight="bold")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
@@ -2169,7 +2219,7 @@ def main() -> int:
     if args.fig2_forward_deltas:
         from run_glm_goggles_rf_sfor_20ms import PROBES
         mc = pd.read_csv(RUN_ALL_DIR / "glm_model_comparison.csv")
-        fvp, inter_fwd = _load_forward_deltas(RUN_ALL_DIR, PROBES)
+        fvp, inter_fwd, inter_pc = _load_forward_deltas(RUN_ALL_DIR, PROBES)
         log.info("fig2 forward-Δ: %d clusters (model_comparison), %d (selection history), "
                  "%d interaction terms", len(mc), len(fvp), len(inter_fwd))
         plot_fig2_forward_deltas(
@@ -2183,7 +2233,19 @@ def main() -> int:
             mc, fvp, inter_fwd,
             OUT_DIR / "fig2_forward_selection_summary_forwarddeltas_unitheat",
             unit_heat=True)
-        return 0
+        # Per-cluster-max-normalised violins (both families self-referenced); same
+        # 0–1 scale as the unit heatmap. Each interaction Δ ÷ its cluster's own
+        # interaction max (NOT the main-effect max). PDF also copied to ~/Downloads.
+        norm_out = OUT_DIR / "fig2_forward_selection_summary_forwarddeltas_unitheat_normviolins"
+        plot_fig2_forward_deltas(
+            mc, fvp, inter_fwd, norm_out,
+            unit_heat=True, norm_violins=True, inter_pc=inter_pc)
+        preview = Path.home() / "Downloads" / "fig2_forwarddeltas_unitheat_normviolins_PREVIEW.pdf"
+        try:
+            shutil.copyfile(norm_out.with_suffix(".pdf"), preview)
+            log.info("copied preview → %s", preview)
+        except OSError as e:
+            log.warning("could not copy preview to %s: %s", preview, e)
         return 0
 
     # Tuning-only browsing grids over one or more probes (loads each itself).
