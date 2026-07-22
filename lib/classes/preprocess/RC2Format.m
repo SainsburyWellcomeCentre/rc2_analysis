@@ -66,7 +66,7 @@ classdef RC2Format < RC2Analysis
         %   PROBE_ID. Including:
         %       - anatomy   using the probe track .csv and offsets computed
         %                   from the high-frequency power
-        %       - clusters  using the output from Kilosort2
+        %       - clusters  using the output from Kilosort4 (via SpikeInterface)
         %       - sessions  using the RC2 .bin files
         %       - syncronization  using the trigger on the probe
         %       - selected_clusters  using the manually selected clusters
@@ -183,25 +183,25 @@ classdef RC2Format < RC2Analysis
         function clusters = format_clusters(obj, probe_id)
         %%format_clusters Format the `clusters` structure
         %
-        %   CLUSTERS = format_clusters(PROBE_ID) takes the files in the output of 
-        %   kilosort2/ecephys_spike_sorting or related fork, and produces a sequence 
+        %   CLUSTERS = format_clusters(PROBE_ID) takes the files in the output of
+        %   the SpikeInterface + Kilosort4 pipeline, and produces a sequence
         %   of "cluster" objects with all the associated information.
         %   PROBE_ID is the ID of a probe recording. Outputs CLUSTERS, a structure 
         %   array of clusters with several properties
             
             % read the kilosort data
             params            = obj.load.params(probe_id);
-            spike_clusters    = obj.load.ks2_npy(probe_id, 'spike_clusters');
-            spike_templates   = obj.load.ks2_npy(probe_id, 'spike_templates');
-            spike_times       = obj.load.ks2_npy(probe_id, 'spike_times');
-            amplitudes        = obj.load.ks2_npy(probe_id, 'amplitudes');
-            templates         = obj.load.ks2_npy(probe_id, 'templates');
-            chan_map          = obj.load.ks2_npy(probe_id, 'channel_map');
-            chan_pos          = obj.load.ks2_npy(probe_id, 'channel_positions');
+            spike_clusters    = obj.load.ks4_npy(probe_id, 'spike_clusters');
+            spike_templates   = obj.load.ks4_npy(probe_id, 'spike_templates');
+            spike_times       = obj.load.ks4_npy(probe_id, 'spike_times');
+            amplitudes        = obj.load.ks4_npy(probe_id, 'amplitudes');
+            templates         = obj.load.ks4_npy(probe_id, 'templates');
+            chan_map          = obj.load.ks4_npy(probe_id, 'channel_map');
+            chan_pos          = obj.load.ks4_npy(probe_id, 'channel_positions');
             qm_table          = obj.load.metrics_csv(probe_id);
             waveform_fixed_table = obj.load.waveform_metrics_fixed_csv(probe_id);
             cluster_groups    = obj.load.cluster_groups(probe_id);
-            ks_label          = obj.load.ks2_label(probe_id);
+            ks_label          = obj.load.ks4_label(probe_id);
             
             spikeglx_meta       = obj.load.spikeglx_ap_metadata(probe_id);
             
@@ -285,7 +285,7 @@ classdef RC2Format < RC2Analysis
                     clusters(i).class = '';
                 end
                 
-                % KS2 metrics
+                % Kilosort label (from cluster_KSLabel.tsv)
                 if ~isempty(ks_label)
                     % use the original template as this is NOT changed after phy
                     %   takes the original cluster with most spikes contributing merged
@@ -293,9 +293,9 @@ classdef RC2Format < RC2Analysis
                     %   if split, the original cluster will be the same label for all new
                     %   clusters.
                     ks_label_idx = ks_label.cluster_id == ori_cluster_id;
-                    clusters(i).ks2_class = ks_label.KSLabel{ks_label_idx};
+                    clusters(i).ks_class = ks_label.KSLabel{ks_label_idx};
                 else
-                    clusters(i).ks2_class = nan;
+                    clusters(i).ks_class = nan;
                 end
                 
                 % if quality metrics were read successfully

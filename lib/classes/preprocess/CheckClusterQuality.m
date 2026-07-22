@@ -8,9 +8,9 @@ classdef CheckClusterQuality < handle
 %       isi_thresh      - (default = 1.5ms)
 %       isi_min         - (default = 0.166ms)
 %       probe_fs        - sample rate of the probe recording (default = 3000Hz)
-%       apply_jcolonell_isi_correction - whether to apply the correction
-%                                       appearing in a recent version of
-%                                       ecephys_spike_sorting (default = false)
+%       apply_isi_fp_correction - whether to apply the ISI false-positive
+%                                       rate correction (Hill et al. style;
+%                                       default = false)
 %
 %     Private:
 %       ctl             - instance of RC2Preprocess
@@ -32,7 +32,7 @@ classdef CheckClusterQuality < handle
 
     properties
         
-        apply_jcolonell_isi_correction = false
+        apply_isi_fp_correction = false
         isi_limit = 30; % ms
         isi_bin = 0.25; % ms
         isi_thresh = 1.5; % ms
@@ -61,9 +61,9 @@ classdef CheckClusterQuality < handle
             obj.probe_id = probe_id;
             
             obj.session_bounds = obj.ctl.get_session_bounds(obj.probe_id);
-            obj.spike_times = double(obj.ctl.load.ks2_npy(obj.probe_id, 'spike_times')) / obj.probe_fs;
-            obj.spike_clusters = obj.ctl.load.ks2_npy(obj.probe_id, 'spike_clusters');
-            obj.amplitudes = obj.ctl.load.ks2_npy(obj.probe_id, 'amplitudes');
+            obj.spike_times = double(obj.ctl.load.ks4_npy(obj.probe_id, 'spike_times')) / obj.probe_fs;
+            obj.spike_clusters = obj.ctl.load.ks4_npy(obj.probe_id, 'spike_clusters');
+            obj.amplitudes = obj.ctl.load.ks4_npy(obj.probe_id, 'amplitudes');
         end
         
         
@@ -194,9 +194,8 @@ classdef CheckClusterQuality < handle
         %       med_amp         - median spike amplitude
         %       amp_ratio       - median / minimum amplitude
         %
-        %   If `apply_jcolonell_isi_correction` is true, the `fp_rate`
-        %   field is updated with the correction applied by a recent
-        %   version of ecephys_spike_sorting.
+        %   If `apply_isi_fp_correction` is true, the `fp_rate`
+        %   field is updated with the ISI false-positive rate correction
         %
         %   See also: print_cluster_info
         
@@ -223,7 +222,7 @@ classdef CheckClusterQuality < handle
             
             info.viol_expected = round(2*1e-3*(obj.isi_thresh-obj.isi_min)*info.n_spikes*info.total_rate);
             
-            if obj.apply_jcolonell_isi_correction
+            if obj.apply_isi_fp_correction
                 if info.fp_rate < 0.25
                     info.fp_rate = (1 - sqrt(1-4*info.fp_rate))/2;
                 else

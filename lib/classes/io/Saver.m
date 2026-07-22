@@ -16,8 +16,8 @@ classdef Saver < handle
 %    hf_power_figure            - save the HF power figure to .pdf
 %    track_offset               - save the offset between ephys and anatomy L5 for a shank to .txt
 %    hf_power_parameters        - save the HF power parameters to .mat
-%    clusters_janelia_csv       - save the clusters which pass quality metric criteria to .csv
-%    mua_clusters_janelia_csv   - save the clusters which pass quality metric criteria for MUA to .csv
+%    clusters_to_check_csv       - save the clusters which pass quality metric criteria to .csv
+%    mua_clusters_to_check_csv   - save the clusters which pass quality metric criteria for MUA to .csv
 %    selected_clusters_txt      - save the manually selected clusters to a .txt
 %    selected_mua_clusters_txt  - save the manually selected MUA clusters to a .txt
 %    trigger_mat                - save the sync trigger channel to a separate .mat
@@ -182,26 +182,26 @@ classdef Saver < handle
         
         
         
-        function clusters_janelia_csv(obj, probe_id, tbl)
-        %%clusters_janelia_csv Save the clusters which pass quality metric criteria to .csv
+        function clusters_to_check_csv(obj, probe_id, tbl)
+        %%clusters_to_check_csv Save the clusters which pass quality metric criteria to .csv
         %
-        %  clusters_janelia_csv(PROBE_ID, TABLE) save the data in TABLE for probe
+        %  clusters_to_check_csv(PROBE_ID, TABLE) save the data in TABLE for probe
         %  recording with ID, PROBE_ID.
         
-            fname = obj.file_manager.clusters_janelia_csv(probe_id);
+            fname = obj.file_manager.clusters_to_check_csv(probe_id);
             obj.writetable(fname, tbl);
         end
         
         
         
-        function mua_clusters_janelia_csv(obj, probe_id, tbl)
-        %%mua_clusters_janelia_csv Save the clusters which pass quality
+        function mua_clusters_to_check_csv(obj, probe_id, tbl)
+        %%mua_clusters_to_check_csv Save the clusters which pass quality
         %%metric criteria for MUA to .csv
         %
-        %  mua_clusters_janelia_csv(PROBE_ID, TABLE) save the data in TABLE
+        %  mua_clusters_to_check_csv(PROBE_ID, TABLE) save the data in TABLE
         %  for probe recording with ID, PROBE_ID.
         
-            fname = obj.file_manager.mua_clusters_janelia_csv(probe_id);
+            fname = obj.file_manager.mua_clusters_to_check_csv(probe_id);
             obj.writetable(fname, tbl);
         end
         
