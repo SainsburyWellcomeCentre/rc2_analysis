@@ -74,9 +74,11 @@ classdef RC2Format < RC2Analysis
         %
         %   Formatted data is saved to a single .mat file of form:
         %       <path_config.formatted_data_dir>\<probe_id>.mat
-        
+
+            obj.save.create_csvs_dirs();
+
             formatted_data.probe_id                             = probe_id;
-            
+
             shank_ids                                           = obj.get_shank_ids(probe_id);
             
             for ii = 1 : length(shank_ids)

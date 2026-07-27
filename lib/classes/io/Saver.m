@@ -296,13 +296,36 @@ classdef Saver < handle
         function create_tracks_dir(obj, probe_id)
         %%create_tracks_dir Create a 'tracks' directory in the Kilosort directory
         %
-        %  create_tracks_dir(PROBE_ID) 
-        
+        %  create_tracks_dir(PROBE_ID)
+
             [dname, exists] = obj.file_manager.tracks_dir(probe_id);
-            
+
             if exists; return; end
             [parent_dir, sub_dir] = fileparts(dname);
             mkdir(parent_dir, sub_dir);
+        end
+
+
+
+        function create_csvs_dirs(obj)
+        %%create_csvs_dirs Create the 'csvs' directory and its 4 subdirectories
+        %%in formatted_data_dir, if they don't already exist
+        %
+        %  create_csvs_dirs() creates <formatted_data_dir>\csvs\ with
+        %  subdirectories trial_matched_offsets, stationary_vs_motion_fr,
+        %  tuning_curves and tuning_curves_acceleration -- the destinations
+        %  written to by offsets_table, svm_table, tuning_curves and
+        %  tuning_curves_acceleration respectively.
+
+            csvs_dir = fullfile(obj.file_manager.path_config.formatted_data_dir, 'csvs');
+            sub_dirs = {'trial_matched_offsets', 'stationary_vs_motion_fr', ...
+                        'tuning_curves', 'tuning_curves_acceleration'};
+            for ii = 1 : length(sub_dirs)
+                dname = fullfile(csvs_dir, sub_dirs{ii});
+                if ~isfolder(dname)
+                    mkdir(dname)
+                end
+            end
         end
         
         
@@ -332,11 +355,15 @@ classdef Saver < handle
         %%writetable General function for saving table to .csv
         %
         %  writetable(FILENAME, TABLE) save MATLAB table in TABLE to
-        %  FILENAME.
-        
+        %  FILENAME. Creates the parent directory first if it doesn't
+        %  already exist.
+
             if obj.check_save(fname)
-                writetable(tbl, fname);
                 [pathname, filename] = fileparts(fname);
+                if ~isfolder(pathname)
+                    mkdir(pathname)
+                end
+                writetable(tbl, fname);
                 cfg_fname = fullfile(pathname, [filename, '.cfg']);
                 obj.git.save(cfg_fname);
             end
