@@ -6,10 +6,10 @@ classdef RC2Preprocess < RC2Format
 %   RC2Preprocess Methods:
 %       preprocess_step_1               - first step of preprocessing
 %       run_from_step                   - run preprocess_step_1 starting from a chosen step
-%       janelia_ecephys_spike_sorting   - run ecephys_spike_sorting
-%       run_ecephys_from_step           - run ecephys_spike_sorting from a chosen module
-%       create_check_clusters_csv       - create the .csv with the clusters to manually check
-%       create_check_mua_clusters_csv   - create the .csv with the clusters to manually check for MUA clusters
+%       si_sorting                      - run the SpikeInterface sorting pipeline
+%       run_sorting_from_step           - run the SpikeInterface pipeline with optional controls
+%       create_check_clusters_csv       - write the automated (Bombcell+metric) curation .csv and selected_clusters.txt
+%       create_check_mua_clusters_csv   - write the automated MUA curation .csv and selected_mua_clusters.txt
 %       create_trigger_file             - separate the trigger channel from the the probe .bin file
 %       correct_trigger_file            - manually correct the trigger file if necessary
 %       create_driftmap                 - create and save a driftmap
@@ -17,11 +17,11 @@ classdef RC2Preprocess < RC2Format
 %       hf_power                        - create HighFrequencyPowerProfile object
 %       save_hf_power                   - save an analyzed HighFrequencyPowerProfile object
 %       create_mock_track               - create a 'track.csv' with a similar format to the real eventual track file
-%       create_selected_clusters_txt    - create text file with the clusters selected
-%       create_selected_mua_clusters_txt - create text file with the MUA clusters selected
+%       create_selected_clusters_txt    - write selected_clusters.txt from the `keep` column of the curation .csv
+%       create_selected_mua_clusters_txt - write selected_mua_clusters.txt from the `keep` column of the MUA curation .csv
 %       mua_from_tip_um                 - for MUA get disatnce from probe tip
 %       move_raw_to_local               - move the raw probe data to a local location
-%       patch_meta_NP2013               - patch NP2013 meta file for Janelia pipeline compatibility
+%       patch_meta_NP2013               - remap a newer-SpikeGLX NP2013 meta file to the older NP24 field layout
 %       cluster_info                    - create CheckClusterQuality object
 
     properties
@@ -47,26 +47,15 @@ classdef RC2Preprocess < RC2Format
             fprintf('Valid start_step names for run_from_step (in execution order):\n');
             fprintf('  ''move_raw_to_local''\n');
             fprintf('  ''patch_meta_NP2013''\n');
-            fprintf('  ''janelia_ecephys_spike_sorting''\n');
+            fprintf('  ''si_sorting''\n');
             fprintf('  ''create_check_clusters_csv''\n');
             fprintf('  ''create_trigger_file''\n');
-            fprintf('  ''create_driftmap''\n');
+            fprintf('  ''creNate_driftmap''\n');
             fprintf('  ''process_camera_data''\n');
             fprintf('\n');
-            fprintf('To start the janelia step from a chosen sorting module AND still\n');
-            fprintf('run every later step to the end, name the module directly as the\n');
-            fprintf('start_step of run_from_step, e.g.:\n');
-            fprintf('  run_from_step(probe_id, ''noise_templates'')\n');
-            fprintf('Valid janelia sorting modules (in execution order):\n');
-            fprintf('  ''kilosort_helper''\n');
-            fprintf('  ''kilosort_postprocessing''\n');
-            fprintf('  ''noise_templates''\n');
-            fprintf('  ''mean_waveforms''\n');
-            fprintf('  ''quality_metrics''\n');
-            fprintf('\n');
-            fprintf('To run *only* the ecephys_spike_sorting step (without chaining to the\n');
-            fprintf('later steps), use:\n');
-            fprintf('  3. run_ecephys_from_step(probe_id, ...)   - see ''help RC2Preprocess.run_ecephys_from_step''\n');
+            fprintf('To run *only* the SpikeInterface sorting step (without chaining to\n');
+            fprintf('the later steps), use:\n');
+            fprintf('  3. run_sorting_from_step(probe_id, ...)   - see ''help RC2Preprocess.run_sorting_from_step''\n');
         end
         
         
@@ -78,7 +67,7 @@ classdef RC2Preprocess < RC2Format
         %   for probe recording PROBE_ID. This includes:
         %       - moving raw probe data to a local location
         %       - patch the NP2013 meta file
-        %       - run the ecephys_spike_sorting pipeline
+        %       - run the SpikeInterface sorting pipeline
         %       - create a .csv with clusters to check
         %       - create a .mat with the trigger channel
         %       - create a driftmap
@@ -107,118 +96,60 @@ classdef RC2Preprocess < RC2Format
         %   steps below, listed in execution order:
         %       'move_raw_to_local'
         %       'patch_meta_NP2013'
-        %       'janelia_ecephys_spike_sorting'
+        %       'si_sorting'
         %       'create_check_clusters_csv'
         %       'create_trigger_file'
         %       'create_driftmap'
         %       'process_camera_data'
         %
-        %   START_STEP may ALSO be the name of one of the janelia sorting
-        %   sub-modules, in which case the janelia step is resumed from that
-        %   module and, crucially, the pipeline then carries on through
-        %   create_check_clusters_csv and every later step (this is what
-        %   plain run_ecephys_from_step does NOT do). Valid modules, in
-        %   execution order:
-        %       'kilosort_helper'
-        %       'kilosort_postprocessing'
-        %       'noise_templates'
-        %       'mean_waveforms'
-        %       'quality_metrics'
-        %
         %   run_from_step(..., NAME, VALUE, ...) forwards the optional
-        %   ecephys controls ('run_catgt', 'start_module', 'run_tprime') to
-        %   the janelia step (see run_ecephys_from_step). These only have an
-        %   effect when the janelia step is within the range being run.
+        %   pipeline controls ('run_catgt', 'run_tprime') to the sorting
+        %   step (see run_sorting_from_step). These only have an effect
+        %   when the sorting step is within the range being run.
         %
-        %   When the janelia step is resumed from a module other than
-        %   'kilosort_helper', CatGT has normally already been produced, so
-        %   'run_catgt' defaults to false unless set explicitly.
-        %
-        %   Examples:
+        %   Example:
         %       ctl.run_from_step(probe_id, 'create_trigger_file')
         %   runs create_trigger_file, create_driftmap and
         %   process_camera_data, skipping the four earlier steps.
-        %
-        %       ctl.run_from_step(probe_id, 'noise_templates')
-        %   resumes the janelia step from noise_templates (CatGT skipped by
-        %   default), then runs create_check_clusters_csv, create_trigger_file,
-        %   create_driftmap and process_camera_data.
 
             steps = {'move_raw_to_local', ...
                      'patch_meta_NP2013', ...
-                     'janelia_ecephys_spike_sorting', ...
+                     'si_sorting', ...
                      'create_check_clusters_csv', ...
                      'create_trigger_file', ...
                      'create_driftmap', ...
                      'process_camera_data'};
 
-            % the janelia sorting sub-modules, in execution order; a module
-            % name may be given directly as START_STEP (see below).
-            ecephys_modules = JaneliaEcephysHelper.module_order;
-
             start_step   = char(start_step);
-            ecephys_args = varargin;
+            sorting_args = varargin;
 
-            % shorthand: when START_STEP names a janelia sub-module, treat it
-            % as "start the janelia step from this module". We translate it
-            % into the janelia step plus a 'start_module' control so the loop
-            % below still chains through every later step.
-            if ismember(start_step, ecephys_modules)
-                if any(strcmpi(ecephys_args(1:2:end), 'start_module'))
-                    error('RC2Preprocess:run_from_step:duplicateStartModule', ...
-                          ['START_STEP "%s" is a janelia module, so do not ' ...
-                           'also pass a ''start_module'' name-value pair.'], ...
-                          start_step);
-                end
-                ecephys_args = [{'start_module', start_step}, ecephys_args];
-                start_step   = 'janelia_ecephys_spike_sorting';
-            end
-
-            % exact, case-sensitive match against the valid step names;
-            % ismember returns the index of the match in START_IDX so no
-            % approximate / partial matching can ever occur.
+            % exact, case-sensitive match against the valid step names
             [is_known_step, start_idx] = ismember(start_step, steps);
 
             if ~is_known_step
                 error('RC2Preprocess:run_from_step:unknownStep', ...
                       ['Unknown step "%s". START_STEP must be the exact ' ...
-                       'name of one of the pipeline steps:\n  %s\n' ...
-                       'or one of the janelia sorting modules:\n  %s'], ...
-                      start_step, strjoin(steps, '\n  '), ...
-                      strjoin(ecephys_modules, '\n  '));
+                       'name of one of the pipeline steps:\n  %s'], ...
+                      start_step, strjoin(steps, '\n  '));
             end
 
-            janelia_idx = find(strcmp('janelia_ecephys_spike_sorting', steps), 1);
+            si_idx = find(strcmp('si_sorting', steps), 1);
 
-            % the ecephys controls only apply if the janelia step is part of
-            % the range about to run; warn and drop them otherwise.
-            if ~isempty(ecephys_args) && start_idx > janelia_idx
-                warning('RC2Preprocess:run_from_step:ignoredEcephysArgs', ...
-                        ['Ecephys controls were supplied but START_STEP ' ...
-                         '"%s" is after the janelia step, so they are ' ...
+            % pipeline controls (run_catgt, run_tprime) only apply if the
+            % sorting step is within the range being run; warn and drop otherwise.
+            if ~isempty(sorting_args) && start_idx > si_idx
+                warning('RC2Preprocess:run_from_step:ignoredPipelineArgs', ...
+                        ['Pipeline controls were supplied but START_STEP ' ...
+                         '"%s" is after the sorting step, so they are ' ...
                          'ignored.'], start_step);
-                ecephys_args = {};
-            end
-
-            % when resuming the janelia step from a module other than the
-            % first one, CatGT has normally already run; default run_catgt to
-            % false unless the caller set it explicitly.
-            if ~isempty(ecephys_args) && mod(numel(ecephys_args), 2) == 0
-                keys     = ecephys_args(1:2:end);
-                sm_pos   = find(strcmpi(keys, 'start_module'), 1);
-                has_catgt = any(strcmpi(keys, 'run_catgt'));
-                if ~isempty(sm_pos) && ~has_catgt && ...
-                        ~strcmp(ecephys_args{2*sm_pos}, 'kilosort_helper')
-                    ecephys_args = [ecephys_args, {'run_catgt', false}];
-                end
+                sorting_args = {};
             end
 
             for ii = start_idx : length(steps)
                 fprintf('Running step %i/%i: %s\n', ii, length(steps), steps{ii});
-                if strcmp(steps{ii}, 'janelia_ecephys_spike_sorting') && ~isempty(ecephys_args)
-                    % resume janelia from the chosen module / with the chosen
-                    % switches, then let the loop continue to the later steps
-                    obj.run_ecephys_from_step(probe_id, ecephys_args{:});
+                if strcmp(steps{ii}, 'si_sorting') && ~isempty(sorting_args)
+                    % run sorting with the pipeline controls supplied by the caller
+                    obj.run_sorting_from_step(probe_id, sorting_args{:});
                 else
                     obj.(steps{ii})(probe_id);
                 end
@@ -227,111 +158,100 @@ classdef RC2Preprocess < RC2Format
 
 
 
-        function janelia_ecephys_spike_sorting(obj, probe_id)
-        %%janelia_ecephys_spike_sorting Run ecephys_spike_sorting
+        function si_sorting(obj, probe_id)
+        %%si_sorting Run the SpikeInterface sorting pipeline
         %
-        %   janelia_ecephys_spike_sorting(PROBE_ID) runs the full
-        %   ecephys_spike_sorting pipeline for probe recording PROBE_ID
-        %   (CatGT followed by all sorting modules, no TPrime).
+        %   si_sorting(PROBE_ID) runs the full SpikeInterface pipeline for
+        %   probe recording PROBE_ID (CatGT + KS4 + SI post-processing,
+        %   no TPrime).
         %
-        %   To run the pipeline from a chosen point - skipping CatGT and/or
-        %   the early sorting modules, or enabling TPrime - use
-        %   run_ecephys_from_step.
+        %   To skip CatGT or enable TPrime, use run_sorting_from_step.
 
-            obj.run_ecephys_from_step(probe_id);
+            obj.run_sorting_from_step(probe_id);
         end
 
 
 
-        function run_ecephys_from_step(obj, probe_id, varargin)
-        %%run_ecephys_from_step Run ecephys_spike_sorting from a chosen point
+        function run_sorting_from_step(obj, probe_id, varargin)
+        %%run_sorting_from_step Run the SpikeInterface sorting pipeline with optional controls
         %
-        %   run_ecephys_from_step(PROBE_ID) runs the full ecephys_spike_sorting
+        %   run_sorting_from_step(PROBE_ID) runs the full SpikeInterface
         %   pipeline for probe recording PROBE_ID and is identical to
-        %   janelia_ecephys_spike_sorting(PROBE_ID).
+        %   si_sorting(PROBE_ID).
         %
-        %   run_ecephys_from_step(PROBE_ID, NAME, VALUE, ...) runs the
-        %   pipeline with the optional name-value controls below, so it can
-        %   be re-run from any point without editing the python script:
+        %   run_sorting_from_step(PROBE_ID, NAME, VALUE, ...) runs the
+        %   pipeline with the optional name-value controls below:
         %
-        %       'run_catgt'    - logical, whether to run the CatGT step
-        %                        (default true). Set false to sort data that
-        %                        has already been CatGT-processed.
-        %       'start_module' - char, the sorting module to start from. That
-        %                        module and every module after it are run.
-        %                        One of, in execution order:
-        %                            'kilosort_helper'         (default)
-        %                            'kilosort_postprocessing'
-        %                            'noise_templates'
-        %                            'mean_waveforms'
-        %                            'quality_metrics'
-        %       'run_tprime'   - logical, whether to run the TPrime step at
-        %                        the end of the pipeline (default false).
+        %       'run_catgt'  - logical, whether to run the CatGT step
+        %                      (default true). Set false to re-sort data
+        %                      that has already been CatGT-processed.
+        %       'run_tprime' - logical, whether to run the TPrime step at
+        %                      the end of the pipeline (default false).
         %
         %   Example:
-        %       ctl.run_ecephys_from_step(probe_id, 'run_catgt', false, ...
-        %                                 'start_module', 'noise_templates')
-        %   skips CatGT and the first two sorting modules, running only
-        %   noise_templates, mean_waveforms and quality_metrics.
+        %       ctl.run_sorting_from_step(probe_id, 'run_catgt', false)
+        %   re-sorts already-CatGT'd data without re-running CatGT.
         %
-        %   Note: starting from a later step assumes the output of the
-        %   earlier steps already exists on disk.
-        %
-        %   This method runs the ecephys_spike_sorting step ONLY; it does not
-        %   continue to create_check_clusters_csv or any later stage-1 step.
-        %   To resume from a sorting module AND carry on to the end of the
-        %   pipeline, use run_from_step (e.g.
-        %   run_from_step(PROBE_ID, 'noise_templates')).
+        %   This method runs the sorting step ONLY; it does not continue to
+        %   create_check_clusters_csv or any later stage-1 step. To carry
+        %   on to the end of the pipeline, use run_from_step.
 
             parser = inputParser();
             parser.addParameter('run_catgt', true, ...
                                 @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
             parser.addParameter('run_tprime', false, ...
                                 @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
-            parser.addParameter('start_module', 'kilosort_helper', ...
-                                @(x) ischar(x) || isstring(x));
             parser.parse(varargin{:});
 
-            je_helper = JaneliaEcephysHelper(obj, probe_id);
-            je_helper.leave_window_open_on_error = obj.leave_window_open_on_error;
-            je_helper.run_catgt  = logical(parser.Results.run_catgt);
-            je_helper.run_tprime = logical(parser.Results.run_tprime);
-            % the helper's set.start_module validates this against the known
-            % module names and errors on an unknown one
-            je_helper.start_module = char(parser.Results.start_module);
+            si_helper = SortingHelper(obj, probe_id);
+            si_helper.leave_window_open_on_error = obj.leave_window_open_on_error;
+            si_helper.run_catgt  = logical(parser.Results.run_catgt);
+            si_helper.run_tprime = logical(parser.Results.run_tprime);
 
-            fprintf(['Running ecephys_spike_sorting (run_catgt=%d, ' ...
-                     'start_module=''%s'', run_tprime=%d)\n'], ...
-                    je_helper.run_catgt, je_helper.start_module, je_helper.run_tprime);
+            fprintf('Running SpikeInterface pipeline (run_catgt=%d, run_tprime=%d)\n', ...
+                    si_helper.run_catgt, si_helper.run_tprime);
 
-            je_helper.run_from_raw();
+            si_helper.run_from_raw();
         end
         
         
         
         function create_check_clusters_csv(obj, probe_id)
-        %%create_check_clusters_csv Create the .csv with the clusters to manually check
+        %%create_check_clusters_csv Create the automated (Bombcell + metric) curation .csv
         %
-        %   create_check_clusters_csv(PROBE_ID) creates the .csv with the 
-        %   clusters to manually check for probe recording PROBE_ID.
-        
+        %   create_check_clusters_csv(PROBE_ID) writes an EDITABLE .csv listing
+        %   every cluster with its Bombcell label and a `keep` column pre-filled
+        %   with the automated decision (Bombcell 'good' AND passing the quality
+        %   metrics). It then auto-generates selected_clusters.txt from those
+        %   defaults, so curation is fully automated and NO manual step is
+        %   required.
+        %
+        %   Optional manual override: edit the `keep` column of
+        %   clusters_to_check.csv (optionally after inspecting units in Phy) to
+        %   force a cluster in (keep=1) or out (keep=0), then re-run
+        %   create_selected_clusters_txt(PROBE_ID) before formatting.
+
             cc = RestrictClusters(obj, probe_id);
-            new_tbl = cc.restrict_metrics_table();
-            obj.save.clusters_janelia_csv(probe_id, new_tbl);
+            tbl = cc.curation_table();
+            obj.save.clusters_to_check_csv(probe_id, tbl);
+            obj.create_selected_clusters_txt(probe_id);
         end
            
         
         
         function create_check_mua_clusters_csv(obj, probe_id)
-        %%create_check_mua_clusters_csv Create the .csv with the clusters
-        %%to manually check for MUA clusters
+        %%create_check_mua_clusters_csv Create the automated MUA curation .csv
         %
-        %   create_check_mua_clusters_csv(PROBE_ID) creates the .csv with
-        %   the clusters to manually check for probe recording PROBE_ID. 
-        
+        %   create_check_mua_clusters_csv(PROBE_ID) writes an EDITABLE .csv with
+        %   a `keep` column pre-filled from the automated MUA decision (Bombcell
+        %   'mua' AND passing the MUA metric thresholds), then auto-generates
+        %   selected_mua_clusters.txt. Edit the `keep` column and re-run
+        %   create_selected_mua_clusters_txt(PROBE_ID) to override.
+
             cc = RestrictClusters(obj, probe_id);
-            new_tbl = cc.restrict_mua_metrics_table();
-            obj.save.mua_clusters_janelia_csv(probe_id, new_tbl);
+            tbl = cc.curation_mua_table();
+            obj.save.mua_clusters_to_check_csv(probe_id, tbl);
+            obj.create_selected_mua_clusters_txt(probe_id);
         end
         
         
@@ -368,8 +288,8 @@ classdef RC2Preprocess < RC2Format
         %   create_driftmap(PROBE_ID) creates and save a driftmap for a
         %   probe recording PROBE_ID.
         
-            ks2_dir = obj.file.imec0_ks2(probe_id);
-            [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks2_dir);
+            ks4_dir = obj.file.imec0_ks4(probe_id);
+            [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks4_dir);
             
             % render the driftmap off-screen: it is a very dense scatter
             % that is saved straight to PDF and closed, never inspected
@@ -489,31 +409,33 @@ classdef RC2Preprocess < RC2Format
         
         
         function create_selected_clusters_txt(obj, probe_id)
-        %%create_selected_clusters_txt Create text file with the clusters selected
+        %%create_selected_clusters_txt Write selected_clusters.txt from the `keep` column of the curation .csv
         %
-        %   create_selected_clusters_txt(PROBE_ID) takes the .xlsx saved
-        %   after the manual Phy step and extracts the selected clusters to
-        %   save in a text file in the Kilosort directory.
-            
-            clusters_xlsx = obj.load.clusters_janelia_xlsx(probe_id);
-            idx = ~(strcmp(clusters_xlsx.mateo, 'b') & strcmp(clusters_xlsx.lee, 'b'));
-            selected_clusters = clusters_xlsx.cluster_id(idx);
+        %   create_selected_clusters_txt(PROBE_ID) reads clusters_to_check.csv
+        %   (the automated Bombcell + metric curation, possibly hand-edited) and
+        %   writes the IDs whose `keep` column is 1 to selected_clusters.txt.
+        %   Called automatically by create_check_clusters_csv; re-run it after
+        %   editing the .csv to apply manual keep/discard overrides before
+        %   formatting.
+
+            tbl = obj.load.clusters_to_check_csv(probe_id);
+            selected_clusters = tbl.cluster_id(tbl.keep == 1);
             obj.save.selected_clusters_txt(probe_id, selected_clusters);
         end
         
         
         
         function create_selected_mua_clusters_txt(obj, probe_id)
-        %%create_selected_mua_clusters_txt Create text file with a list of
-        %%the selected MUA clusters 
+        %%create_selected_mua_clusters_txt Write selected_mua_clusters.txt from the `keep` column of the MUA curation .csv
         %
-        %   create_selected_mua_clusters_txt(PROBE_ID) takes the .xlsx
-        %   saved after the manual Phy step and extracts the selected MUA
-        %   clusters to save in a text file in the Kilosort directory.
-            
-            clusters_xlsx = obj.load.mua_clusters_janelia_xlsx(probe_id);
-            idx = ~((clusters_xlsx.mateo == 1) | (clusters_xlsx.lee == 1));
-            selected_clusters = clusters_xlsx.cluster_id(idx);
+        %   create_selected_mua_clusters_txt(PROBE_ID) reads
+        %   mua_clusters_to_check.csv (automated MUA curation, possibly
+        %   hand-edited) and writes the IDs whose `keep` column is 1 to
+        %   selected_mua_clusters.txt. Called automatically by
+        %   create_check_mua_clusters_csv; re-run after editing the .csv.
+
+            tbl = obj.load.mua_clusters_to_check_csv(probe_id);
+            selected_clusters = tbl.cluster_id(tbl.keep == 1);
             obj.save.selected_mua_clusters_txt(probe_id, selected_clusters);
         end
         
@@ -565,15 +487,17 @@ classdef RC2Preprocess < RC2Format
 
 
         function patch_meta_NP2013(obj, probe_id)
-        %%patch_meta_NP2013 Patch NP2013 meta file for Janelia pipeline compatibility
+        %%patch_meta_NP2013 Patch a newer-SpikeGLX NP2013 meta file to the older NP24 layout
         %
         %   patch_meta_NP2013(PROBE_ID) rewrites the locally-copied AP meta
         %   file for probe recording PROBE_ID so that the (newer SpikeGLX)
         %   NP2013 / probe-type 2013 fields are remapped to the NP2010 /
         %   probe-type 24 form, and the `snsGeomMap` key is renamed to
-        %   `snsShankMap`. This matches the format the Janelia
-        %   `ecephys_spike_sorting` pipeline expects (`findDisabled()` in
-        %   `SGLXMetaToCoords.py` looks up `snsShankMap` directly).
+        %   `snsShankMap`. This normalises the meta to the older field layout
+        %   that legacy tooling reads (they look up `snsShankMap` directly).
+        %   NOTE: the SpikeInterface reader uses `snsGeomMap` natively, so this
+        %   step is likely unnecessary for the current pipeline -- review /
+        %   remove if no downstream tool needs `snsShankMap`.
         %
         %   No-op when the meta file does not contain `imDatPrb_pn=NP2013`,
         %   so this is safe to call on already-compatible recordings.

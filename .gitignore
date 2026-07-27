@@ -1,3 +1,15 @@
 # List of untracked files to ignore
 
 .asv
+
+# generated per-session sorting script (SortingHelper.m), not source
+lib/spikeinterface/np2/_generated/
+
+# stray logs left behind by CatGT / C_Waves / other tools
+CatGT.log
+C_Waves.log
+debug.log
+
+# Python bytecode cache
+__pycache__/
+*.pyc

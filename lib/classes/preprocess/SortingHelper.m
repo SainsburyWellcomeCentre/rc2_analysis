@@ -197,7 +197,12 @@ classdef SortingHelper < handle
             end
             system(cmd);
 
-            % clean up log files left in the working directory by CatGT / C_Waves
+            % clean up log files left in the working directory by CatGT / C_Waves.
+            % CatGT.log is copied into the run's own output folder by the
+            % Python script (catgt_<run>_g<gate>/catgt_<run>_g<gate>_prb_<probe>_CatGT.log,
+            % same location/name as the original ecephys_spike_sorting
+            % pipeline) before this cleanup runs -- kept per-session since
+            % it is useful for debugging a specific run after the fact.
             if isfile('C_Waves.log'), delete('C_Waves.log'); end
             if isfile('CatGT.log'),   delete('CatGT.log');   end
 
