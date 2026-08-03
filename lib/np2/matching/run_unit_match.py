@@ -18,9 +18,11 @@ Usage:
   3. python run_unit_match.py
 
 Output (saved to save_dir):
-  MatchTable.csv         : unit pairs with match probability and similarity scores
-  UniqueIDConversion.mat : cluster IDs with unique IDs shared across sessions
-  + figures and additional match metrics
+  MatchTable.csv       : unit pairs with match probability and similarity scores
+  MatchingOverview.png : total-score / probability / final-match matrices
+  ClusInfo.pickle, UMparam.pickle, MatchProb.npy, Matches.npy,
+  UM Scores.npz, WaveformInfo.npz : intermediate data (see UnitMatchPy's
+  save_utils.save_to_output for details)
 """
 
 import os
@@ -87,6 +89,10 @@ def run_unit_match(sessions, save_dir, unitmatch_repo=DEFAULT_UNITMATCH_REPO,
     good_units_only : bool
         If True, only match units labelled 'good' by Bombcell.
     """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     from extract_raw_waveforms import add_unitmatch_to_path
     add_unitmatch_to_path(unitmatch_repo)
     try:
@@ -224,6 +230,20 @@ def run_unit_match(sessions, save_dir, unitmatch_repo=DEFAULT_UNITMATCH_REPO,
         total_score, output_threshold, clus_info, param,
         UIDs=UIDs, matches_curated=None, save_match_table=True
     )
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for ax, mat, title in zip(
+            axes, (total_score, output_prob_matrix, output_threshold),
+            ('Total score', 'Match probability',
+             f'Final matches (n={len(cross_session_matches)})')):
+        im = ax.imshow(mat, cmap='viridis', aspect='auto')
+        ax.set_title(title)
+        ax.set_xlabel('Unit')
+        ax.set_ylabel('Unit')
+        fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, 'MatchingOverview.png'), dpi=150)
+    plt.close(fig)
 
     print('\n' + '='*60)
     print(f'UnitMatch complete.')

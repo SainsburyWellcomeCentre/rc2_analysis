@@ -3,7 +3,7 @@
 .asv
 
 # generated per-session sorting script (SortingHelper.m), not source
-lib/spikeinterface/np2/_generated/
+lib/np2/sorting/_generated/
 
 # stray logs left behind by CatGT / C_Waves / other tools
 CatGT.log

@@ -163,12 +163,19 @@ def extract_session(ks_dir, overwrite=False):
                    sorting.frame_slice(mid, n_samples)]
 
     # --- templates per half via SortingAnalyzer (sparse=False -> full 384-ch footprint) ---
+    # n_jobs=2 / chunk_duration='100ms': matches the official UnitMatchPy
+    # SpikeInterface demo (UMPy_spike_interface_demo.ipynb). Kept modest
+    # (not the higher n_jobs used in the main sorting pipeline) because
+    # SpikeInterface's own parallelisation here can oversubscribe alongside
+    # numpy/BLAS's internal threading -- this is the setting the UnitMatch
+    # authors validated for this exact call, not a value we picked ourselves.
     t_halves = []
     for h in (0, 1):
         ana = si.create_sorting_analyzer(sort_halves[h], rec_halves[h], sparse=False)
         ana.compute('random_spikes', method='uniform', max_spikes_per_unit=MAX_SPIKES_PER_UNIT)
-        ana.compute('waveforms', ms_before=MS_BEFORE, ms_after=MS_AFTER, dtype='float32')
-        ana.compute('templates')
+        ana.compute('waveforms', ms_before=MS_BEFORE, ms_after=MS_AFTER, dtype='float32',
+                    n_jobs=2, chunk_duration='100ms')
+        ana.compute('templates', n_jobs=2, chunk_duration='100ms')
         t_halves.append(ana.get_extension('templates').get_data())  # (n_units, n_samples, n_ch)
 
     # (n_units, spike_width, n_channels, 2)  -- the UnitMatch RawWaveforms layout

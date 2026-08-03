@@ -44,7 +44,7 @@ Requires (in the spikeinterface conda env):
     torch                          (already installed for KS4; GPU recommended)
     a clone of github.com/EnnyvanBeest/UnitMatch  (DeepUnitMatch package + model)
 
-Output (saved to the save dir, default <recordings_root>\unit_match_deep):
+Output (saved to the save dir, default <recordings_root>\\unit_match_deep):
     MatchTable.csv          : unit pairs with match probability
     UniqueIDConversion.*    : cluster IDs with cross-session unique IDs
     MatchingOverview.png    : similarity / probability / final-match matrices

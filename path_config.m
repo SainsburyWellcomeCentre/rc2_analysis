@@ -32,8 +32,8 @@ config.spikes_dir               = 'C:\Users\Lab\SWC\original_pipeline\spikes';
 
 % SpikeInterface-based NP2 sorting pipeline.
 % Python is the spikeinterface env (SpikeInterface 0.104, KS4, Bombcell installed).
-config.si_np2_scripts_dir  = 'C:\Users\Lab\SWC\rc2_analysis_si_ks4+bc_um\lib\spikeinterface\np2';
-config.si_np2_template     = 'C:\Users\Lab\SWC\rc2_analysis_si_ks4+bc_um\lib\spikeinterface\np2\spikeGLX_pipeline_np2.py';
+config.si_np2_scripts_dir  = 'C:\Users\Lab\SWC\rc2_analysis_si_ks4+bc_um\lib\np2\sorting';
+config.si_np2_template     = 'C:\Users\Lab\SWC\rc2_analysis_si_ks4+bc_um\lib\np2\sorting\spikeGLX_pipeline_np2.py';
 config.si_np2_python_exe   = 'C:\Users\Lab\miniconda3\envs\spikeinterface\python.exe';
 
 config.runningmouse_python_exe  = 'C:\Users\Lab\miniconda3\envs\original_pipeline\python.exe';

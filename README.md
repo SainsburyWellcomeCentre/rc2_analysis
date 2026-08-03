@@ -82,7 +82,7 @@ The guide uses `C:\SWC\` as a reference — adapt paths to your machine. A typic
 
 ```
 SWC/
-├── rc2_analysis/                 # this repo (contains lib/spikeinterface/np2 pipeline)
+├── rc2_analysis/                 # this repo (contains lib/np2 pipeline: sorting/ + matching/)
 ├── original_pipeline/
 │   ├── npy-matlab/               # read .npy files in MATLAB
 │   ├── spikes/                   # cortex-lab spikes (driftmap plotting)
@@ -218,7 +218,7 @@ python -c "from spikeinterface.curation import bombcell_label_units; print('Bomb
 
 ## Step 7 — Point the pipeline at CatGT/TPrime and your Python
 
-The sorting script `lib/spikeinterface/np2/spikeGLX_pipeline_np2.py` has a small **Tool paths**
+The sorting script `lib/np2/sorting/spikeGLX_pipeline_np2.py` has a small **Tool paths**
 section near the top. Set it to your CatGT (and, if used, TPrime) folders:
 
 ```python
@@ -233,7 +233,7 @@ MATLAB launches this script with the Python executable from your conda env — s
 Everything else in the script's *User input* section (recording directory, run specs, output
 destination, CatGT on/off) is filled in automatically per session when you run from MATLAB. Edit
 it by hand only if you run the Python script standalone (see
-[the pipeline README](lib/spikeinterface/np2/README.txt)).
+[the pipeline README](lib/np2/sorting/README.txt)).
 
 ---
 
@@ -253,7 +253,7 @@ The clone provides the **DeepUnitMatch** package and its pretrained model
 probes only** — the probe this lab uses. The same GPU (PyTorch) is used for matching.
 
 See [Cross-session unit tracking](#optional-cross-session-unit-tracking) below and
-[lib/spikeinterface/np2/README.txt](lib/spikeinterface/np2/README.txt) for how to run it.
+[lib/np2/matching/README.txt](lib/np2/matching/README.txt) for how to run it.
 
 ---
 
@@ -306,7 +306,7 @@ Key entries:
 : Local clone of https://github.com/cortex-lab/spikes (Step 4).
 
 `si_np2_scripts_dir`
-: Directory holding the SpikeInterface pipeline scripts (this repo's `lib/spikeinterface/np2`).
+: Directory holding the sorting pipeline scripts (this repo's `lib/np2/sorting`).
 
 `si_np2_template`
 : Path to the pipeline template `spikeGLX_pipeline_np2.py`. MATLAB copies this per session,
@@ -396,7 +396,7 @@ The Kilosort 4 / SpikeInterface output for each probe is written to a directory 
 referred to below as `<ks4_dir>`. It contains the standard Phy/Kilosort `.npy` files plus
 `cluster_groups.csv` (Bombcell labels), a `csv/` folder with `metrics.csv` and
 `waveform_metrics.csv`, a reloadable `sorting_analyzer/`, and `phy/` and `bombcell/` folders.
-See [lib/spikeinterface/np2/README.txt](lib/spikeinterface/np2/README.txt) for the full output
+See [lib/np2/sorting/README.txt](lib/np2/sorting/README.txt) for the full output
 description.
 
 > [!NOTE]
@@ -437,7 +437,7 @@ discarded.
 Bombcell's default thresholds (below) were calibrated on generic cortical/hippocampal
 recordings. Some regions have neurons with atypical waveform shapes that can be wrongly
 flagged, so thresholds may need adjusting depending on where you recorded. All thresholds are
-set in [lib/spikeinterface/np2/spikeGLX_pipeline_np2.py](lib/spikeinterface/np2/spikeGLX_pipeline_np2.py),
+set in [lib/np2/sorting/spikeGLX_pipeline_np2.py](lib/np2/sorting/spikeGLX_pipeline_np2.py),
 in the `[6] Bombcell curation` step, via the `thresholds=` argument to `bombcell_label_units`
 (edit the template, not the generated per-session script — see the note at the top of the
 template's "User input" section).
@@ -584,14 +584,14 @@ sorting. Point the script at one folder containing the recordings to match; it d
 
 ```bash
 conda activate spikeinterface
-cd C:\SWC\rc2_analysis\lib\spikeinterface\np2
+cd C:\SWC\rc2_analysis\lib\np2\matching
 python run_deep_unit_match.py  D:\path\to\recordings_root
 ```
 
 It extracts each session's raw waveforms (from the CatGT bin, automatically), runs DeepUnitMatch,
 and writes results to `<recordings_root>\unit_match_deep\`. Use `run_unit_match.py` for the
 classic UnitMatchPy model instead. Full options and outputs are documented in
-[lib/spikeinterface/np2/README.txt](lib/spikeinterface/np2/README.txt).
+[lib/np2/matching/README.txt](lib/np2/matching/README.txt).
 
 ---
 
