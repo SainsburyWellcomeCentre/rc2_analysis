@@ -131,18 +131,26 @@ classdef RestrictClusters < handle
         %                         'non_soma_'), 0 otherwise
         %       passes_metrics  - 1 if the cluster passes the quality thresholds
         %                         (isi_viol, isolation_distance, amp_cutoff, max_drift)
-        %       keep            - the automated decision, 1 = keep:
-        %                         Bombcell 'good' (somatic only) AND passes_metrics.
-        %                         Non-somatic units default to keep=0 even if
-        %                         labelled 'non_soma_good' -- inspect
-        %                         is_non_somatic/bombcell_group and hand-edit
-        %                         keep=1 to include them (e.g. for axonal
-        %                         signal analyses).
+        %       keep_pipeline   - the automated decision, 1 = keep: Bombcell
+        %                         'good' (somatic only) AND passes_metrics.
+        %                         Left UNTOUCHED by hand -- a fixed record of
+        %                         what the pipeline alone decided, so a later
+        %                         hand-edit of `keep` can always be compared
+        %                         back against it.
+        %       keep            - starts identical to keep_pipeline. Non-somatic
+        %                         units default to 0 even if labelled
+        %                         'non_soma_good' -- inspect is_non_somatic/
+        %                         bombcell_group and hand-edit keep=1 to
+        %                         include them (e.g. for axonal signal
+        %                         analyses).
         %
         %   Only the `keep` column is consumed downstream
         %   (create_selected_clusters_txt), so a user may hand-edit it to force
         %   any cluster in (keep=1) or out (keep=0) before formatting -- the
-        %   selection is otherwise fully automated.
+        %   selection is otherwise fully automated. Do not edit keep_pipeline;
+        %   it is regenerated from scratch every time create_check_clusters_csv
+        %   runs and exists only so a hand-edited keep can be checked against
+        %   the original automated decision later.
 
             metrics        = obj.ctl.load.metrics_csv(obj.probe_id);
             cluster_groups = obj.ctl.load.cluster_groups(obj.probe_id);
@@ -158,11 +166,12 @@ classdef RestrictClusters < handle
             [bombcell_group, is_good, is_non_somatic] = ...
                 obj.lookup_bombcell_group(metrics.cluster_id, cluster_groups, 'good');
 
-            keep = double(is_good & ~is_non_somatic & passes_metrics);
+            keep_pipeline = double(is_good & ~is_non_somatic & passes_metrics);
+            keep          = keep_pipeline;
 
             tbl = table(metrics.cluster_id, bombcell_group, double(is_non_somatic), ...
-                double(passes_metrics), keep, ...
-                'VariableNames', {'cluster_id', 'bombcell_group', 'is_non_somatic', 'passes_metrics', 'keep'});
+                double(passes_metrics), keep_pipeline, keep, ...
+                'VariableNames', {'cluster_id', 'bombcell_group', 'is_non_somatic', 'passes_metrics', 'keep_pipeline', 'keep'});
         end
 
 
@@ -171,11 +180,14 @@ classdef RestrictClusters < handle
         %%curation_mua_table Automated MUA curation, as an editable table
         %
         %   TABLE = curation_mua_table() returns ONE ROW PER CLUSTER with the
-        %   same columns as curation_table, but `keep` defaults to 1 when the
-        %   Bombcell label is 'mua' (somatic only) AND the cluster passes the
-        %   (looser) MUA metric thresholds (amp_cutoff, max_drift). Non-somatic
-        %   units default to keep=0 -- see curation_table for how to override.
-        %   Hand-edit `keep` to override before create_selected_mua_clusters_txt.
+        %   same columns as curation_table (including keep_pipeline, the fixed
+        %   record of the automated decision -- see curation_table), but
+        %   `keep`/`keep_pipeline` default to 1 when the Bombcell label is
+        %   'mua' (somatic only) AND the cluster passes the (looser) MUA
+        %   metric thresholds (amp_cutoff, max_drift). Non-somatic units
+        %   default to keep=0 -- see curation_table for how to override.
+        %   Hand-edit `keep` (never keep_pipeline) to override before
+        %   create_selected_mua_clusters_txt.
 
             metrics        = obj.ctl.load.metrics_csv(obj.probe_id);
             cluster_groups = obj.ctl.load.cluster_groups(obj.probe_id);
@@ -190,11 +202,12 @@ classdef RestrictClusters < handle
             [bombcell_group, is_mua, is_non_somatic] = ...
                 obj.lookup_bombcell_group(metrics.cluster_id, cluster_groups, 'mua');
 
-            keep = double(is_mua & ~is_non_somatic & passes_metrics);
+            keep_pipeline = double(is_mua & ~is_non_somatic & passes_metrics);
+            keep          = keep_pipeline;
 
             tbl = table(metrics.cluster_id, bombcell_group, double(is_non_somatic), ...
-                double(passes_metrics), keep, ...
-                'VariableNames', {'cluster_id', 'bombcell_group', 'is_non_somatic', 'passes_metrics', 'keep'});
+                double(passes_metrics), keep_pipeline, keep, ...
+                'VariableNames', {'cluster_id', 'bombcell_group', 'is_non_somatic', 'passes_metrics', 'keep_pipeline', 'keep'});
         end
     end
 
