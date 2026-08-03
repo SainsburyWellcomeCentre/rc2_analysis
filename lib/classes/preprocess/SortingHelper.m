@@ -11,6 +11,9 @@ classdef SortingHelper < handle
 %                                    preprocessing step
 %       run_tprime                 - true or false (default), whether to run TPrime
 %                                    at the end of the pipeline
+%       start_step                 - 'catgt' (default), 'kilosort4' or 'postprocess':
+%                                    where in the pipeline to resume from (see
+%                                    spikeGLX_pipeline_np2.py's User input section)
 %       ctl                        - instance of RC2Preprocess
 %       probe_id                   - string with the probe recording ID
 %       run_script                 - session script (template filled with session paths)
@@ -28,6 +31,7 @@ classdef SortingHelper < handle
         leave_window_open_on_error = true
         run_catgt  = true
         run_tprime = false
+        start_step = 'catgt'
     end
 
     properties (SetAccess = private)
@@ -131,8 +135,14 @@ classdef SortingHelper < handle
         %
         %   overwrite_sorting_script() reads template_script, replaces the
         %   session-specific variables (logName, npx_directory, run_specs,
-        %   catGT_dest, run_CatGT, runTPrime) and writes the result to
-        %   run_script.
+        %   catGT_dest, run_CatGT, runTPrime, start_step) and writes the
+        %   result to run_script.
+
+            valid_start_steps = {'catgt', 'kilosort4', 'postprocess'};
+            if ~ismember(obj.start_step, valid_start_steps)
+                error('SortingHelper:overwrite_sorting_script:invalidStartStep', ...
+                    'start_step must be one of: %s', strjoin(valid_start_steps, ', '));
+            end
 
             animal_id = obj.ctl.animal_id_from_probe_id(obj.probe_id);
 
@@ -172,6 +182,7 @@ classdef SortingHelper < handle
 
             str = regexprep(str, '\<run_CatGT = \w+', sprintf('run_CatGT = %s', catgt_str));
             str = regexprep(str, '\<runTPrime = \w+',  sprintf('runTPrime = %s', tprime_str));
+            str = regexprep(str, '\<start_step = ''\w+''', sprintf('start_step = ''%s''', obj.start_step));
 
             % write session script
             fid = fopen(obj.run_script, 'w');
@@ -190,12 +201,30 @@ classdef SortingHelper < handle
 
             fprintf('Running SpikeInterface pipeline...');
 
+            % Exit-code detection cannot go through "cmd /k ... & exit
+            % %errorlevel%": with /k, that whole quoted string is ONE
+            % command line, so the exit runs immediately after the Python
+            % call regardless of outcome -- it closes the window right away
+            % on ANY exit (success or failure), defeating the entire point
+            % of leave_window_open_on_error (previously found the hard way:
+            % a Python-side failure closed the window before anything could
+            % be read from it). Instead, have the Python process itself drop
+            % a small marker file on successful completion; its absence
+            % after the window closes means it failed or was interrupted,
+            % without needing the window's own exit code at all.
+            done_marker = [tempname(), '.done'];
+            if isfile(done_marker), delete(done_marker); end
+            marked_script = sprintf('%s & (if not errorlevel 1 echo. > "%s")', ...
+                sprintf('%s %s', obj.python_exe, obj.run_script), done_marker);
+
             if obj.leave_window_open_on_error
-                cmd = sprintf('start /wait cmd /k %s %s', obj.python_exe, obj.run_script);
+                cmd = sprintf('start /wait cmd /k "%s"', marked_script);
             else
-                cmd = sprintf('start /wait cmd /c %s %s', obj.python_exe, obj.run_script);
+                cmd = sprintf('start /wait cmd /c "%s"', marked_script);
             end
             system(cmd);
+            succeeded = isfile(done_marker);
+            if isfile(done_marker), delete(done_marker); end
 
             % clean up log files left in the working directory by CatGT / C_Waves.
             % CatGT.log is copied into the run's own output folder by the
@@ -205,6 +234,14 @@ classdef SortingHelper < handle
             % it is useful for debugging a specific run after the fact.
             if isfile('C_Waves.log'), delete('C_Waves.log'); end
             if isfile('CatGT.log'),   delete('CatGT.log');   end
+
+            if ~succeeded
+                error('SortingHelper:PythonPipelineFailed', ...
+                    ['SpikeInterface pipeline did not complete successfully ', ...
+                     '(no completion marker was written). Check the Python ', ...
+                     'traceback (rerun with leave_window_open_on_error=true ', ...
+                     'to see it) before trusting any downstream step.']);
+            end
 
             fprintf('done\n');
         end

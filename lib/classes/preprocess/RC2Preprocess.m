@@ -1,6 +1,16 @@
 classdef RC2Preprocess < RC2Format
 % RC2Preprocess Class for preprocessing raw data
 %
+%   Stage 1 can be run in two ways:
+%     1. preprocess_step_1(probe_id)            - run all 7 steps from the start (complete pipeline)
+%     2. run_from_step(probe_id, start_step)    - run from a chosen step onwards, see 'help RC2Preprocess.run_from_step'
+%
+%   To run only the sorting step, with finer control over where it resumes
+%   from, see 'help RC2Preprocess.run_sorting_from_step'.
+%
+%   See also the main README ("Preprocessing and Analysis Workflow" and
+%   "Tips for debugging").
+%
 %   RC2Preprocess Properties:
 %
 %   RC2Preprocess Methods:
@@ -34,28 +44,10 @@ classdef RC2Preprocess < RC2Format
         function obj = RC2Preprocess()
         %%RC2Preprocess
         %
-        %   RC2Preprocess() creates the object and prints a short usage
-        %   summary describing the two ways to run stage 1 of the
-        %   preprocessing.
+        %   RC2Preprocess() creates the object.
 
             obj = obj@RC2Format();
-
-            fprintf('RC2Preprocess ready. Stage 1 can be run in two ways:\n');
-            fprintf('  1. preprocess_step_1(probe_id)            - run all 7 steps from the start (complete pipeline)\n');
-            fprintf('  2. run_from_step(probe_id, start_step)    - run from a chosen step onwards (useful to debug)\n');
-            fprintf('\n');
-            fprintf('Valid start_step names for run_from_step (in execution order):\n');
-            fprintf('  ''move_raw_to_local''\n');
-            fprintf('  ''patch_meta_NP2013''\n');
-            fprintf('  ''si_sorting''\n');
-            fprintf('  ''create_check_clusters_csv''\n');
-            fprintf('  ''create_trigger_file''\n');
-            fprintf('  ''creNate_driftmap''\n');
-            fprintf('  ''process_camera_data''\n');
-            fprintf('\n');
-            fprintf('To run *only* the SpikeInterface sorting step (without chaining to\n');
-            fprintf('the later steps), use:\n');
-            fprintf('  3. run_sorting_from_step(probe_id, ...)   - see ''help RC2Preprocess.run_sorting_from_step''\n');
+            fprintf('See ''help RC2Preprocess'' for how to run stage 1.\n');
         end
         
         
@@ -84,16 +76,13 @@ classdef RC2Preprocess < RC2Format
         function run_from_step(obj, probe_id, start_step, varargin)
         %%run_from_step Run preprocess_step_1 starting from a chosen step
         %
-        %   run_from_step(PROBE_ID, START_STEP) runs stage 1 of the
-        %   preprocessing for probe recording PROBE_ID, starting from the
-        %   step named START_STEP and running every subsequent step in
-        %   order, *always to the end* of the pipeline. This matters because
-        %   the whole analysis is interlinked: each step depends on the
-        %   output of the previous ones, so resuming part-way through must
-        %   never stop early.
-        %
-        %   START_STEP must be the name (char or string) of one of the 7
-        %   steps below, listed in execution order:
+        %   run_from_step(PROBE_ID, START_STEP) runs stage 1 for probe
+        %   recording PROBE_ID from the step named START_STEP to the end of
+        %   the pipeline (never stops early -- later steps depend on earlier
+        %   ones). START_STEP is one of the 7 steps below, or one of the
+        %   sorting sub-steps ('kilosort4', 'postprocess' -- see
+        %   run_sorting_from_step), in which case si_sorting resumes from
+        %   there and the pipeline still continues through every later step:
         %       'move_raw_to_local'
         %       'patch_meta_NP2013'
         %       'si_sorting'
@@ -102,15 +91,9 @@ classdef RC2Preprocess < RC2Format
         %       'create_driftmap'
         %       'process_camera_data'
         %
-        %   run_from_step(..., NAME, VALUE, ...) forwards the optional
-        %   pipeline controls ('run_catgt', 'run_tprime') to the sorting
-        %   step (see run_sorting_from_step). These only have an effect
-        %   when the sorting step is within the range being run.
-        %
-        %   Example:
-        %       ctl.run_from_step(probe_id, 'create_trigger_file')
-        %   runs create_trigger_file, create_driftmap and
-        %   process_camera_data, skipping the four earlier steps.
+        %   run_from_step(..., NAME, VALUE, ...) forwards optional pipeline
+        %   controls ('run_catgt', 'run_tprime', see run_sorting_from_step) to
+        %   the sorting step, if it is within the range being run.
 
             steps = {'move_raw_to_local', ...
                      'patch_meta_NP2013', ...
@@ -120,8 +103,27 @@ classdef RC2Preprocess < RC2Format
                      'create_driftmap', ...
                      'process_camera_data'};
 
+            % the sorting sub-steps; a sub-step name may be given directly
+            % as START_STEP (see above).
+            sorting_sub_steps = {'kilosort4', 'postprocess'};
+
             start_step   = char(start_step);
             sorting_args = varargin;
+
+            % shorthand: when START_STEP names a sorting sub-step, treat it
+            % as "start the sorting step from this sub-step". Translated
+            % into the si_sorting step plus a 'start_step' control so the
+            % loop below still chains through every later step.
+            if ismember(start_step, sorting_sub_steps)
+                if any(strcmpi(sorting_args(1:2:end), 'start_step'))
+                    error('RC2Preprocess:run_from_step:duplicateStartStep', ...
+                          ['START_STEP "%s" is a sorting sub-step, so do not ' ...
+                           'also pass a ''start_step'' name-value pair.'], ...
+                          start_step);
+                end
+                sorting_args = [{'start_step', start_step}, sorting_args];
+                start_step   = 'si_sorting';
+            end
 
             % exact, case-sensitive match against the valid step names
             [is_known_step, start_idx] = ismember(start_step, steps);
@@ -129,8 +131,10 @@ classdef RC2Preprocess < RC2Format
             if ~is_known_step
                 error('RC2Preprocess:run_from_step:unknownStep', ...
                       ['Unknown step "%s". START_STEP must be the exact ' ...
-                       'name of one of the pipeline steps:\n  %s'], ...
-                      start_step, strjoin(steps, '\n  '));
+                       'name of one of the pipeline steps:\n  %s\n' ...
+                       'or one of the sorting sub-steps:\n  %s'], ...
+                      start_step, strjoin(steps, '\n  '), ...
+                      strjoin(sorting_sub_steps, '\n  '));
             end
 
             si_idx = find(strcmp('si_sorting', steps), 1);
@@ -176,40 +180,67 @@ classdef RC2Preprocess < RC2Format
         %%run_sorting_from_step Run the SpikeInterface sorting pipeline with optional controls
         %
         %   run_sorting_from_step(PROBE_ID) runs the full SpikeInterface
-        %   pipeline for probe recording PROBE_ID and is identical to
-        %   si_sorting(PROBE_ID).
+        %   pipeline for probe recording PROBE_ID (identical to
+        %   si_sorting(PROBE_ID)). Runs the sorting step ONLY -- it does not
+        %   continue to create_check_clusters_csv or any later stage-1 step
+        %   (use run_from_step for that).
         %
-        %   run_sorting_from_step(PROBE_ID, NAME, VALUE, ...) runs the
-        %   pipeline with the optional name-value controls below:
+        %   run_sorting_from_step(PROBE_ID, NAME, VALUE, ...) with the
+        %   optional controls below:
         %
         %       'run_catgt'  - logical, whether to run the CatGT step
-        %                      (default true). Set false to re-sort data
-        %                      that has already been CatGT-processed.
+        %                      (default true, or false if 'start_step' is
+        %                      given and is not 'catgt'). Set false to
+        %                      re-sort data that has already been
+        %                      CatGT-processed.
         %       'run_tprime' - logical, whether to run the TPrime step at
         %                      the end of the pipeline (default false).
+        %       'start_step' - 'catgt' (default), 'kilosort4' or
+        %                      'postprocess': where in the sorting pipeline
+        %                      to resume from. Requires the earlier steps'
+        %                      output to already exist on disk for this
+        %                      probe:
+        %                        'catgt'       - full run from CatGT onwards
+        %                        'kilosort4'   - skip CatGT, read the existing
+        %                                        CatGT output, destripe, run
+        %                                        Kilosort4 and everything after
+        %                        'postprocess' - skip CatGT and Kilosort4,
+        %                                        reload the existing sort, then
+        %                                        run SortingAnalyzer, Bombcell,
+        %                                        Phy export and CSV export
         %
-        %   Example:
-        %       ctl.run_sorting_from_step(probe_id, 'run_catgt', false)
-        %   re-sorts already-CatGT'd data without re-running CatGT.
-        %
-        %   This method runs the sorting step ONLY; it does not continue to
-        %   create_check_clusters_csv or any later stage-1 step. To carry
-        %   on to the end of the pipeline, use run_from_step.
+        %   Example: ctl.run_sorting_from_step(probe_id, 'start_step', 'postprocess')
+        %   reruns SortingAnalyzer onwards only, reloading the existing
+        %   Kilosort4 output -- useful after fixing a Bombcell/export bug
+        %   without redoing Kilosort4.
+
+            valid_start_steps = {'catgt', 'kilosort4', 'postprocess'};
 
             parser = inputParser();
-            parser.addParameter('run_catgt', true, ...
-                                @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
+            parser.addParameter('run_catgt', [], ...
+                                @(x) isempty(x) || (isscalar(x) && (islogical(x) || isnumeric(x))));
             parser.addParameter('run_tprime', false, ...
                                 @(x) isscalar(x) && (islogical(x) || isnumeric(x)));
+            parser.addParameter('start_step', 'catgt', ...
+                                @(x) ismember(x, valid_start_steps));
             parser.parse(varargin{:});
+
+            % default run_catgt to false whenever resuming past CatGT, unless
+            % the caller explicitly overrides it (matches the old janelia
+            % run_ecephys_from_step behaviour for 'start_module').
+            run_catgt = parser.Results.run_catgt;
+            if isempty(run_catgt)
+                run_catgt = strcmp(parser.Results.start_step, 'catgt');
+            end
 
             si_helper = SortingHelper(obj, probe_id);
             si_helper.leave_window_open_on_error = obj.leave_window_open_on_error;
-            si_helper.run_catgt  = logical(parser.Results.run_catgt);
+            si_helper.run_catgt  = logical(run_catgt);
             si_helper.run_tprime = logical(parser.Results.run_tprime);
+            si_helper.start_step = parser.Results.start_step;
 
-            fprintf('Running SpikeInterface pipeline (run_catgt=%d, run_tprime=%d)\n', ...
-                    si_helper.run_catgt, si_helper.run_tprime);
+            fprintf('Running SpikeInterface pipeline (start_step=%s, run_catgt=%d, run_tprime=%d)\n', ...
+                    si_helper.start_step, si_helper.run_catgt, si_helper.run_tprime);
 
             si_helper.run_from_raw();
         end
@@ -220,16 +251,21 @@ classdef RC2Preprocess < RC2Format
         %%create_check_clusters_csv Create the automated (Bombcell + metric) curation .csv
         %
         %   create_check_clusters_csv(PROBE_ID) writes an EDITABLE .csv listing
-        %   every cluster with its Bombcell label and a `keep` column pre-filled
-        %   with the automated decision (Bombcell 'good' AND passing the quality
-        %   metrics). It then auto-generates selected_clusters.txt from those
-        %   defaults, so curation is fully automated and NO manual step is
-        %   required.
+        %   every cluster with its Bombcell label and two columns pre-filled
+        %   with the same automated decision (Bombcell 'good' AND passing the
+        %   quality metrics): `keep_pipeline` and `keep`. It then
+        %   auto-generates selected_clusters.txt from those defaults, so
+        %   curation is fully automated and NO manual step is required.
         %
         %   Optional manual override: edit the `keep` column of
         %   clusters_to_check.csv (optionally after inspecting units in Phy) to
         %   force a cluster in (keep=1) or out (keep=0), then re-run
-        %   create_selected_clusters_txt(PROBE_ID) before formatting.
+        %   create_selected_clusters_txt(PROBE_ID) before formatting. Leave
+        %   `keep_pipeline` untouched -- it stays a fixed record of the
+        %   automated decision, so any hand-edit can be compared back against
+        %   it later (e.g. sum(tbl.keep ~= tbl.keep_pipeline) to count how many
+        %   clusters were manually overridden). Only `keep` is ever read by
+        %   create_selected_clusters_txt.
 
             cc = RestrictClusters(obj, probe_id);
             tbl = cc.curation_table();
@@ -287,8 +323,17 @@ classdef RC2Preprocess < RC2Format
         %
         %   create_driftmap(PROBE_ID) creates and save a driftmap for a
         %   probe recording PROBE_ID.
-        
-            ks4_dir = obj.file.imec0_ks4(probe_id);
+
+            % ksDriftmap (cortex-lab/spikes) loads pc_features.npy /
+            % pc_feature_ind.npy unconditionally (params.loadPCs = true) and
+            % uses them directly to compute spikeDepths (weighted centroid
+            % of the first PC across channels) -- not an optional/unused
+            % load. Those two files are deliberately NOT copied to the
+            % imec0_ks4 root by the sorting pipeline (copy_ks4_outputs_to_parent,
+            % ~2 GB, unused by rc2_analysis's own FileManager/Loader), so
+            % point at sorter_output/ instead, where KS4 always writes them,
+            % rather than duplicating the files just for this one caller.
+            ks4_dir = fullfile(obj.file.imec0_ks4(probe_id), 'sorter_output');
             [spikeTimes, spikeAmps, spikeDepths] = ksDriftmap(ks4_dir);
             
             % render the driftmap off-screen: it is a very dense scatter
