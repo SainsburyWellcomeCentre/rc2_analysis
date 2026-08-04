@@ -69,73 +69,101 @@ from datetime import datetime
 
 
 # ============================================================
-# User input -- Edit this section
+# Auto-filled per session by MATLAB -- do not edit these here
 # ============================================================
 #
-# NOTE: this file is a TEMPLATE. It is not run directly by the MATLAB
-# pipeline. SortingHelper.m (overwrite_sorting_script) fills in the
-# session-specific values below and writes the result to
-# lib/np2/sorting/_generated/spikeGLX_pipeline_session.py, which
-# is what actually gets executed for a given session. That generated
-# file is overwritten on every run and is not tracked in git -- edit
-# this template, not the generated copy.
+# NOTE: this file is a TEMPLATE, not run directly by the MATLAB pipeline.
+# SortingHelper.m (overwrite_sorting_script) fills in the 7 values below for
+# the session being run and writes the result to
+# lib/np2/sorting/_generated/spikeGLX_pipeline_session.py, which is what
+# actually gets executed. That generated file is overwritten on every run
+# and is not tracked in git. Editing these values here only changes what a
+# STANDALONE run (no MATLAB) uses -- see sorting/README.txt, "OPTION B".
 
-# Log file name (saved in catGT_dest)
+# logName: log file name (saved in catGT_dest)
+# npx_directory: raw data dir (parent of the SpikeGLX run folder)
+# run_specs: [run_name, gate, trigger_string, probe_string]
+# catGT_dest: CatGT + KS4 output goes under this directory
+# run_CatGT / runTPrime: whether to run those steps
+# start_step: see run_from_step / run_sorting_from_step in RC2Preprocess.m
 logName = 'pipeline_log.csv'
-
-# Raw data directory (parent of the SpikeGLX run folder)
 npx_directory = r'D:\data\myrecording'
-
-# run_specs: list of [run_name, gate, trigger_string, probe_string]
-#   run_name:       undecorated run name, no g/t specifier (the -run field in CatGT)
-#   gate:           gate index as string, e.g. '0'
-#   trigger_string: triggers to concatenate, e.g. '0,0' (single file) or 'start,end' (all)
-#   probe_string:   probes to process, e.g. '0', '0,3', '0:3'
 run_specs = [['myrecording', '0', '0,0', '0']]
 
-# Output destination: all CatGT + KS4 output is written under this directory
+# (SortingHelper.m's run_specs replacement consumes up to the next '#' --
+# keep a comment here so it doesn't also swallow catGT_dest below.)
 catGT_dest = r'D:\data\myrecording\output'
-
-# Where to resume this run from -- for debugging/re-running part of an
-# already-sorted session without redoing the expensive earlier steps:
-#   'catgt'        : full run from CatGT onwards (default)
-#   'kilosort4'     : skip CatGT, read the existing CatGT .ap.bin, destripe,
-#                     run Kilosort4 and everything after it
-#   'postprocess'   : skip CatGT and Kilosort4, reload the existing KS4
-#                     sorter output (re-destriping the recording -- it is
-#                     not itself saved to disk, only the sort is), then run
-#                     SortingAnalyzer, Bombcell, Phy export and CSV export
-# 'kilosort4' and 'postprocess' both require the earlier steps' output to
-# already exist under catGT_dest for this run/probe.
+run_CatGT = True
+runTPrime = False
 start_step = 'catgt'
 
-# ---- CatGT settings ----
-run_CatGT = True
-catGT_stream_string = '-ap'
 
-# -gbldmx intentionally absent: replaced by SI highpass_spatial_filter (IBL destriping)
+# ============================================================
+# User input -- edit as needed
+# ============================================================
+# None of this is required reading for a normal run -- every value below
+# already has a justified default (see the comment on each). Only change
+# something here if you have a specific reason to (a different probe
+# geometry, adjusting Bombcell thresholds for an atypical brain region --
+# see the main README, "Adjusting Bombcell thresholds" -- or a different
+# machine's tool paths).
+
+# ---- CatGT settings ----
+catGT_stream_string = '-ap'
+# -gbldmx intentionally absent: replaced by SI highpass_spatial_filter (IBL destriping),
 # which handles non-uniform stripe noise across probe depth more robustly.
-# gfix=0,0.10,0.02 : detect and repair electrical artifacts
-#   0    = disable median-threshold for artifact detection (use default)
-#   0.10 = exclusion window in seconds around each artifact
-#   0.02 = correction (blanking) window in seconds
+# gfix=0,0.10,0.02 detects and repairs electrical artifacts (window/blanking in seconds).
 catGT_cmd_string = '-prb_fld -out_prb_fld -apfilter=butter,12,300,9000 -gfix=0,0.10,0.02 '
 
-# ---- TPrime settings (behavioral data synchronization) ----
-# Set runTPrime=True to synchronize timestamps between streams.
+# ---- TPrime settings (only used if runTPrime=True above) ----
 # IMPORTANT: also add sync edge extraction to catGT_cmd_string, e.g.:
 #   -SY=0,384,6,500    (imec sync line on channel 384, bit 6, threshold 500)
 #   -XA=0,1,3,500      (NI analog sync)
 # and update toStream_sync_params / niStream_sync_params to match.
-runTPrime = False
 sync_period = 1.0                          # 1.0 for SYNC wave from imec basestation
 toStream_sync_params = 'SY=0,384,6,500'   # copy from catGT_cmd_string, no spaces
 niStream_sync_params = 'XA=0,1,3,500'     # set to None if no NI auxiliary data
 
-# ---- Kilosort 4 settings ----
-ks_nblocks = 6       # non-rigid drift correction blocks (0=rigid, 6=good for long probes)
-ks_Th_universal = 8  # template detection threshold (KS4 default)
-ks_Th_learned = 9    # learned template threshold   (KS4 default)
+# ---- Kilosort 4 settings (all 3 are the documented KS4 defaults) ----
+ks_nblocks = 5        # non-rigid drift correction blocks; KS4 docs recommend 5 for long probes
+ks_Th_universal = 9   # spike detection threshold, universal (not-yet-learned) templates
+ks_Th_learned = 8     # spike detection threshold, templates learned from this recording
+
+# ---- Bombcell thresholds (curation used in Step [6]) ----
+# These are Bombcell's own defaults (spikeinterface.curation.bombcell_get_default_thresholds()),
+# written out here instead of called at runtime so they are visible and
+# editable without digging through the rest of this file. 'greater'/'less'
+# are inclusive pass bounds (None = that side is unconstrained); a unit
+# fails a category ("noise"/"mua") if it fails ANY ONE metric in it -- see
+# the main README, "Adjusting Bombcell thresholds", for what each metric
+# means and when you might want to relax one (e.g. cerebellar Purkinje
+# cells). Set any bound to None to disable that side of a check.
+bombcell_thresholds = {
+    'noise': {
+        'num_positive_peaks':        {'greater': None,   'less': 2},
+        'num_negative_peaks':        {'greater': None,   'less': 1},
+        'peak_to_trough_duration':   {'greater': 0.0001, 'less': 0.00115},
+        'waveform_baseline_flatness':{'greater': None,   'less': 0.5},
+        'peak_after_to_trough_ratio':{'greater': None,   'less': 0.8},
+        'exp_decay':                 {'greater': 0.01,   'less': 0.1},
+    },
+    'mua': {
+        'amplitude_median':  {'greater': 30,  'less': None, 'abs': True},
+        'snr':                {'greater': 5,   'less': None},
+        'amplitude_cutoff':   {'greater': None,'less': 0.2},
+        'num_spikes':         {'greater': 300, 'less': None},
+        'rp_contamination':   {'greater': None,'less': 0.1},
+        'presence_ratio':     {'greater': 0.7, 'less': None},
+        'drift_ptp':          {'greater': None,'less': 100},
+    },
+    'non-somatic': {
+        'peak_before_to_trough_ratio':    {'greater': None,   'less': 3},
+        'peak_before_width':              {'greater': 0.00015,'less': None},
+        'trough_width':                   {'greater': 0.0002, 'less': None},
+        'peak_before_to_peak_after_ratio':{'greater': None,   'less': 3},
+        'main_peak_to_trough_ratio':      {'greater': None,   'less': 0.8},
+    },
+}
 
 # ---- Tool paths (edit for your computer) ----
 catGTPath  = r'C:\Users\Lab\SWC\CatGT-win'
@@ -434,31 +462,45 @@ def save_rc2_compatible_files(analyzer, labels, ks4_output_dir):
 
 def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     """
-    Recreates the native Bombcell (MATLAB) quality_metrics_distribution.png
-    layout -- 18 metrics, in the native panel order, with short human-readable
-    axis labels (matching bc.qm.plotGlobalQualityMetric's defineMetrics), a
-    fraction-of-units y-axis, and a red/orange/green bar under each x-axis
-    showing which range of that metric is rejected/borderline/accepted.
+    Recreates the native Bombcell (MATLAB/Python) quality_metrics_distribution
+    layout -- short human-readable axis labels (matching Bombcell's own
+    metric_info short_names, see plotting_utils.get_metric_info_list in the
+    Bombcell repo), a fraction-of-units y-axis, and a red/orange/green bar
+    under each x-axis showing which range of that metric is rejected/
+    borderline/accepted -- but grouped into labelled rows by what each metric
+    is actually USED for (noise / mua / non-somatic / not used at all), so a
+    reader can see at a glance which panels affect which part of the
+    good/mua/noise/non-soma decision before touching a threshold.
+
+    21 panels total:
+      - 6 noise + 7 mua + 5 non-somatic = 18 metrics that drive the labelling
+        (bombcell_label_units, see bombcell_get_default_thresholds).
+      - 3 additional metrics (drift_std, isolation_distance, l_ratio) that
+        Bombcell computes and displays for manual inspection but that never
+        affect good/mua/noise/non-soma (confirmed against the native Bombcell
+        classification.py: these three do not appear in its labelling logic
+        at all, only in an optional summary table).
+
+    Two of the 18 labelling metrics -- num_positive_peaks/num_negative_peaks
+    are shared with 'noise' by name only; every metric otherwise appears in
+    exactly one row. peak_before_to_trough_ratio, peak_before_width and
+    trough_width are part of Bombcell's own non-somatic decision (see
+    bombcell_curation.py: is_non_somatic = (ratio_conditions AND
+    width_conditions) OR large_main_peak) but are absent from the native
+    Bombcell plotting function itself (get_metric_info_list has no entry for
+    them at all) -- included here anyway so every metric that can flip a
+    unit's label is visible somewhere.
 
     SpikeInterface's own sw.plot_metric_histograms uses raw SI column names
     as axis labels (e.g. 'peak_before_width' in seconds, unreadable at 1e-4
-    scale) and has no colored accept/reject bar, and only plots metrics that
-    have a threshold in `thresholds` -- so it never shows isolation_distance
-    or l_ratio, which the native Bombcell histogram does. This function
-    reads the same `thresholds` dict (from bombcell_get_default_thresholds)
-    plus isolation_distance/l_ratio directly, in the same 18-panel layout as
-    the native GUI, for people already familiar with it.
+    scale), has no colored accept/reject bar, and only plots metrics that
+    have a threshold in `thresholds` -- so it never shows the 3 additional
+    metrics above. This function reads the same `thresholds` dict (from
+    bombcell_get_default_thresholds) plus the 3 additional metrics directly.
     """
     import numpy as np
     import matplotlib.pyplot as plt
 
-    # (SI column, short label, unit scale factor, unit suffix) in the same
-    # order as the native plotGlobalQualityMetric.m panel layout
-    # (indices_ordered in defineMetrics), skipping the 2 native metrics that
-    # are excluded there too (RPV_window_index, %SpikesMissing-symmetric)
-    # and the 2 SI has no equivalent for (percentageSpikesMissing_gaussian
-    # duplicated as amplitude_cutoff already, mainPeakToTroughRatio's own
-    # 'scndPeakToTroughRatio' folded into peak_after_to_trough_ratio).
     # (SI column, short label, unit scale factor, unit suffix, take_abs,
     #  upper percentile clip, integer_valued) -- take_abs mirrors the
     # 'abs': True flag bombcell_get_default_thresholds sets for
@@ -471,31 +513,46 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     # 30 evenly-spaced bins over that range slices individual integers into
     # several thin, unreadable bars instead of the wide/clear per-value bars
     # the native Bombcell plot shows.
-    panels = [
-        ('num_positive_peaks',            '# peaks',            1, '', False, None, True),
-        ('num_negative_peaks',             '# troughs',          1, '', False, None, True),
-        ('waveform_baseline_flatness',     'baseline flatness',  1, '', False, None, False),
-        ('peak_to_trough_duration',        'waveform duration',  1e6, ' µs', False, None, False),
-        ('peak_after_to_trough_ratio',     'peak$_2$/trough',    1, '', False, None, False),
-        ('exp_decay',                      'spatial decay',      1, '', False, None, False),
-        ('peak_before_to_peak_after_ratio','peak$_1$/peak$_2$',  1, '', False, 99, False),
-        ('main_peak_to_trough_ratio',      'peak$_{main}$/trough', 1, '', False, None, False),
-        ('amplitude_median',               'amplitude',          1, ' µV', True, None, False),
-        ('snr',                            'SNR',                1, '', False, None, False),
-        ('rp_contamination',               'frac. RPVs',         1, '', False, None, False),
-        ('num_spikes',                     '# spikes',           1, '', False, None, False),
-        ('presence_ratio',                 'presence ratio',     1, '', False, None, False),
-        ('amplitude_cutoff',               '% spikes missing',   100, ' %', False, None, False),
-        ('drift_ptp',                      'maximum drift',      1, ' µm', False, None, False),
-        ('drift_std',                      'cum. drift',         1, ' µm', False, None, False),
-        # isolation_distance can carry a handful of near-numerically-infinite
-        # outliers (division by a near-zero covariance for isolated/sparse
-        # clusters) -- up to 1e15 on real data, dwarfing every other unit's
-        # value. A 90th-percentile clip (rather than 99th) is needed to keep
-        # the histogram readable; the outlier units themselves are unaffected
-        # (still in all_metrics.csv / the actual Bombcell threshold check).
-        ('isolation_distance',             'isolation dist.',    1, '', False, 90, False),
-        ('l_ratio',                        'L-ratio',            1, '', False, 95, False),
+    #
+    # Grouped into labelled sections -- each row of panels is one section,
+    # so the reader sees which part of the good/mua/noise/non-soma decision
+    # a given panel feeds into (see docstring above).
+    sections = [
+        ('NOISE metrics (fail any one → labelled "noise")', [
+            ('num_positive_peaks',            '# peaks',            1, '', False, None, True),
+            ('num_negative_peaks',             '# troughs',          1, '', False, None, True),
+            ('waveform_baseline_flatness',     'baseline flatness',  1, '', False, None, False),
+            ('peak_to_trough_duration',        'waveform duration',  1e6, 'µs', False, 99, False),
+            ('peak_after_to_trough_ratio',     'peak$_2$/trough',    1, '', False, 99, False),
+            ('exp_decay',                      'spatial decay',      1, '', False, 99, False),
+        ]),
+        ('MUA metrics (not noise, fail any one → labelled "mua")', [
+            ('amplitude_median',               'amplitude',          1, 'µV', True, 99, False),
+            ('snr',                            'SNR',                1, '', False, 99, False),
+            ('rp_contamination',               'frac. RPVs',         1, '', False, None, False),
+            ('num_spikes',                     '# spikes',           1, '', False, None, False),
+            ('presence_ratio',                 'presence ratio',     1, '', False, None, False),
+            ('amplitude_cutoff',               'spikes missing',     100, '%', False, None, False),
+            ('drift_ptp',                      'maximum drift',      1, 'µm', False, None, False),
+        ]),
+        ('NON-SOMATIC metrics (combined rule → "non_soma_good"/"non_soma_mua")', [
+            ('peak_before_to_peak_after_ratio','peak$_1$/peak$_2$',  1, '', False, 99, False),
+            ('main_peak_to_trough_ratio',      'peak$_{main}$/trough', 1, '', False, 99, False),
+            ('peak_before_to_trough_ratio',    'peak$_1$/trough',    1, '', False, 99, False),
+            ('peak_before_width',              'peak$_1$ width',     1e6, 'µs', False, None, False),
+            ('trough_width',                   'trough width',       1e6, 'µs', False, None, False),
+        ]),
+        ('Additional metrics (computed for inspection, not used in labelling)', [
+            ('drift_std',                      'cum. drift',         1, 'µm', False, 99, False),
+            # isolation_distance can carry a handful of near-numerically-infinite
+            # outliers (division by a near-zero covariance for isolated/sparse
+            # clusters) -- up to 1e15 on real data, dwarfing every other unit's
+            # value. A 90th-percentile clip (rather than 99th) is needed to keep
+            # the histogram readable; the outlier units themselves are unaffected
+            # (still in all_metrics.csv / the actual Bombcell threshold check).
+            ('isolation_distance',             'isolation dist.',    1, '', False, 90, False),
+            ('l_ratio',                        'L-ratio',            1, '', False, 95, False),
+        ]),
     ]
     # Flatten noise/mua/non-somatic sections into one lookup, same as
     # bombcell_failed_thresholds -- greater/less bounds per SI metric name.
@@ -503,96 +560,129 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     for section in thresholds.values():
         flat_thresh.update(section)
 
-    n = len(panels)
-    n_rows = int(np.floor(np.sqrt(n)))
-    n_cols = int(np.ceil(n / n_rows))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.6 * n_rows))
-    axes = np.atleast_1d(axes).ravel()
+    n_cols = max(len(panels) for _, panels in sections)
+    n_rows = len(sections)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.9 * n_rows))
+    axes = np.atleast_2d(axes)
 
-    for i, (col, short_label, scale, suffix, take_abs, upper_pct, integer_valued) in enumerate(panels):
-        ax = axes[i]
-        if col not in metrics_df.columns:
-            ax.set_title(f'{short_label}\n(not computed)')
-            ax.axis('off')
+    for row, (section_title, panels) in enumerate(sections):
+        for col_idx in range(n_cols):
+            ax = axes[row, col_idx]
+            if col_idx >= len(panels):
+                ax.axis('off')
+                continue
+
+            col, short_label, scale, suffix, take_abs, upper_pct, integer_valued = panels[col_idx]
+            if col not in metrics_df.columns:
+                ax.set_title(f'{short_label}\n(not computed)')
+                ax.axis('off')
+                continue
+
+            values = metrics_df[col].to_numpy(dtype=float)
+            if take_abs:
+                values = np.abs(values)
+            values = values * scale
+            values = values[np.isfinite(values)]
+            if upper_pct is not None and len(values) > 0:
+                values = values[values <= np.percentile(values, upper_pct)]
+            if len(values) == 0:
+                ax.set_title(f'{short_label}\n(no valid data)')
+                ax.axis('off')
+                continue
+
+            if integer_valued:
+                lo, hi = int(np.floor(values.min())), int(np.ceil(values.max())) + 1
+                bins = np.arange(lo, hi + 1) - 0.5  # bin edges centered on each integer
+            else:
+                bins = 30
+            counts, bin_edges = np.histogram(values, bins=bins)
+            frac = counts / counts.sum() if counts.sum() > 0 else counts
+            ax.bar(bin_edges[:-1], frac, width=np.diff(bin_edges), align='edge',
+                   color=plt.cm.tab20(col_idx % 20), edgecolor='black', linewidth=0.5)
+
+            bounds = flat_thresh.get(col, {})
+            greater = bounds.get('greater', None)
+            less = bounds.get('less', None)
+            xmin, xmax = float(values.min()), float(values.max())
+            xspan = max(xmax - xmin, 1e-12)
+            pad = 0.03 * xspan
+            xlo, xhi = xmin - pad, xmax + pad
+
+            def _scaled(v, scale=scale):
+                return v * scale if v is not None else None
+
+            g = _scaled(greater)
+            l = _scaled(less)
+            # 3-segment accept/reject bar: red = rejected, green = accepted,
+            # orange = the boundary case with only one side constrained (or,
+            # for the "additional metrics" row, no threshold at all -- these
+            # never fail a unit, the bar is orange throughout).
+            y0 = ax.get_ylim()
+            bar_y = -0.04 * (y0[1] if y0[1] > 0 else 1)
+            if g is not None and l is not None:
+                ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+                ax.plot([g, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
+                ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+            elif g is not None:
+                ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+                ax.plot([g, xhi], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
+            elif l is not None:
+                ax.plot([xlo, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
+                ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+            else:
+                ax.plot([xlo, xhi], [bar_y, bar_y], color='orange', lw=4, solid_capstyle='butt')
+
+            ax.set_xlim(xlo, xhi)
+
+            # Adaptive tick spacing: matplotlib's default locator often picks
+            # too few/too coarse ticks when the real data only spans a small
+            # fraction of a panel with a long outlier tail (e.g. peak2/trough
+            # mostly 0-3 got ticks every 5 up to 10) -- ask for more
+            # candidate ticks over the ACTUAL data range so the axis reflects
+            # what the histogram really shows instead of a generic default.
+            if integer_valued:
+                ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=min(10, hi - lo)))
+            else:
+                ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=8, min_n_ticks=5))
+
+            if col == 'num_spikes':
+                # scientific notation (x10^5) instead of raw ticks -- 6-digit
+                # spike counts as bare numbers ("100000, 200000...") are hard
+                # to read at a glance and don't match this panel's own axis
+                # label convention (unit/scale factor shown once, not per tick).
+                ax.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+            else:
+                # Trim trailing zeros on every tick ('0.20' -> '0.2') without
+                # touching ticks that need their full precision ('0.25' stays
+                # '0.25') -- '%g' drops only the zeros that carry no
+                # information, on every panel, not just ones with a unit
+                # suffix (the unit itself, if any, lives in the axis label,
+                # not on the ticks -- see xlabel below).
+                ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
+
+            if col_idx == 0:
+                ax.set_ylabel('frac. units')
+            ax.set_xlabel(f'{short_label} ({suffix})' if suffix else short_label)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+    # extra vertical spacing between rows so a section title (added below,
+    # after the layout is final) has room above its row of panels without
+    # overlapping the x-axis labels of the row above it
+    fig.tight_layout(rect=(0, 0, 1, 0.97), h_pad=3.5)
+
+    # section titles, centred above each row of panels, bold -- added AFTER
+    # tight_layout so axes positions (used to place each title) are final
+    for row, (section_title, _) in enumerate(sections):
+        row_axes = [a for a in axes[row] if a.get_subplotspec() is not None]
+        if not row_axes:
             continue
+        left = row_axes[0].get_position().x0
+        right = row_axes[-1].get_position().x1
+        top = max(a.get_position().y1 for a in row_axes)
+        fig.text((left + right) / 2, top + 0.012, section_title,
+                  ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-        values = metrics_df[col].to_numpy(dtype=float)
-        if take_abs:
-            values = np.abs(values)
-        values = values * scale
-        values = values[np.isfinite(values)]
-        if upper_pct is not None and len(values) > 0:
-            values = values[values <= np.percentile(values, upper_pct)]
-        if len(values) == 0:
-            ax.set_title(f'{short_label}\n(no valid data)')
-            ax.axis('off')
-            continue
-
-        if integer_valued:
-            lo, hi = int(np.floor(values.min())), int(np.ceil(values.max())) + 1
-            bins = np.arange(lo, hi + 1) - 0.5  # bin edges centered on each integer
-        else:
-            bins = 30
-        counts, bin_edges = np.histogram(values, bins=bins)
-        frac = counts / counts.sum() if counts.sum() > 0 else counts
-        ax.bar(bin_edges[:-1], frac, width=np.diff(bin_edges), align='edge',
-               color=plt.cm.tab20(i % 20), edgecolor='black', linewidth=0.5)
-
-        bounds = flat_thresh.get(col, {})
-        greater = bounds.get('greater', None)
-        less = bounds.get('less', None)
-        xmin, xmax = float(values.min()), float(values.max())
-        xspan = max(xmax - xmin, 1e-12)
-        pad = 0.03 * xspan
-        xlo, xhi = xmin - pad, xmax + pad
-
-        def _scaled(v):
-            return v * scale if v is not None else None
-
-        g = _scaled(greater)
-        l = _scaled(less)
-        # 3-segment accept/reject bar: red = rejected, green = accepted,
-        # orange = the boundary case with only one side constrained.
-        y0 = ax.get_ylim()
-        bar_y = -0.04 * (y0[1] if y0[1] > 0 else 1)
-        if g is not None and l is not None:
-            ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-            ax.plot([g, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
-            ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-        elif g is not None:
-            ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-            ax.plot([g, xhi], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
-        elif l is not None:
-            ax.plot([xlo, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
-            ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-        else:
-            ax.plot([xlo, xhi], [bar_y, bar_y], color='orange', lw=4, solid_capstyle='butt')
-
-        ax.set_xlim(xlo, xhi)
-        if suffix:
-            # Put the unit on the tick labels themselves (not just the axis
-            # label) -- '% spikes missing' with a bare 0-1-looking axis
-            # (values are genuinely ~0-1% here, not 0-100%) reads as a raw
-            # fraction; '0.5 %' on each tick removes the ambiguity.
-            # default arg (suffix=suffix) binds THIS iteration's value at
-            # definition time -- a bare closure over the loop variable
-            # `suffix` would have every panel's formatter see whatever
-            # `suffix` happened to be on the LAST loop iteration instead
-            # (matplotlib calls the formatter lazily, at draw time, by which
-            # point the loop has already finished).
-            ax.xaxis.set_major_formatter(
-                plt.FuncFormatter(lambda x, _, suffix=suffix: f'{x:g}{suffix}')
-            )
-        if i % n_cols == 0:
-            ax.set_ylabel('frac. units')
-        ax.set_xlabel(short_label)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-    for j in range(n, len(axes)):
-        axes[j].axis('off')
-
-    fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
@@ -692,12 +782,14 @@ def main():
     # MATLAB, Phy) running at the same time.
     si.set_global_job_kwargs(n_jobs=12, chunk_duration='1s', progress_bar=True)
 
-    valid_start_steps = ('catgt', 'kilosort4', 'postprocess')
+    valid_start_steps = ('catgt', 'kilosort4', 'postprocess', 'bombcell')
     if start_step not in valid_start_steps:
         raise ValueError(f"start_step must be one of {valid_start_steps}, got {start_step!r}")
-    do_catgt      = run_CatGT and start_step == 'catgt'
-    do_kilosort4  = start_step in ('catgt', 'kilosort4')
-    print(f'start_step = {start_step!r}  (CatGT: {do_catgt}, Kilosort4: {do_kilosort4})')
+    do_catgt             = run_CatGT and start_step == 'catgt'
+    do_kilosort4         = start_step in ('catgt', 'kilosort4')
+    do_sorting_analyzer  = start_step in ('catgt', 'kilosort4', 'postprocess')
+    print(f'start_step = {start_step!r}  '
+          f'(CatGT: {do_catgt}, Kilosort4: {do_kilosort4}, SortingAnalyzer: {do_sorting_analyzer})')
 
     # Clean stale log files in working directory
     for stale in ('CatGT.log', 'Tprime.log'):
@@ -853,54 +945,66 @@ def main():
             print(f'\n[5] SortingAnalyzer')
             t0 = datetime.now()
             analyzer_folder = os.path.join(ks4_out_dir, 'sorting_analyzer')
-            analyzer = si.create_sorting_analyzer(
-                sorting=sorting,
-                recording=recording_preproc,
-                format='binary_folder',
-                folder=analyzer_folder,
-                overwrite=True,
-            )
 
-            print('    random_spikes + waveforms + templates...')
-            analyzer.compute('random_spikes', method='uniform', max_spikes_per_unit=500)
-            analyzer.compute('waveforms', ms_before=1.5, ms_after=2.5, dtype='float32')
-            analyzer.compute('templates', operators=['average', 'std'])
+            if do_sorting_analyzer:
+                analyzer = si.create_sorting_analyzer(
+                    sorting=sorting,
+                    recording=recording_preproc,
+                    format='binary_folder',
+                    folder=analyzer_folder,
+                    overwrite=True,
+                )
 
-            print('    unit_locations + spike_amplitudes + spike_locations + noise_levels + template_similarity...')
-            analyzer.compute('unit_locations', method='monopolar_triangulation')
-            analyzer.compute('spike_amplitudes')
-            analyzer.compute('spike_locations')   # required for the 'drift' quality metric
-            analyzer.compute('noise_levels')      # required for the 'snr' quality metric
-            analyzer.compute('template_similarity')
+                print('    random_spikes + waveforms + templates...')
+                analyzer.compute('random_spikes', method='uniform', max_spikes_per_unit=500)
+                analyzer.compute('waveforms', ms_before=1.5, ms_after=2.5, dtype='float32')
+                analyzer.compute('templates', operators=['average', 'std'])
 
-            print('    template_metrics (shape + velocity + spread)...')
-            analyzer.compute('template_metrics', include_multi_channel_metrics=True)
+                print('    unit_locations + spike_amplitudes + spike_locations + noise_levels + template_similarity...')
+                analyzer.compute('unit_locations', method='monopolar_triangulation')
+                analyzer.compute('spike_amplitudes')
+                analyzer.compute('spike_locations')   # required for the 'drift' quality metric
+                analyzer.compute('noise_levels')      # required for the 'snr' quality metric
+                analyzer.compute('template_similarity')
 
-            print('    principal_components (for PC-based quality metrics)...')
-            analyzer.compute('principal_components', n_components=5, mode='by_channel_local')
+                print('    template_metrics (shape + velocity + spread)...')
+                analyzer.compute('template_metrics', include_multi_channel_metrics=True)
 
-            print('    quality_metrics...')
-            # IMPORTANT: Bombcell (bombcell_label_units, step 6) aborts if any of
-            # its required metrics are missing. Its defaults need num_spikes, snr,
-            # amplitude_median, rp_contamination (from 'rp_violation') and
-            # drift_ptp (from 'drift') -- these MUST be in this list, and 'snr'
-            # needs noise_levels / 'drift' needs spike_locations (computed above).
-            analyzer.compute('quality_metrics', metric_names=[
-                'num_spikes',
-                'firing_rate', 'presence_ratio', 'snr',
-                'isi_violation',    # -> isi_violations_ratio
-                'rp_violation',     # -> rp_contamination (Bombcell)
-                'amplitude_cutoff', 'amplitude_median',
-                'drift',            # -> drift_ptp -> max_drift, drift_std -> cumulative_drift
-                'mahalanobis',      # -> isolation_distance + l_ratio
-                'd_prime',
-                'nearest_neighbor', # -> nn_hit_rate + nn_miss_rate
-                'silhouette',       # -> silhouette (renamed to silhouette_score)
-            ])
+                print('    principal_components (for PC-based quality metrics)...')
+                analyzer.compute('principal_components', n_components=5, mode='by_channel_local')
 
-            elapsed_an = (datetime.now() - t0).total_seconds()
-            print(f'    SortingAnalyzer done in {elapsed_an:.0f}s')
-            log_step(session_id, 'sorting_analyzer', 'done', elapsed=f'{elapsed_an:.0f}')
+                print('    quality_metrics...')
+                # IMPORTANT: Bombcell (bombcell_label_units, step 6) aborts if any of
+                # its required metrics are missing. Its defaults need num_spikes, snr,
+                # amplitude_median, rp_contamination (from 'rp_violation') and
+                # drift_ptp (from 'drift') -- these MUST be in this list, and 'snr'
+                # needs noise_levels / 'drift' needs spike_locations (computed above).
+                analyzer.compute('quality_metrics', metric_names=[
+                    'num_spikes',
+                    'firing_rate', 'presence_ratio', 'snr',
+                    'isi_violation',    # -> isi_violations_ratio
+                    'rp_violation',     # -> rp_contamination (Bombcell)
+                    'amplitude_cutoff', 'amplitude_median',
+                    'drift',            # -> drift_ptp -> max_drift, drift_std -> cumulative_drift
+                    'mahalanobis',      # -> isolation_distance + l_ratio
+                    'd_prime',
+                    'nearest_neighbor', # -> nn_hit_rate + nn_miss_rate
+                    'silhouette',       # -> silhouette (renamed to silhouette_score)
+                ])
+
+                elapsed_an = (datetime.now() - t0).total_seconds()
+                print(f'    SortingAnalyzer done in {elapsed_an:.0f}s')
+                log_step(session_id, 'sorting_analyzer', 'done', elapsed=f'{elapsed_an:.0f}')
+            else:
+                print(f'    Loading existing SortingAnalyzer: {analyzer_folder}')
+                if not os.path.isdir(analyzer_folder):
+                    print(f'ERROR: no existing SortingAnalyzer found at {analyzer_folder}')
+                    log_step(session_id, 'sorting_analyzer', 'error_no_output')
+                    continue
+                analyzer = si.load_sorting_analyzer(analyzer_folder)
+                elapsed_an = (datetime.now() - t0).total_seconds()
+                print(f'    Loaded existing SortingAnalyzer in {elapsed_an:.0f}s')
+                log_step(session_id, 'sorting_analyzer', 'loaded_existing', elapsed=f'{elapsed_an:.0f}')
 
             # ---- Step 6: Bombcell automated curation ----
             print('\n[6] Bombcell curation')
@@ -908,7 +1012,8 @@ def main():
             labels = None
             figures_ok = False
             try:
-                bombcell_thresholds = sc.bombcell_get_default_thresholds()
+                # bombcell_thresholds: defined in the "User input" section
+                # near the top of this file (edit there to change a threshold).
                 # split_non_somatic_good_mua=True: keep the good/mua distinction
                 # for non-somatic (axonal/dendritic) units instead of collapsing
                 # them into a single 'non_soma' label -- otherwise a unit's
