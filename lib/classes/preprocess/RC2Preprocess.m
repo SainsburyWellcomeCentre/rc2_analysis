@@ -80,7 +80,7 @@ classdef RC2Preprocess < RC2Format
         %   recording PROBE_ID from the step named START_STEP to the end of
         %   the pipeline (never stops early -- later steps depend on earlier
         %   ones). START_STEP is one of the 7 steps below, or one of the
-        %   sorting sub-steps ('kilosort4', 'postprocess' -- see
+        %   sorting sub-steps ('kilosort4', 'postprocess', 'bombcell' -- see
         %   run_sorting_from_step), in which case si_sorting resumes from
         %   there and the pipeline still continues through every later step:
         %       'move_raw_to_local'
@@ -105,7 +105,7 @@ classdef RC2Preprocess < RC2Format
 
             % the sorting sub-steps; a sub-step name may be given directly
             % as START_STEP (see above).
-            sorting_sub_steps = {'kilosort4', 'postprocess'};
+            sorting_sub_steps = {'kilosort4', 'postprocess', 'bombcell'};
 
             start_step   = char(start_step);
             sorting_args = varargin;
@@ -195,8 +195,8 @@ classdef RC2Preprocess < RC2Format
         %                      CatGT-processed.
         %       'run_tprime' - logical, whether to run the TPrime step at
         %                      the end of the pipeline (default false).
-        %       'start_step' - 'catgt' (default), 'kilosort4' or
-        %                      'postprocess': where in the sorting pipeline
+        %       'start_step' - 'catgt' (default), 'kilosort4', 'postprocess'
+        %                      or 'bombcell': where in the sorting pipeline
         %                      to resume from. Requires the earlier steps'
         %                      output to already exist on disk for this
         %                      probe:
@@ -206,15 +206,27 @@ classdef RC2Preprocess < RC2Format
         %                                        Kilosort4 and everything after
         %                        'postprocess' - skip CatGT and Kilosort4,
         %                                        reload the existing sort, then
-        %                                        run SortingAnalyzer, Bombcell,
+        %                                        recompute SortingAnalyzer,
+        %                                        Bombcell, Phy export and CSV
+        %                                        export
+        %                        'bombcell'    - skip CatGT, Kilosort4 AND
+        %                                        SortingAnalyzer -- reload the
+        %                                        existing SortingAnalyzer from
+        %                                        disk, then only rerun Bombcell,
         %                                        Phy export and CSV export
         %
-        %   Example: ctl.run_sorting_from_step(probe_id, 'start_step', 'postprocess')
+        %   Examples:
+        %       ctl.run_sorting_from_step(probe_id, 'start_step', 'postprocess')
         %   reruns SortingAnalyzer onwards only, reloading the existing
         %   Kilosort4 output -- useful after fixing a Bombcell/export bug
         %   without redoing Kilosort4.
+        %
+        %       ctl.run_sorting_from_step(probe_id, 'start_step', 'bombcell')
+        %   reruns only Bombcell onwards, reloading the existing SortingAnalyzer
+        %   -- useful after changing Bombcell thresholds only, since
+        %   SortingAnalyzer's metrics do not depend on them.
 
-            valid_start_steps = {'catgt', 'kilosort4', 'postprocess'};
+            valid_start_steps = {'catgt', 'kilosort4', 'postprocess', 'bombcell'};
 
             parser = inputParser();
             parser.addParameter('run_catgt', [], ...

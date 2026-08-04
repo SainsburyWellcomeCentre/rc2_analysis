@@ -11,9 +11,9 @@ classdef SortingHelper < handle
 %                                    preprocessing step
 %       run_tprime                 - true or false (default), whether to run TPrime
 %                                    at the end of the pipeline
-%       start_step                 - 'catgt' (default), 'kilosort4' or 'postprocess':
-%                                    where in the pipeline to resume from (see
-%                                    spikeGLX_pipeline_np2.py's User input section)
+%       start_step                 - 'catgt' (default), 'kilosort4', 'postprocess' or
+%                                    'bombcell': where in the pipeline to resume from
+%                                    (see spikeGLX_pipeline_np2.py's User input section)
 %       ctl                        - instance of RC2Preprocess
 %       probe_id                   - string with the probe recording ID
 %       run_script                 - session script (template filled with session paths)
@@ -138,7 +138,7 @@ classdef SortingHelper < handle
         %   catGT_dest, run_CatGT, runTPrime, start_step) and writes the
         %   result to run_script.
 
-            valid_start_steps = {'catgt', 'kilosort4', 'postprocess'};
+            valid_start_steps = {'catgt', 'kilosort4', 'postprocess', 'bombcell'};
             if ~ismember(obj.start_step, valid_start_steps)
                 error('SortingHelper:overwrite_sorting_script:invalidStartStep', ...
                     'start_step must be one of: %s', strjoin(valid_start_steps, ', '));
