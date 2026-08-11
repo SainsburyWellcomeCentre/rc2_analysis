@@ -441,6 +441,45 @@ classdef RC2Analysis < handle
         
         
         
+        function create_tf_tuning_curves(obj, probe_id, trial_types, varargin)
+        %%create_tf_tuning_curves Create and save TF tuning curves for clusters
+        %
+        %   create_tf_tuning_curves(PROBE_ID, TRIAL_TYPES)
+        %   loads the formatted data, creates temporal frequency tuning
+        %   curves for each cluster pooling data across all three TF
+        %   batches with gain transformation, and saves to a .mat file.
+        %
+        %   create_tf_tuning_curves(PROBE_ID, TRIAL_TYPES, 'model_selection', true)
+        %   enables model selection among multiple candidate models.
+        %
+        %   See also: FormattedData.create_tf_tuning_curves, TFTuningTable
+        
+            data = obj.load_formatted_data(probe_id);
+            
+            tuning_curves = data.create_tf_tuning_curves(trial_types, varargin{:});
+            
+            tbl_struct.trial_groups = trial_types;
+            tbl_struct.tuning_curves = tuning_curves;
+            
+            obj.save.tf_tuning_curves(probe_id, tbl_struct);
+        end
+        
+        
+        
+        function tbl = load_tf_tuning_curves(obj, probe_id)
+        %%load_tf_tuning_curves Loads the TF tuning curves for a probe recording
+        %
+        %   CURVES = load_tf_tuning_curves(PROBE_ID)
+        %   given a probe recording ID string, PROBE_ID, return the TF
+        %   tuning curves created by `create_tf_tuning_curves`.
+        %
+        %   See also: create_tf_tuning_curves
+        
+            tbl = obj.load.tf_tuning_curves(probe_id);
+        end
+        
+        
+        
         function setup_figures(obj, path, save_on)
         %%setup_figures Setup RC2Figures for saving
         %

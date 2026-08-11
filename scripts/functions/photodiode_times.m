@@ -1,7 +1,7 @@
-function starts = photodiode_times(animal_id, session, session_type)
+function starts = photodiode_times(animal_id, session, session_type, n_events)
 %%PHOTODIODE_TIMES Get starting stimulus times from photodiode signal
 %
-%   STARTS = photodiode_times(ANIMAL_ID, SESSION, SESSION_TYPE)
+%   STARTS = photodiode_times(ANIMAL_ID, SESSION, SESSION_TYPE, N_EVENTS)
 %   Uses a Butterworth filter to flatten the signal of the photodiode
 %   and simplify the identification of starting times. The signal of the
 %   photodiode comes from a flickering monitor and the reading is noisy.
@@ -11,6 +11,7 @@ function starts = photodiode_times(animal_id, session, session_type)
 %   and the pre-selected threshold depending on ANIMAL_ID and SESSION_TYPE.
 %   The SESSION object contains photodiode signal and sampling rate information.
 %   SESSION is a RC2Session objcet.
+%   N_EVENTS is the expected number of stimulus events (for validation).
 %   Returns the starting times in STARTS.
 %   
 %   See also: get_parameters_for_photodiode
@@ -19,7 +20,7 @@ pd = session.photodiode;
 fs = session.fs;
 
 % get pre-selected parameters depending on animal id and condition
-[th, start_window, period, n_events, fc] = get_parameters_for_photodiode(animal_id, session_type);
+[th, start_window, period, fc] = get_parameters_for_photodiode(animal_id, session_type);
 
 % create a butterworth filter
 [b, a]  = butter(3, fc/(fs/2));
