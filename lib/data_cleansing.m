@@ -127,7 +127,7 @@ if (strcmp(sessions(1).session_id, 'CAA-1121416_rec1_001') && strcmp(sessions(2)
    strcmp(sessions(1).session_id, 'CAA-1121765_rec1_001') || ...
    strcmp(sessions(1).session_id, 'CAA-1121766_rec1_001') 
         
-   % fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+   % fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence.mat');
     passive_protocol_sequence = load(fname);
     
@@ -156,12 +156,24 @@ if strcmp(sessions(1).session_id, 'CAA-1123243_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123466_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123467_rec1_001')
         
-    %fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
+    %fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
     fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds.mat');
     passive_protocol_sequence_motion_clouds = load(fname);
     
-    for ii = 1 : sessions(1).n_trials   
+    for ii = 1 : sessions(1).n_trials
          sessions(1).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds.trial_order(ii);
+    end
+end
+
+% Include information for passive protocol sequence of motion clouds (goggles variant)
+if strcmp(sessions(2).session_id, 'CAA-1124370_rec2_001') || ...
+        strcmp(sessions(2).session_id, 'CAA-1124371_rec2_001')
+
+    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds_goggles.mat');
+    passive_protocol_sequence_motion_clouds_goggles = load(fname);
+
+    for ii = 1 : sessions(2).n_trials
+         sessions(2).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds_goggles.trial_order(ii);
     end
 end
 

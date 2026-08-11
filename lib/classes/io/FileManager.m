@@ -64,7 +64,6 @@ classdef FileManager < handle
 %       imec0_ks4_csv_dir           - path to the 'csv' directory with the metric .csv files from the SpikeInterface/KS4 pipeline
 %       metrics_csv                 - path to the 'metrics.csv' file
 %       waveform_metrics_csv        - path to the 'waveform_metrics.csv' file
-%       waveform_metrics_fixed_csv  - path to the 'waveform_metrics_fix.csv' file
 %       clusters_to_check_csv        - path to the 'clusters_to_check.csv' file
 %       mua_clusters_to_check_csv    - path to the 'mua_clusters_to_check.csv' file
 %       clusters_to_check_xlsx       - path to the 'clusters_to_check.xlsx' file
@@ -1033,31 +1032,6 @@ classdef FileManager < handle
         
         
         
-        function [fname, exists] = waveform_metrics_fixed_csv(obj, probe_id)
-        %%waveform_metrics_fixed_csv Path to the 'waveform_metrics_fix.csv' file
-        %
-        %   [FILENAME, EXISTS] = waveform_metrics_fixed_csv(PROBE_ID)
-        %   for probe recording with ID string, PROBE_ID
-        %
-        %   EXISTS is true if the file exists and false otherwise.
-        
-            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'waveform_metrics_fix.csv');
-            exists = isfile(fname);
-            
-            % if it doesn't exist attempt to find a later version
-            if ~exists
-                contents = dir(obj.imec0_ks4_csv_dir(probe_id));
-                I = regexp({contents(:).name}, 'waveform_metrics_fix');
-                idx = find(cellfun(@(x)(~isempty(x)), I));
-                if ~isempty(idx)
-                    fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), contents(idx(1)).name);
-                    exists = isfile(fname);
-                end
-            end
-        end
-        
-        
-        
         function [fname, exists] = clusters_to_check_csv(obj, probe_id)
         %%clusters_to_check_csv Path to the 'clusters_to_check.csv' file
         %
@@ -1189,7 +1163,7 @@ classdef FileManager < handle
             animal_id = obj.animal_id_from_probe_id(probe_id);
             
             level_1 = fullfile(top_dir, animal_id, 'output');
-            level_2 = fullfile(level_1, sprintf('catgt_%s_g0', probe_id));
+            level_2 = fullfile(level_1, sprintf('preprocessed_%s_g0', probe_id));
             level_3 = fullfile(level_2, sprintf('%s_g0_imec0', probe_id));
             % The SpikeInterface + Kilosort4 pipeline writes its phy output to
             % the 'imec0_ks4' directory (see spikeGLX_pipeline_np2.py).

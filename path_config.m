@@ -26,7 +26,6 @@ config.processed_camera_slow_dir = 'E:\data\raw_data\camera_c2_ks4_si_bc_um';
 config.figure_dir               = 'E:\data\figures_ks4';
 
 config.npy_matlab_dir           = 'C:\Users\Lab\SWC\original_pipeline\npy-matlab';
-config.pdf_dir                  = 'C:\Users\lee\Documents\MATLAB\pdf';
 config.spikes_dir               = 'C:\Users\Lab\SWC\original_pipeline\spikes';
 
 
@@ -40,4 +39,4 @@ config.runningmouse_python_exe  = 'C:\Users\Lab\miniconda3\envs\original_pipelin
 config.runningmouse_main_script = 'C:\Users\Lab\SWC\original_pipeline\runningmouse\difference_video\main.py';
 
 % Motion Clouds root (data moved from Y: to D:)
-config.motion_clouds_root       = 'E:\mvelez\mateoData_mc';
+config.motion_clouds_root       = 'Z:\mvelez\mateoData_mc';

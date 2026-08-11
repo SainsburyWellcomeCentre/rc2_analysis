@@ -5,9 +5,7 @@
 # generated per-session sorting script (SortingHelper.m), not source
 lib/np2/sorting/_generated/
 
-# stray logs left behind by CatGT / C_Waves / other tools
-CatGT.log
-C_Waves.log
+# stray logs left behind by other tools
 debug.log
 
 # Python bytecode cache

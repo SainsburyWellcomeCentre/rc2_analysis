@@ -7,11 +7,7 @@ classdef SortingHelper < handle
 %                                    If true, the prompt stays open when the pipeline
 %                                    finishes or errors (user must close manually);
 %                                    useful for debugging.
-%       run_catgt                  - true (default) or false, whether to run the CatGT
-%                                    preprocessing step
-%       run_tprime                 - true or false (default), whether to run TPrime
-%                                    at the end of the pipeline
-%       start_step                 - 'catgt' (default), 'kilosort4', 'postprocess' or
+%       start_step                 - 'preprocess' (default), 'kilosort4', 'postprocess' or
 %                                    'bombcell': where in the pipeline to resume from
 %                                    (see spikeGLX_pipeline_np2.py's User input section)
 %       ctl                        - instance of RC2Preprocess
@@ -22,16 +18,14 @@ classdef SortingHelper < handle
 %
 %  SortingHelper Methods:
 %       run_from_raw             - run full SpikeInterface sorting pipeline
-%       create_output_dirs       - create the CatGT destination directory
+%       create_output_dirs       - create the pipeline's output directory
 %       overwrite_sorting_script - fill session paths into template and save as run_script
 %       run_sorting              - run the SpikeInterface pipeline
 
     properties
 
         leave_window_open_on_error = true
-        run_catgt  = true
-        run_tprime = false
-        start_step = 'catgt'
+        start_step = 'preprocess'
     end
 
     properties (SetAccess = private)
@@ -65,12 +59,12 @@ classdef SortingHelper < handle
         %%run_from_raw Run the full SpikeInterface sorting pipeline
         %
         %   run_from_raw() runs the full pipeline:
-        %       - creates the CatGT destination directory
+        %       - creates the output directory
         %       - fills session paths into the template script
         %       - runs the SpikeInterface pipeline
         %
         %   All output files (metrics.csv, waveform_metrics.csv,
-        %   waveform_metrics_fix.csv, cluster_groups.csv, .npy files)
+        %   cluster_groups.csv, .npy files)
         %   are written directly by the Python script into the correct
         %   locations under imec{prb}_ks4/. No post-pipeline file moves
         %   are needed from MATLAB.
@@ -113,7 +107,7 @@ classdef SortingHelper < handle
 
 
         function create_output_dirs(obj)
-        %%create_output_dirs Create the CatGT destination directory
+        %%create_output_dirs Create the pipeline's output directory
         %
         %   create_output_dirs() creates the output directory for the
         %   pipeline if it does not already exist.
@@ -135,10 +129,9 @@ classdef SortingHelper < handle
         %
         %   overwrite_sorting_script() reads template_script, replaces the
         %   session-specific variables (logName, npx_directory, run_specs,
-        %   catGT_dest, run_CatGT, runTPrime, start_step) and writes the
-        %   result to run_script.
+        %   output_dest, start_step) and writes the result to run_script.
 
-            valid_start_steps = {'catgt', 'kilosort4', 'postprocess', 'bombcell'};
+            valid_start_steps = {'preprocess', 'kilosort4', 'postprocess', 'bombcell'};
             if ~ismember(obj.start_step, valid_start_steps)
                 error('SortingHelper:overwrite_sorting_script:invalidStartStep', ...
                     'start_step must be one of: %s', strjoin(valid_start_steps, ', '));
@@ -151,12 +144,12 @@ classdef SortingHelper < handle
             npx_directory = sprintf('r''%s''', ...
                 fullfile(obj.ctl.file.path_config.processed_probe_fast_dir, animal_id));
             run_specs     = sprintf('[[''%s'', ''0'', ''0,0'', ''0'']]', obj.probe_id);
-            catGT_dest    = sprintf('r''%s''', ...
+            output_dest   = sprintf('r''%s''', ...
                 obj.ctl.file.processed_output_dir_fast(obj.probe_id));
 
             % escape backslashes for Python raw-string literals
             npx_directory = strrep(npx_directory, '\', '\\');
-            catGT_dest    = strrep(catGT_dest,    '\', '\\');
+            output_dest   = strrep(output_dest,   '\', '\\');
 
             % read template
             fid = fopen(obj.template_script, 'r');
@@ -173,15 +166,7 @@ classdef SortingHelper < handle
             str = regexprep(str, '\<logName =[^\n]*\n',       sprintf('logName = %s\n',       log_name));
             str = regexprep(str, '\<npx_directory =[^\n]*\n', sprintf('npx_directory = %s\n', npx_directory));
             str = regexprep(str, '\nrun_specs =[^#]*',        sprintf('\nrun_specs = %s\n\n', run_specs));
-            str = regexprep(str, '\<catGT_dest =[^\n]*\n',    sprintf('catGT_dest = %s\n',    catGT_dest));
-
-            % CatGT / TPrime switches as Python booleans
-            bool_str   = {'False', 'True'};
-            catgt_str  = bool_str{logical(obj.run_catgt)  + 1};
-            tprime_str = bool_str{logical(obj.run_tprime) + 1};
-
-            str = regexprep(str, '\<run_CatGT = \w+', sprintf('run_CatGT = %s', catgt_str));
-            str = regexprep(str, '\<runTPrime = \w+',  sprintf('runTPrime = %s', tprime_str));
+            str = regexprep(str, '\<output_dest =[^\n]*\n',   sprintf('output_dest = %s\n',   output_dest));
             str = regexprep(str, '\<start_step = ''\w+''', sprintf('start_step = ''%s''', obj.start_step));
 
             % write session script
@@ -225,15 +210,6 @@ classdef SortingHelper < handle
             system(cmd);
             succeeded = isfile(done_marker);
             if isfile(done_marker), delete(done_marker); end
-
-            % clean up log files left in the working directory by CatGT / C_Waves.
-            % CatGT.log is copied into the run's own output folder by the
-            % Python script (catgt_<run>_g<gate>/catgt_<run>_g<gate>_prb_<probe>_CatGT.log,
-            % same location/name as the original ecephys_spike_sorting
-            % pipeline) before this cleanup runs -- kept per-session since
-            % it is useful for debugging a specific run after the fact.
-            if isfile('C_Waves.log'), delete('C_Waves.log'); end
-            if isfile('CatGT.log'),   delete('CatGT.log');   end
 
             if ~succeeded
                 error('SortingHelper:PythonPipelineFailed', ...

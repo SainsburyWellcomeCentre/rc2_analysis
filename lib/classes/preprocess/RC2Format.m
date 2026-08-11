@@ -174,8 +174,13 @@ classdef RC2Format < RC2Analysis
             % read probe file
             probe_track         = obj.load_track(probe_id, shank_id);
             track_offset        = obj.load.track_offset(probe_id, shank_id);
-            
-            if ~isempty(track_offset)
+
+            % NOTE: probe_track.offset = track_offset on an empty
+            % probe_track ([], when track_<shank_id>.csv doesn't exist yet
+            % -- e.g. hf_power run before histology) silently auto-vivifies
+            % a plain struct in MATLAB instead of erroring, which breaks
+            % every ProbeTrack method call downstream (format_clusters).
+            if ~isempty(track_offset) && ~isempty(probe_track)
                 probe_track.offset = track_offset;
             end
         end
@@ -201,7 +206,7 @@ classdef RC2Format < RC2Analysis
             chan_map          = obj.load.ks4_npy(probe_id, 'channel_map');
             chan_pos          = obj.load.ks4_npy(probe_id, 'channel_positions');
             qm_table          = obj.load.metrics_csv(probe_id);
-            waveform_fixed_table = obj.load.waveform_metrics_fixed_csv(probe_id);
+            waveform_table    = obj.load.waveform_metrics_csv(probe_id);
             cluster_groups    = obj.load.cluster_groups(probe_id);
             ks_label          = obj.load.ks4_label(probe_id);
             
@@ -215,10 +220,17 @@ classdef RC2Format < RC2Analysis
             end
             
             
-            % which quality metrics to unpack
-            qm = {'firing_rate', 'presence_ratio', 'isi_viol', 'amplitude_cutoff', ...
+            % which quality metrics to unpack -- SpikeInterface's own
+            % quality_metrics column names (see save_rc2_compatible_files in
+            % spikeGLX_pipeline_np2.py for why these are no longer renamed
+            % to the old ecephys_spike_sorting/Kilosort2 names, e.g.
+            % isi_viol/max_drift/silhouette_score)
+            qm = {'num_spikes', 'firing_rate', 'presence_ratio', 'snr', ...
+                'isi_violations_ratio', 'isi_violations_count', ...
+                'rp_contamination', 'rp_violations', 'amplitude_cutoff', ...
+                'amplitude_median', 'drift_ptp', 'drift_std', 'drift_mad', ...
                 'isolation_distance', 'l_ratio', 'd_prime', 'nn_hit_rate', ...
-                'nn_miss_rate', 'silhouette_score', 'max_drift', 'cumulative_drift'};
+                'nn_miss_rate', 'silhouette'};
             
             % all clusters with spikes
             cluster_ids = sort(unique(spike_clusters));
@@ -295,9 +307,9 @@ classdef RC2Format < RC2Analysis
                     %   if split, the original cluster will be the same label for all new
                     %   clusters.
                     ks_label_idx = ks_label.cluster_id == ori_cluster_id;
-                    clusters(i).ks_class = ks_label.KSLabel{ks_label_idx};
+                    clusters(i).ks4_class = ks_label.KSLabel{ks_label_idx};
                 else
-                    clusters(i).ks_class = nan;
+                    clusters(i).ks4_class = nan;
                 end
                 
                 % if quality metrics were read successfully
@@ -317,28 +329,35 @@ classdef RC2Format < RC2Analysis
                 clusters(i).amplitude_ratio = median_amp/min_amp;
             end
             
-            waveform_metrics = {'peak_channel', 'snr', 'duration', 'halfwidth', 'PT_ratio', ...
-                'repolarization_slope', 'recovery_slope', 'amplitude', 'spread', ...
-                'velocity_above', 'velocity_below'};
+            % SpikeInterface's own template_metrics column names, plus
+            % peak_channel/amplitude (derived from the mean templates, not
+            % part of that extension -- see save_rc2_compatible_files)
+            waveform_metrics = {'peak_channel', 'amplitude', ...
+                'peak_to_trough_duration', 'trough_half_width', 'peak_half_width', ...
+                'repolarization_slope', 'recovery_slope', ...
+                'num_positive_peaks', 'num_negative_peaks', ...
+                'main_to_next_extremum_duration', 'peak_before_to_trough_ratio', ...
+                'peak_after_to_trough_ratio', 'peak_before_to_peak_after_ratio', ...
+                'main_peak_to_trough_ratio', 'trough_width', 'peak_before_width', ...
+                'peak_after_width', 'waveform_baseline_flatness', ...
+                'velocity_above', 'velocity_below', 'exp_decay', 'spread'};
             
-            % if the waveform fixed table doesn't exist
-            if isempty(waveform_fixed_table)
+            % if the waveform table doesn't exist
+            if isempty(waveform_table)
                 % create empty entries for each of the waveform properties
                 for ii = 1 : length(clusters)
                     for jj = 1 : length(waveform_metrics)
                         clusters(ii).(waveform_metrics{jj}) = [];
                     end
-                    clusters(ii).waveform_fixed = false;
                 end
             else
                 % otherwise fill in the waveform information for each
                 % cluster
                 for ii = 1 : length(clusters)
-                    tbl_idx = waveform_fixed_table.cluster_id == clusters(ii).id;
+                    tbl_idx = waveform_table.cluster_id == clusters(ii).id;
                     for jj = 1 : length(waveform_metrics)
-                        clusters(ii).(waveform_metrics{jj}) = waveform_fixed_table.(waveform_metrics{jj})(tbl_idx);
+                        clusters(ii).(waveform_metrics{jj}) = waveform_table.(waveform_metrics{jj})(tbl_idx);
                     end
-                    clusters(ii).waveform_fixed = true;
                 end
             end
         end

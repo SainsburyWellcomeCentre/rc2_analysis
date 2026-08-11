@@ -5,10 +5,14 @@ Tested with SpikeInterface 0.104.x.
 
 Replaces ecephys_spike_sorting modules with SpikeInterface.
 
-Preprocessing chain:
-  CatGT  : bandpass filter (300-9000 Hz Butterworth) + gfix artifact removal
-             NOTE: -gbldmx is intentionally removed -- replaced by highpass_spatial_filter
-  SI     : detect_bad_channels -> interpolate_bad_channels -> highpass_spatial_filter
+Preprocessing chain (no external tools -- SpikeInterface end to end):
+  [a] bandpass_filter (300-9000 Hz) + phase_shift (ADC sample-delay correction;
+      inter_sample_shift is read automatically from the .meta). Saved to disk
+      once, as bandpass_only.ap/ -- source for cross-session matching (see
+      lib/np2/matching/), which needs the spatial footprint step [b] removes.
+      No transient-artifact repair -- see README; if ever needed,
+      spikeinterface.preprocessing.detect_and_remove_artifacts.
+  [b] detect_bad_channels -> interpolate_bad_channels -> highpass_spatial_filter
              (IBL destriping; handles non-uniform stripe noise better than median-based CAR)
              Applied PER SHANK (channel group) -- see ibl_destripe_by_shank().
              Both detect_bad_channels (coherence+psd) and highpass_spatial_filter
@@ -16,6 +20,7 @@ Preprocessing chain:
              multi-shank NP2.0 probes (2- or 4-shank) the recording is split by
              group, each shank destriped, then reaggregated. Shank count is read
              from the data (NP2.0 is the only fixed probe assumption).
+             This is the recording actually passed to Kilosort4.
 
 Sorting:
   Kilosort4 via SpikeInterface (do_CAR=False -- destriping already handled above)
@@ -32,36 +37,34 @@ Output (rc2_analysis / FileManager.m compatible):
     amplitudes.npy, templates.npy, channel_map.npy, channel_positions.npy, params.py
     cluster_groups.csv          <- Bombcell labels
     csv/
-      metrics.csv               <- quality metrics (firing_rate, isi_viol, ...)
-      waveform_metrics.csv      <- template shape metrics (duration, PT_ratio, ...)
-      waveform_metrics_fix.csv  <- copy of waveform_metrics.csv
+      metrics.csv               <- every quality_metrics column, SpikeInterface's own names
+      waveform_metrics.csv      <- every template_metrics column, SpikeInterface's own names
     sorting_analyzer/           <- SortingAnalyzer binary folder (reloadable)
     phy/                        <- Phy visualization output
     bombcell/                   <- Bombcell thresholds and results JSON
+  bandpass_only.ap/             <- band-pass + phase-shifted, NOT destriped;
+                                    source recording for cross-session matching
 
-TPrime (optional, for behavioral data synchronization):
-  Set runTPrime=True and add sync edge extraction flags to catGT_cmd_string.
-  Called directly via subprocess -- no ecephys module required.
+TPrime: REMOVED. RC2's sync pulse is wired into the probe's own AP stream
+(channel SY0), same clock as the neural data, so there's no cross-clock drift
+to correct -- TPrime was never doing anything here. Would matter again only
+for multiple simultaneous probes / a separate NI-DAQ stream: re-extract SY
+edges with SpikeInterface (threshold + write rising-edge times to .txt) and
+feed them to TPrime.exe.
 
-Column name mapping (SpikeInterface 0.104 -> rc2_analysis):
-  Template metrics:
-    peak_to_trough_duration  -> duration
-    trough_half_width        -> halfwidth
-    main_peak_to_trough_ratio-> PT_ratio
-    velocity_above, velocity_below, spread, repolarization_slope, recovery_slope: unchanged
-  Quality metrics:
-    isi_violations_ratio     -> isi_viol
-    silhouette               -> silhouette_score
-    drift_ptp                -> max_drift
-    drift_std                -> cumulative_drift
-    isolation_distance, l_ratio, d_prime, nn_hit_rate, nn_miss_rate: unchanged
+metrics.csv / waveform_metrics.csv use SpikeInterface's own quality_metrics /
+template_metrics column names -- NOT renamed to match the old ecephys_spike_
+sorting/Kilosort2 pipeline's metrics.csv (e.g. old 'isi_viol' is SI's
+'isi_violations_ratio', old 'max_drift' is SI's 'drift_ptp'). See
+save_rc2_compatible_files() for why: several of those old-vs-new pairs are
+not the same calculation (e.g. silhouette_score used to be a full pairwise
+silhouette; SI's default 'silhouette' is the simplified/centroid-based one),
+so reusing the old name implied an equivalence that often doesn't hold.
 """
 
 import os
 import re
-import sys
 import shutil
-import subprocess
 import fnmatch
 import numpy as np
 import pandas as pd
@@ -73,29 +76,26 @@ from datetime import datetime
 # ============================================================
 #
 # NOTE: this file is a TEMPLATE, not run directly by the MATLAB pipeline.
-# SortingHelper.m (overwrite_sorting_script) fills in the 7 values below for
+# SortingHelper.m (overwrite_sorting_script) fills in the 5 values below for
 # the session being run and writes the result to
 # lib/np2/sorting/_generated/spikeGLX_pipeline_session.py, which is what
 # actually gets executed. That generated file is overwritten on every run
 # and is not tracked in git. Editing these values here only changes what a
 # STANDALONE run (no MATLAB) uses -- see sorting/README.txt, "OPTION B".
 
-# logName: log file name (saved in catGT_dest)
+# logName: log file name (saved in output_dest)
 # npx_directory: raw data dir (parent of the SpikeGLX run folder)
 # run_specs: [run_name, gate, trigger_string, probe_string]
-# catGT_dest: CatGT + KS4 output goes under this directory
-# run_CatGT / runTPrime: whether to run those steps
+# output_dest: all pipeline output goes under this directory
 # start_step: see run_from_step / run_sorting_from_step in RC2Preprocess.m
 logName = 'pipeline_log.csv'
 npx_directory = r'D:\data\myrecording'
 run_specs = [['myrecording', '0', '0,0', '0']]
 
 # (SortingHelper.m's run_specs replacement consumes up to the next '#' --
-# keep a comment here so it doesn't also swallow catGT_dest below.)
-catGT_dest = r'D:\data\myrecording\output'
-run_CatGT = True
-runTPrime = False
-start_step = 'catgt'
+# keep a comment here so it doesn't also swallow output_dest below.)
+output_dest = r'D:\data\myrecording\output'
+start_step = 'preprocess'
 
 
 # ============================================================
@@ -108,36 +108,31 @@ start_step = 'catgt'
 # see the main README, "Adjusting Bombcell thresholds" -- or a different
 # machine's tool paths).
 
-# ---- CatGT settings ----
-catGT_stream_string = '-ap'
-# -gbldmx intentionally absent: replaced by SI highpass_spatial_filter (IBL destriping),
-# which handles non-uniform stripe noise across probe depth more robustly.
-# gfix=0,0.10,0.02 detects and repairs electrical artifacts (window/blanking in seconds).
-catGT_cmd_string = '-prb_fld -out_prb_fld -apfilter=butter,12,300,9000 -gfix=0,0.10,0.02 '
-
-# ---- TPrime settings (only used if runTPrime=True above) ----
-# IMPORTANT: also add sync edge extraction to catGT_cmd_string, e.g.:
-#   -SY=0,384,6,500    (imec sync line on channel 384, bit 6, threshold 500)
-#   -XA=0,1,3,500      (NI analog sync)
-# and update toStream_sync_params / niStream_sync_params to match.
-sync_period = 1.0                          # 1.0 for SYNC wave from imec basestation
-toStream_sync_params = 'SY=0,384,6,500'   # copy from catGT_cmd_string, no spaces
-niStream_sync_params = 'XA=0,1,3,500'     # set to None if no NI auxiliary data
-
 # ---- Kilosort 4 settings (all 3 are the documented KS4 defaults) ----
 ks_nblocks = 5        # non-rigid drift correction blocks; KS4 docs recommend 5 for long probes
 ks_Th_universal = 9   # spike detection threshold, universal (not-yet-learned) templates
 ks_Th_learned = 8     # spike detection threshold, templates learned from this recording
 
 # ---- Bombcell thresholds (curation used in Step [6]) ----
-# These are Bombcell's own defaults (spikeinterface.curation.bombcell_get_default_thresholds()),
-# written out here instead of called at runtime so they are visible and
-# editable without digging through the rest of this file. 'greater'/'less'
-# are inclusive pass bounds (None = that side is unconstrained); a unit
-# fails a category ("noise"/"mua") if it fails ANY ONE metric in it -- see
-# the main README, "Adjusting Bombcell thresholds", for what each metric
-# means and when you might want to relax one (e.g. cerebellar Purkinje
-# cells). Set any bound to None to disable that side of a check.
+# These start from Bombcell's own defaults (spikeinterface.curation.
+# bombcell_get_default_thresholds()), written out here instead of called at
+# runtime so they are visible and editable without digging through the rest
+# of this file. 'greater'/'less' are inclusive pass bounds (None = that side
+# is unconstrained); a unit fails a category ("noise"/"mua") if it fails ANY
+# ONE metric in it -- see the main README, "Adjusting Bombcell thresholds",
+# for what each metric means and when you might want to relax one (e.g.
+# cerebellar Purkinje cells). Set any bound to None to disable that side of a
+# check.
+#
+# rp_contamination and snr were relaxed from the SI/Bombcell defaults
+# (0.1 -> 0.15, 5 -> 4.5) after checking, on 3 animals (CAA-1124370,
+# CAA-1124371, CAA-1123244), that rp_contamination alone accounted for the
+# large majority of units failing "good" status (267/857 mua units failed
+# ONLY this criterion; amplitude_median failed 0 units in isolation, contra
+# Bombcell's own general guidance to tune amplitude first). Units recovered
+# by this relaxation were spot-checked in Phy (ISI view) before deciding on
+# these values. See lib/np2/sorting/README.txt, "Adjusting Bombcell
+# thresholds", for the full analysis and the recovered unit IDs.
 bombcell_thresholds = {
     'noise': {
         'num_positive_peaks':        {'greater': None,   'less': 2},
@@ -149,10 +144,10 @@ bombcell_thresholds = {
     },
     'mua': {
         'amplitude_median':  {'greater': 30,  'less': None, 'abs': True},
-        'snr':                {'greater': 5,   'less': None},
+        'snr':                {'greater': 4.5, 'less': None},
         'amplitude_cutoff':   {'greater': None,'less': 0.2},
         'num_spikes':         {'greater': 300, 'less': None},
-        'rp_contamination':   {'greater': None,'less': 0.1},
+        'rp_contamination':   {'greater': None,'less': 0.15},
         'presence_ratio':     {'greater': 0.7, 'less': None},
         'drift_ptp':          {'greater': None,'less': 100},
     },
@@ -164,10 +159,6 @@ bombcell_thresholds = {
         'main_peak_to_trough_ratio':      {'greater': None,   'less': 0.8},
     },
 }
-
-# ---- Tool paths (edit for your computer) ----
-catGTPath  = r'C:\Users\Lab\SWC\CatGT-win'
-tPrimePath = r'C:\Users\Lab\SWC\TPrime-win'
 
 # ============================================================
 # End of user input
@@ -188,59 +179,20 @@ def parse_probe_str(probe_string):
     return prb_list
 
 
-def get_trial_range(gate, prb_folder):
-    """Scan prb_folder .bin files and return (min_trial, max_trial) indices."""
-    search_str = f'_g{gate}_t'
-    min_idx, max_idx = sys.maxsize, 0
-    for fname in os.listdir(prb_folder):
-        if fnmatch.fnmatch(fname, '*.bin'):
-            g_pos = fname.find(search_str)
-            if g_pos < 0:
-                continue
-            t_start = g_pos + len(search_str)
-            t_end = fname.find('.', t_start)
-            if t_end < 0:
-                continue
-            try:
-                t_idx = int(fname[t_start:t_end])
-                min_idx = min(min_idx, t_idx)
-                max_idx = max(max_idx, t_idx)
-            except ValueError:
-                continue
-    return min_idx, max_idx
+def check_single_trigger_file(raw_dir):
+    """Raise if raw_dir has more than one '_t<N>.ap.bin' file.
 
-
-def parse_trig_str(trigger_string, gate, prb_folder):
-    """Parse '0,0' or 'start,end' -> (first_trig, last_trig) integers."""
-    first_str, last_str = trigger_string.split(',')
-    min_idx = max_idx = None
-    if 'start' in first_str or 'end' in last_str:
-        min_idx, max_idx = get_trial_range(gate, prb_folder)
-    first_trig = min_idx if 'start' in first_str else int(first_str)
-    last_trig  = max_idx if 'end'   in last_str  else int(last_str)
-    return first_trig, last_trig
-
-
-def parse_catgt_log(log_dir, run_name, gate_string, prb_list):
-    """Read CatGT.log and return array of gfix edit rates (edits/sec) per probe."""
-    gfix_str = f'{run_name}_{gate_string} Gfix'
-    gfix_edits = np.zeros(len(prb_list))
-    pfound, gfound = [], []
-    log_path = os.path.join(log_dir, 'CatGT.log')
-    try:
-        with open(log_path, 'r') as f:
-            for line in f:
-                g = line.find(gfix_str)
-                if g > -1:
-                    parts = line[g:].split()
-                    pfound.append(parts[3])
-                    gfound.append(float(parts[5]))
-    except FileNotFoundError:
-        print(f'  Warning: CatGT.log not found at {log_path}')
-    for i, prb in enumerate(prb_list):
-        if prb in pfound:
-            gfix_edits[i] = gfound[pfound.index(prb)]
-    return gfix_edits
+    SpikeGLX writes a new _t<N> file each time acquisition restarts within
+    the same gate (e.g. after a pause/crash without closing the gate).
+    SpikeInterface does not concatenate multiple trigger files -- so surface
+    this loudly instead of silently sorting only one of them.
+    """
+    t_files = [f for f in os.listdir(raw_dir) if fnmatch.fnmatch(f, '*_t*.imec*.ap.bin')]
+    if len(t_files) > 1:
+        raise RuntimeError(
+            f'{raw_dir} has {len(t_files)} trigger files ({t_files}) -- '
+            'multi-file concatenation is not supported by this pipeline.'
+        )
 
 
 def copy_ks4_outputs_to_parent(ks4_output_dir, recording_preproc=None):
@@ -296,6 +248,55 @@ def copy_ks4_outputs_to_parent(ks4_output_dir, recording_preproc=None):
         print('  Created spike_clusters.npy (copy of spike_templates.npy)')
 
 
+def plot_ks4_motion(ks4_output_dir, out_path):
+    """Plot Kilosort4's internal drift-correction estimate (ops.npy: dshift,
+    yblk) -- one curve per non-rigid block, showing the estimated shift (um)
+    over time at that depth. This is KS4's own correction, not a scatter of
+    raw spike positions (see create_driftmap in RC2Preprocess.m for that).
+
+    Use this to judge how much drift a session actually has before deciding
+    whether to rerun it with nblocks=0 for cross-session matching -- see the
+    main README, "Kilosort4 drift correction and cross-session matching".
+    """
+    import matplotlib.pyplot as plt
+
+    ops_path = os.path.join(ks4_output_dir, 'ops.npy')
+    if not os.path.isfile(ops_path):
+        print(f'    Warning: ops.npy not found at {ops_path}, skipping motion plot')
+        return
+
+    ops = np.load(ops_path, allow_pickle=True).item()
+    dshift = ops.get('dshift')
+    yblk = ops.get('yblk')
+    if dshift is None or yblk is None:
+        print('    Warning: ops.npy has no dshift/yblk (rigid registration?), skipping motion plot')
+        return
+
+    fs = ops.get('fs', 30000.0)
+    batch_size = ops.get('batch_size', 60000)
+    t = np.arange(dshift.shape[0]) * batch_size / fs
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for block_idx in range(dshift.shape[1]):
+        ax.plot(t, dshift[:, block_idx], label=f'{yblk[block_idx]:.0f} um', linewidth=1)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Estimated shift (um)')
+    # Clip the y-range to the 0.5-99.5 percentile: KS4 can produce a handful
+    # of large one-batch outliers unrelated to real probe motion (e.g. a
+    # short/partial batch), which would otherwise dominate the axis scale.
+    lo, hi = np.percentile(dshift, [0.5, 99.5])
+    pad = 0.1 * max(hi - lo, 1.0)
+    ax.set_ylim(lo - pad, hi + pad)
+    ax.set_title(f"KS4 drift correction (mean_drift={ops.get('mean_drift', float('nan')):.1f} um)")
+    ax.legend(title='Block depth', fontsize=8, ncol=2)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f'    Saved motion plot -> {out_path}')
+
+
 def ibl_destripe_by_shank(recording):
     """IBL destriping (detect + interpolate bad channels, then
     highpass_spatial_filter) applied PER SHANK (channel group).
@@ -347,86 +348,50 @@ def save_rc2_compatible_files(analyzer, labels, ks4_output_dir):
       ks4_output_dir/
         cluster_groups.csv           <- cluster_id + group (good/mua/noise from Bombcell)
         csv/
-          metrics.csv                <- quality metrics with rc2_analysis column names
-          waveform_metrics.csv       <- template metrics with rc2_analysis column names
-          waveform_metrics_fix.csv   <- copy of waveform_metrics.csv
+          metrics.csv                <- every quality_metrics column, native SI names
+          waveform_metrics.csv       <- every template_metrics column, native SI names,
+                                         plus peak_channel/amplitude (not part of that
+                                         extension -- derived from the mean templates below)
 
-    SpikeInterface 0.104 column names -> rc2_analysis expected names:
-      Template metrics:
-        peak_to_trough_duration  -> duration
-        trough_half_width        -> halfwidth   (half_width metric, trough value)
-        main_peak_to_trough_ratio-> PT_ratio    (from waveform_ratios metric)
-        velocity_above/below, spread, repolarization/recovery_slope: unchanged
-      Quality metrics:
-        isi_violations_ratio     -> isi_viol
-        silhouette               -> silhouette_score
-        drift_ptp                -> max_drift
-        drift_std                -> cumulative_drift
-        isolation_distance, l_ratio, d_prime, nn_hit_rate, nn_miss_rate: unchanged
+    Column names are SpikeInterface's own (quality_metrics/template_metrics), NOT
+    renamed to match the old ecephys_spike_sorting/Kilosort2 pipeline's metrics.csv
+    columns (e.g. old 'isi_viol' is SI's 'isi_violations_ratio', old 'max_drift' is
+    SI's 'drift_ptp', old 'duration' is SI's 'peak_to_trough_duration'). That renaming
+    used to happen here, but several of those pairs are not the same calculation
+    (e.g. 'silhouette_score' was a full pairwise silhouette, SI's default 'silhouette'
+    is the simplified/centroid-based one -- see SpikeInterface's silhouette_score.rst).
+    Reusing the old name implied an equivalence that often doesn't hold. rc2_analysis
+    (RC2Format.m) reads these CSVs directly by column name, so it lists SI's own names.
     """
     csv_dir = os.path.join(ks4_output_dir, 'csv')
     os.makedirs(csv_dir, exist_ok=True)
     unit_ids = list(analyzer.unit_ids)
 
-    # ---- metrics.csv (quality metrics) ----
+    # ---- metrics.csv (every quality_metrics column, as computed) ----
     qm_ext = analyzer.get_extension('quality_metrics')
     if qm_ext is not None:
         qm_df = qm_ext.get_data().copy()
         qm_df.index.name = 'unit_id'
         qm_df = qm_df.reset_index().rename(columns={'unit_id': 'cluster_id'})
+        qm_df.to_csv(os.path.join(csv_dir, 'metrics.csv'), index=False)
+        print(f'  Saved metrics.csv ({len(qm_df)} units, {len(qm_df.columns) - 1} metrics)')
 
-        qm_df = qm_df.rename(columns={
-            'isi_violations_ratio': 'isi_viol',
-            'silhouette':           'silhouette_score',
-            'drift_ptp':            'max_drift',
-            'drift_std':            'cumulative_drift',
-        })
-
-        required_qm = [
-            'cluster_id', 'firing_rate', 'presence_ratio', 'isi_viol',
-            'amplitude_cutoff', 'isolation_distance', 'l_ratio', 'd_prime',
-            'nn_hit_rate', 'nn_miss_rate', 'silhouette_score',
-            'max_drift', 'cumulative_drift',
-        ]
-        for col in required_qm:
-            if col not in qm_df.columns:
-                qm_df[col] = np.nan
-
-        qm_df[required_qm].to_csv(os.path.join(csv_dir, 'metrics.csv'), index=False)
-        print(f'  Saved metrics.csv ({len(qm_df)} units)')
-
-    # ---- waveform_metrics.csv (template metrics + SNR + peak_channel + amplitude) ----
+    # ---- waveform_metrics.csv (every template_metrics column + peak_channel/amplitude) ----
     tm_ext = analyzer.get_extension('template_metrics')
     if tm_ext is not None:
         tm_df = tm_ext.get_data().copy()
         tm_df.index.name = 'unit_id'
         tm_df = tm_df.reset_index().rename(columns={'unit_id': 'cluster_id'})
 
-        # Rename SI 0.104 names -> rc2_analysis expected names
-        tm_df = tm_df.rename(columns={
-            'peak_to_trough_duration':  'duration',
-            'trough_half_width':        'halfwidth',
-            'main_peak_to_trough_ratio': 'PT_ratio',
-        })
-
-        # Add SNR from quality metrics
-        if qm_ext is not None:
-            qm_data = qm_ext.get_data().copy()
-            qm_data.index.name = 'unit_id'
-            qm_data = qm_data.reset_index().rename(columns={'unit_id': 'cluster_id'})
-            if 'snr' in qm_data.columns:
-                tm_df = tm_df.merge(qm_data[['cluster_id', 'snr']], on='cluster_id', how='left')
-
-        # Compute peak_channel and amplitude from mean templates
+        # peak_channel/amplitude are not template_metrics outputs -- derive them
+        # from the mean templates (same computation as before).
         templates_ext = analyzer.get_extension('templates')
         if templates_ext is not None:
             tmpl = templates_ext.get_templates(operator='average')  # (n_units, n_samples, n_ch)
-            chan_ids = analyzer.channel_ids
             peak_channels, amplitudes_list = [], []
             for i in range(tmpl.shape[0]):
                 amp_per_ch = tmpl[i].max(axis=0) - tmpl[i].min(axis=0)
                 best_idx = int(np.argmax(amp_per_ch))
-                # channel_ids may be strings or ints; use index for simplicity
                 peak_channels.append(best_idx)
                 amplitudes_list.append(float(amp_per_ch[best_idx]))
 
@@ -436,21 +401,9 @@ def save_rc2_compatible_files(analyzer, labels, ks4_output_dir):
                 on='cluster_id', how='left'
             )
 
-        # Ensure all rc2_analysis-expected waveform columns are present
-        required_wf = [
-            'cluster_id', 'peak_channel', 'snr', 'duration', 'halfwidth',
-            'PT_ratio', 'repolarization_slope', 'recovery_slope', 'amplitude',
-            'spread', 'velocity_above', 'velocity_below',
-        ]
-        for col in required_wf:
-            if col not in tm_df.columns:
-                tm_df[col] = np.nan
-
-        wf_path     = os.path.join(csv_dir, 'waveform_metrics.csv')
-        wf_fix_path = os.path.join(csv_dir, 'waveform_metrics_fix.csv')
-        tm_df[required_wf].to_csv(wf_path, index=False)
-        shutil.copy2(wf_path, wf_fix_path)
-        print(f'  Saved waveform_metrics.csv + waveform_metrics_fix.csv ({len(tm_df)} units)')
+        wf_path = os.path.join(csv_dir, 'waveform_metrics.csv')
+        tm_df.to_csv(wf_path, index=False)
+        print(f'  Saved waveform_metrics.csv ({len(tm_df)} units, {len(tm_df.columns) - 1} metrics)')
 
     # ---- cluster_groups.csv (Bombcell labels) ----
     group_values = labels if labels is not None else (['unsorted'] * len(unit_ids))
@@ -460,15 +413,60 @@ def save_rc2_compatible_files(analyzer, labels, ks4_output_dir):
     print(f'  Saved cluster_groups.csv ({len(unit_ids)} units)')
 
 
+# Short display name for each Bombcell/SpikeInterface metric column, used
+# consistently across every plot this pipeline produces (metric_histograms,
+# the upset plots, waveform_classification) AND in the "User input" section
+# at the top of this file -- so a name seen on any plot can be found in the
+# same form everywhere else, including the threshold dict a user would edit.
+METRIC_DISPLAY_NAMES = {
+    'num_positive_peaks':               '# peaks',
+    'num_negative_peaks':                '# troughs',
+    'waveform_baseline_flatness':        'baseline flatness',
+    'peak_to_trough_duration':           'waveform duration',
+    'peak_after_to_trough_ratio':        'peak$_2$/trough',
+    'exp_decay':                         'spatial decay',
+    'amplitude_median':                  'amplitude',
+    'snr':                               'SNR',
+    'rp_contamination':                  'frac. RPVs',
+    'num_spikes':                        '# spikes',
+    'presence_ratio':                    'presence ratio',
+    'amplitude_cutoff':                  'spikes missing',
+    'drift_ptp':                         'maximum drift',
+    'peak_before_to_peak_after_ratio':   'peak$_1$/peak$_2$',
+    'main_peak_to_trough_ratio':         'peak$_{main}$/trough',
+    'peak_before_to_trough_ratio':       'peak$_1$/trough',
+    'peak_before_width':                 'peak$_1$ width',
+    'trough_width':                      'trough width',
+    'drift_std':                         'cum. drift',
+    'isolation_distance':                'isolation dist.',
+    'l_ratio':                           'L-ratio',
+}
+
+# Colour convention used on every plot in this pipeline: which label a metric
+# drives the unit TOWARDS when it fails is what determines its colour, not
+# just pass/fail -- green always means "passes, no effect on the label";
+# red/orange/blue mean "fails, and pushes the unit towards noise/mua/non-soma"
+# respectively; grey means "not used in labelling at all, no effect either way".
+LABEL_COLORS = {
+    'pass':        'tab:green',
+    'noise':       'tab:red',
+    'mua':         'tab:orange',
+    'non-somatic': 'tab:blue',
+    'neutral':     '0.4',  # grey -- additional/inspection-only metrics, and non-somatic comparisons
+}
+
+
 def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     """
     Recreates the native Bombcell (MATLAB/Python) quality_metrics_distribution
-    layout -- short human-readable axis labels (matching Bombcell's own
-    metric_info short_names, see plotting_utils.get_metric_info_list in the
-    Bombcell repo), a fraction-of-units y-axis, and a red/orange/green bar
-    under each x-axis showing which range of that metric is rejected/
-    borderline/accepted -- but grouped into labelled rows by what each metric
-    is actually USED for (noise / mua / non-somatic / not used at all), so a
+    layout -- short human-readable axis labels (METRIC_DISPLAY_NAMES, shared
+    with the upset plots and waveform_classification.png), a fraction-of-units
+    y-axis, a min/max legend per panel, and a green/red/orange/blue bar under
+    each x-axis showing which range of that metric is accepted vs. rejected --
+    grouped into labelled rows by what each metric is actually USED for
+    (noise / mua / non-somatic / not used at all), coloured to match (green =
+    passes; red/orange/blue = fails and pushes the unit towards noise/mua/
+    non-somatic respectively; grey = no threshold, inspection only), so a
     reader can see at a glance which panels affect which part of the
     good/mua/noise/non-soma decision before touching a threshold.
 
@@ -517,41 +515,59 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     # Grouped into labelled sections -- each row of panels is one section,
     # so the reader sees which part of the good/mua/noise/non-soma decision
     # a given panel feeds into (see docstring above).
+    # (SI column, unit scale factor, unit suffix, take_abs, upper percentile
+    #  clip, integer_valued) -- display name comes from METRIC_DISPLAY_NAMES
+    #  (shared with the upset plots and waveform_classification), not repeated
+    #  here. take_abs mirrors the 'abs': True flag bombcell_get_default_
+    #  thresholds sets for amplitude_median (amplitude is signed in SI,
+    #  Bombcell thresholds it unsigned). upper percentile clip guards metrics
+    #  like isolation_distance that can have a handful of near-infinite
+    #  outliers (isolated/near-empty clusters) that would otherwise squash the
+    #  whole histogram into one bin. integer_valued: one bin per integer
+    #  instead of a fixed 30 bins -- # peaks/# troughs only take small integer
+    #  values (0, 1, 2, 3...), and 30 evenly-spaced bins over that range
+    #  slices individual integers into several thin, unreadable bars instead
+    #  of the wide/clear per-value bars the native Bombcell plot shows.
+    #
+    # Grouped into labelled sections -- each row of panels is one section, so
+    # the reader sees which part of the good/mua/noise/non-soma decision a
+    # given panel feeds into (see docstring above). 'label_color' is the
+    # LABEL_COLORS key used for that row's accept/reject bar.
     sections = [
-        ('NOISE metrics (fail any one → labelled "noise")', [
-            ('num_positive_peaks',            '# peaks',            1, '', False, None, True),
-            ('num_negative_peaks',             '# troughs',          1, '', False, None, True),
-            ('waveform_baseline_flatness',     'baseline flatness',  1, '', False, None, False),
-            ('peak_to_trough_duration',        'waveform duration',  1e6, 'µs', False, 99, False),
-            ('peak_after_to_trough_ratio',     'peak$_2$/trough',    1, '', False, 99, False),
-            ('exp_decay',                      'spatial decay',      1, '', False, 99, False),
+        ('NOISE metrics (fail any one → labelled "noise")', 'noise', [
+            ('num_positive_peaks',             1,   '',   False, None, True),
+            ('num_negative_peaks',             1,   '',   False, None, True),
+            ('waveform_baseline_flatness',     1,   '',   False, None, False),
+            ('peak_to_trough_duration',        1e6, 'µs', False, 99,   False),
+            ('peak_after_to_trough_ratio',     1,   '',   False, 99,   False),
+            ('exp_decay',                      1,   '',   False, 99,   False),
         ]),
-        ('MUA metrics (not noise, fail any one → labelled "mua")', [
-            ('amplitude_median',               'amplitude',          1, 'µV', True, 99, False),
-            ('snr',                            'SNR',                1, '', False, 99, False),
-            ('rp_contamination',               'frac. RPVs',         1, '', False, None, False),
-            ('num_spikes',                     '# spikes',           1, '', False, None, False),
-            ('presence_ratio',                 'presence ratio',     1, '', False, None, False),
-            ('amplitude_cutoff',               'spikes missing',     100, '%', False, None, False),
-            ('drift_ptp',                      'maximum drift',      1, 'µm', False, None, False),
+        ('MUA metrics (not noise, fail any one → labelled "mua")', 'mua', [
+            ('amplitude_median',               1,   'µV', True,  99,   False),
+            ('snr',                            1,   '',   False, 99,   False),
+            ('rp_contamination',               1,   '',   False, None, False),
+            ('num_spikes',                     1,   '',   False, None, False),
+            ('presence_ratio',                 1,   '',   False, None, False),
+            ('amplitude_cutoff',               100, '%',  False, None, False),
+            ('drift_ptp',                      1,   'µm', False, None, False),
         ]),
-        ('NON-SOMATIC metrics (combined rule → "non_soma_good"/"non_soma_mua")', [
-            ('peak_before_to_peak_after_ratio','peak$_1$/peak$_2$',  1, '', False, 99, False),
-            ('main_peak_to_trough_ratio',      'peak$_{main}$/trough', 1, '', False, 99, False),
-            ('peak_before_to_trough_ratio',    'peak$_1$/trough',    1, '', False, 99, False),
-            ('peak_before_width',              'peak$_1$ width',     1e6, 'µs', False, None, False),
-            ('trough_width',                   'trough width',       1e6, 'µs', False, None, False),
+        ('NON-SOMATIC metrics (combined rule → "non_soma_good"/"non_soma_mua", shown together)', 'non-somatic', [
+            ('peak_before_to_peak_after_ratio',1,   '',   False, 99,   False),
+            ('main_peak_to_trough_ratio',      1,   '',   False, 99,   False),
+            ('peak_before_to_trough_ratio',    1,   '',   False, 99,   False),
+            ('peak_before_width',              1e6, 'µs', False, None, False),
+            ('trough_width',                   1e6, 'µs', False, None, False),
         ]),
-        ('Additional metrics (computed for inspection, not used in labelling)', [
-            ('drift_std',                      'cum. drift',         1, 'µm', False, 99, False),
+        ('Additional metrics (computed for inspection, not used in labelling)', 'neutral', [
+            ('drift_std',                      1,   'µm', False, 99, False),
             # isolation_distance can carry a handful of near-numerically-infinite
             # outliers (division by a near-zero covariance for isolated/sparse
             # clusters) -- up to 1e15 on real data, dwarfing every other unit's
             # value. A 90th-percentile clip (rather than 99th) is needed to keep
             # the histogram readable; the outlier units themselves are unaffected
             # (still in all_metrics.csv / the actual Bombcell threshold check).
-            ('isolation_distance',             'isolation dist.',    1, '', False, 90, False),
-            ('l_ratio',                        'L-ratio',            1, '', False, 95, False),
+            ('isolation_distance',             1,   '',   False, 90, False),
+            ('l_ratio',                        1,   '',   False, 95, False),
         ]),
     ]
     # Flatten noise/mua/non-somatic sections into one lookup, same as
@@ -560,19 +576,22 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
     for section in thresholds.values():
         flat_thresh.update(section)
 
-    n_cols = max(len(panels) for _, panels in sections)
+    n_cols = max(len(panels) for _, _, panels in sections)
     n_rows = len(sections)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.9 * n_rows))
     axes = np.atleast_2d(axes)
 
-    for row, (section_title, panels) in enumerate(sections):
+    for row, (section_title, label_color_key, panels) in enumerate(sections):
+        fail_color = LABEL_COLORS[label_color_key]
+        pass_color = LABEL_COLORS['pass']
         for col_idx in range(n_cols):
             ax = axes[row, col_idx]
             if col_idx >= len(panels):
                 ax.axis('off')
                 continue
 
-            col, short_label, scale, suffix, take_abs, upper_pct, integer_valued = panels[col_idx]
+            col, scale, suffix, take_abs, upper_pct, integer_valued = panels[col_idx]
+            short_label = METRIC_DISPLAY_NAMES[col]
             if col not in metrics_df.columns:
                 ax.set_title(f'{short_label}\n(not computed)')
                 ax.axis('off')
@@ -613,26 +632,55 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
 
             g = _scaled(greater)
             l = _scaled(less)
-            # 3-segment accept/reject bar: red = rejected, green = accepted,
-            # orange = the boundary case with only one side constrained (or,
-            # for the "additional metrics" row, no threshold at all -- these
-            # never fail a unit, the bar is orange throughout).
+            # 3-segment accept/reject bar: green = passes (no effect on the
+            # label), fail_color = fails and pushes the unit towards this
+            # row's label (red=noise, orange=mua, blue=non-somatic) --
+            # neutral grey throughout for the "additional metrics" row, which
+            # has no threshold at all (never fails a unit either way).
             y0 = ax.get_ylim()
             bar_y = -0.04 * (y0[1] if y0[1] > 0 else 1)
-            if g is not None and l is not None:
-                ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-                ax.plot([g, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
-                ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+            if label_color_key == 'neutral':
+                ax.plot([xlo, xhi], [bar_y, bar_y], color=LABEL_COLORS['neutral'], lw=4, solid_capstyle='butt')
+            elif g is not None and l is not None:
+                ax.plot([xlo, g], [bar_y, bar_y], color=fail_color, lw=4, solid_capstyle='butt')
+                ax.plot([g, l], [bar_y, bar_y], color=pass_color, lw=4, solid_capstyle='butt')
+                ax.plot([l, xhi], [bar_y, bar_y], color=fail_color, lw=4, solid_capstyle='butt')
             elif g is not None:
-                ax.plot([xlo, g], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
-                ax.plot([g, xhi], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
+                ax.plot([xlo, g], [bar_y, bar_y], color=fail_color, lw=4, solid_capstyle='butt')
+                ax.plot([g, xhi], [bar_y, bar_y], color=pass_color, lw=4, solid_capstyle='butt')
             elif l is not None:
-                ax.plot([xlo, l], [bar_y, bar_y], color='green', lw=4, solid_capstyle='butt')
-                ax.plot([l, xhi], [bar_y, bar_y], color='red', lw=4, solid_capstyle='butt')
+                ax.plot([xlo, l], [bar_y, bar_y], color=pass_color, lw=4, solid_capstyle='butt')
+                ax.plot([l, xhi], [bar_y, bar_y], color=fail_color, lw=4, solid_capstyle='butt')
             else:
-                ax.plot([xlo, xhi], [bar_y, bar_y], color='orange', lw=4, solid_capstyle='butt')
+                # no threshold defined for this metric even though its row
+                # normally has one (shouldn't happen for the 18 labelling
+                # metrics, but guards against a future mismatch) -- neutral.
+                ax.plot([xlo, xhi], [bar_y, bar_y], color=LABEL_COLORS['neutral'], lw=4, solid_capstyle='butt')
 
             ax.set_xlim(xlo, xhi)
+
+            # Headroom above the tallest bar so the min/max legend (below)
+            # never overlaps a bar, even when the tallest bar is near the top
+            # of the axis (e.g. presence ratio, frac. RPVs).
+            y0, y1 = ax.get_ylim()
+            ax.set_ylim(y0, y1 * 1.22)
+
+            # Small threshold legend, top-right of each panel -- the
+            # accept/reject bar shows WHERE the pass range falls but not its
+            # exact numeric bound(s), which colour alone can't convey
+            # precisely. Shows the PASS-RANGE THRESHOLD(S) (g/l, already
+            # computed above and scaled to match the axis), not the min/max
+            # of the data -- e.g. '# peaks' shows 'max=2' (the bombcell_
+            # thresholds bound), not the largest value actually observed.
+            # No threshold at all (the "additional metrics" row) -> no legend.
+            legend_parts = []
+            if g is not None:
+                legend_parts.append(f'min={g:.3g}')
+            if l is not None:
+                legend_parts.append(f'max={l:.3g}')
+            if legend_parts:
+                ax.text(0.98, 0.97, '\n'.join(legend_parts), transform=ax.transAxes, ha='right', va='top',
+                         fontsize=6.5, color='0.3', linespacing=1.3)
 
             # Adaptive tick spacing: matplotlib's default locator often picks
             # too few/too coarse ticks when the real data only spans a small
@@ -673,7 +721,7 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
 
     # section titles, centred above each row of panels, bold -- added AFTER
     # tight_layout so axes positions (used to place each title) are final
-    for row, (section_title, _) in enumerate(sections):
+    for row, (section_title, _, _) in enumerate(sections):
         row_axes = [a for a in axes[row] if a.get_subplotspec() is not None]
         if not row_axes:
             continue
@@ -683,6 +731,162 @@ def plot_bombcell_metric_histograms(metrics_df, thresholds, out_path):
         fig.text((left + right) / 2, top + 0.012, section_title,
                   ha='center', va='bottom', fontsize=10, fontweight='bold')
 
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_bombcell_upset(analyzer, unit_labels, thresholds, out_dir):
+    """
+    One UpSet plot per label category (noise / mua / non-somatic), showing
+    which combinations of failed metrics occur together within that category
+    -- reimplemented rather than using SpikeInterface's own
+    sw.plot_bombcell_labels_upset (spikeinterface.widgets.BombcellUpsetPlotWidget)
+    for two reasons:
+      1. That widget always keeps non_soma_good/non_soma_mua as two separate
+         plots; this pipeline shows a single combined "non-somatic" plot
+         instead (the axonal/dendritic waveform-shape failure reasons are the
+         same regardless of whether the unit was otherwise good or mua).
+      2. That widget labels each row with the raw SpikeInterface column name
+         (e.g. 'peak_after_to_trough_ratio'), not the short names
+         (METRIC_DISPLAY_NAMES) used on metric_histograms.png -- reusing its
+         internal helpers (_get_metrics_for_unit_label, _build_failure_table)
+         but renaming columns before handing off to `upsetplot` keeps the two
+         plot types easy to cross-reference.
+
+    Writes one file per category that has at least one failing unit:
+      noise_units_upset.png, mua_units_upset.png, non_somatic_units_upset.png
+    Returns the list of (category, path) pairs actually written.
+    """
+    import warnings
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from spikeinterface.widgets.bombcell_curation import BombcellUpsetPlotWidget
+
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=FutureWarning, module='upsetplot')
+            from upsetplot import UpSet, from_memberships
+    except ImportError:
+        return []
+
+    metrics = analyzer.get_metrics_extension_data()
+    unit_labels = pd.Series(unit_labels).to_numpy()
+
+    # non-somatic is a virtual category here: real labels are non_soma_good /
+    # non_soma_mua (or non_soma if split_non_somatic_good_mua=False) -- fold
+    # them into one boolean mask + one shared metric list (the 5 non-somatic
+    # thresholds are identical regardless of the unit's good/mua quality).
+    categories = {
+        'noise': (unit_labels == 'noise', thresholds.get('noise', {})),
+        'mua':   (unit_labels == 'mua',   thresholds.get('mua', {})),
+        'non-somatic': (
+            np.isin(unit_labels, ['non_soma', 'non_soma_good', 'non_soma_mua']),
+            thresholds.get('non-somatic', {}),
+        ),
+    }
+
+    # Reuse SpikeInterface's own failure-table builder (handles NaN/abs/
+    # greater-less bounds identically to bombcell_label_units) rather than
+    # duplicating that logic here.
+    dummy = BombcellUpsetPlotWidget.__new__(BombcellUpsetPlotWidget)
+    failure_table = dummy._build_failure_table(metrics, thresholds)
+    failure_table = failure_table.rename(columns=METRIC_DISPLAY_NAMES)
+
+    written = []
+    for category, (mask, cat_thresholds) in categories.items():
+        n_units = int(np.sum(mask))
+        if n_units == 0:
+            continue
+
+        relevant_cols = [METRIC_DISPLAY_NAMES.get(m, m) for m in cat_thresholds]
+        available_cols = [c for c in relevant_cols if c in failure_table.columns]
+        if not available_cols:
+            continue
+
+        unit_failures = failure_table.loc[mask, available_cols]
+        memberships = [
+            unit_failures.columns[unit_failures.loc[idx]].tolist()
+            for idx in unit_failures.index
+        ]
+        memberships = [m for m in memberships if m]
+        if not memberships:
+            continue
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=FutureWarning, module='upsetplot')
+            upset_data = from_memberships(memberships)
+            if len(upset_data) == 0:
+                continue
+            fig = plt.figure(figsize=(12, 6))
+            UpSet(upset_data, subset_size='count', show_counts=True,
+                  sort_by='cardinality', sort_categories_by='cardinality').plot(fig=fig)
+        fig.suptitle(f'{category} (n={n_units})', fontsize=14, y=1.02)
+
+        out_name = {'noise': 'noise_units_upset', 'mua': 'mua_units_upset',
+                    'non-somatic': 'non_somatic_units_upset'}[category]
+        out_path = os.path.join(out_dir, f'{out_name}.png')
+        # bbox_inches='tight' so the suptitle (e.g. 'noise (n=48)') is not
+        # cropped out of frame.
+        fig.savefig(out_path, bbox_inches='tight')
+        plt.close(fig)
+        written.append((category, out_path))
+
+    return written
+
+
+def plot_bombcell_waveform_classification(analyzer, unit_labels, out_path):
+    """
+    One panel per label category (good / mua / noise / non-somatic), each
+    showing every unit's template waveform (best channel) overlaid, so a
+    reader can compare the shapes Bombcell put in each bucket at a glance.
+
+    Reimplemented rather than using SpikeInterface's own sw.plot_unit_labels
+    (spikeinterface.widgets.WaveformOverlayByLabelWidget) for two reasons:
+      1. That widget crashes on this pipeline's data with
+         "AttributeError: 'NoneType' object has no attribute 'set_visible'"
+         (spikeinterface/widgets/unit_labels.py:126) -- a grid-sizing bug
+         triggered when the number of distinct labels present exactly fills
+         the subplot grid it computes, leaving no "extra" axis to hide.
+      2. That widget always keeps non_soma_good/non_soma_mua as two separate
+         panels; this pipeline shows a single combined "non-somatic" panel
+         instead (4 panels total: good / mua / noise / non-somatic), matching
+         plot_bombcell_upset's category grouping.
+    """
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    unit_labels = pd.Series(unit_labels).to_numpy()
+    templates_ext = analyzer.get_extension('templates')
+    templates = templates_ext.get_data()  # (n_units, n_samples, n_channels)
+
+    categories = {
+        'good':  unit_labels == 'good',
+        'mua':   unit_labels == 'mua',
+        'noise': unit_labels == 'noise',
+        'non-somatic': np.isin(unit_labels, ['non_soma', 'non_soma_good', 'non_soma_mua']),
+    }
+
+    fig, axes = plt.subplots(1, 4, figsize=(20, 4.5), sharey=True)
+    for ax, (category, mask) in zip(axes, categories.items()):
+        n_units = int(np.sum(mask))
+        if n_units == 0:
+            ax.set_title(f'{category} (n=0)')
+            ax.text(0.5, 0.5, 'No units', ha='center', va='center', transform=ax.transAxes)
+        else:
+            alpha = max(0.05, min(0.3, 10 / n_units))
+            for unit_idx in np.where(mask)[0]:
+                template = templates[unit_idx]
+                best_chan = np.argmax(np.max(np.abs(template), axis=0))
+                ax.plot(template[:, best_chan], color='black', alpha=alpha, linewidth=0.5)
+            ax.set_title(f'{category} (n={n_units})')
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
@@ -770,10 +974,10 @@ def main():
     import matplotlib.pyplot as plt
 
     import spikeinterface.full as si
+    import spikeinterface.preprocessing as spre
     import spikeinterface.sorters as ss
     import spikeinterface.exporters as sexp
     import spikeinterface.curation as sc
-    import spikeinterface.widgets as sw
 
     # Parallelise SortingAnalyzer extension computation (waveforms,
     # spike_amplitudes, spike_locations, ...) and export_to_phy -- these
@@ -782,24 +986,17 @@ def main():
     # MATLAB, Phy) running at the same time.
     si.set_global_job_kwargs(n_jobs=12, chunk_duration='1s', progress_bar=True)
 
-    valid_start_steps = ('catgt', 'kilosort4', 'postprocess', 'bombcell')
+    valid_start_steps = ('preprocess', 'kilosort4', 'postprocess', 'bombcell')
     if start_step not in valid_start_steps:
         raise ValueError(f"start_step must be one of {valid_start_steps}, got {start_step!r}")
-    do_catgt             = run_CatGT and start_step == 'catgt'
-    do_kilosort4         = start_step in ('catgt', 'kilosort4')
-    do_sorting_analyzer  = start_step in ('catgt', 'kilosort4', 'postprocess')
+    do_preprocess        = start_step == 'preprocess'
+    do_kilosort4         = start_step in ('preprocess', 'kilosort4')
+    do_sorting_analyzer  = start_step in ('preprocess', 'kilosort4', 'postprocess')
     print(f'start_step = {start_step!r}  '
-          f'(CatGT: {do_catgt}, Kilosort4: {do_kilosort4}, SortingAnalyzer: {do_sorting_analyzer})')
+          f'(Preprocess: {do_preprocess}, Kilosort4: {do_kilosort4}, SortingAnalyzer: {do_sorting_analyzer})')
 
-    # Clean stale log files in working directory
-    for stale in ('CatGT.log', 'Tprime.log'):
-        try:
-            os.remove(stale)
-        except OSError:
-            pass
-
-    os.makedirs(catGT_dest, exist_ok=True)
-    logFullPath = os.path.join(catGT_dest, logName)
+    os.makedirs(output_dest, exist_ok=True)
+    logFullPath = os.path.join(output_dest, logName)
     with open(logFullPath, 'w') as f:
         f.write('session_id,timestamp,step,status,n_units,elapsed_s\n')
 
@@ -817,55 +1014,6 @@ def main():
 
         prb_list = parse_probe_str(probe_str)
 
-        # Resolve 'start'/'end' trigger wildcards
-        run_folder_name = f'{run_name}_g{gate}'
-        prb0_fld = os.path.join(npx_directory, run_folder_name,
-                                 f'{run_folder_name}_imec{prb_list[0]}')
-        first_trig, last_trig = parse_trig_str(trig_str, gate, prb0_fld)
-        trig_str_resolved = f'{first_trig},{last_trig}'
-
-        # ---- Step 1: CatGT ----
-        if do_catgt:
-            print('\n--- CatGT ---')
-            catgt_exe = os.path.join(catGTPath, 'CatGT.exe')
-            cmd = (
-                f'"{catgt_exe}"'
-                f' -dir="{npx_directory}"'
-                f' -run={run_name}'
-                f' -g={gate}'
-                f' -t={trig_str_resolved}'
-                f' {catGT_stream_string}'
-                f' -prb={probe_str}'
-                f' {catGT_cmd_string.strip()}'
-                f' -dest="{catGT_dest}"'
-            )
-            print(cmd)
-            t0 = datetime.now()
-            subprocess.check_call(cmd, shell=True)
-            elapsed = (datetime.now() - t0).total_seconds()
-            gfix_edits = parse_catgt_log(os.getcwd(), run_name, gate, prb_list)
-            for i, prb in enumerate(prb_list):
-                print(f'  Probe {prb}: gfix edits/sec = {gfix_edits[i]:.3f}')
-            log_step(run_name, 'CatGT', 'done', elapsed=f'{elapsed:.1f}')
-
-            # Keep a copy of CatGT's own log (params, gfix/artifact stats) next
-            # to the rest of this run's output -- same location and name as the
-            # original ecephys_spike_sorting pipeline -- before it is deleted
-            # from the working directory (see cleanup at the top of main()).
-            # Kept per-session (rather than discarded) because it is useful
-            # for debugging a specific run after the fact.
-            catgt_log_src = os.path.join(os.getcwd(), 'CatGT.log')
-            if os.path.isfile(catgt_log_src):
-                run_str = f'{run_name}_g{gate}'
-                catgt_run_dir = os.path.join(catGT_dest, f'catgt_{run_str}')
-                os.makedirs(catgt_run_dir, exist_ok=True)
-                shutil.copy2(
-                    catgt_log_src,
-                    os.path.join(catgt_run_dir, f'catgt_{run_str}_prb_{probe_str}_CatGT.log'),
-                )
-        else:
-            print(f'Skipping CatGT (start_step={start_step!r}, run_CatGT={run_CatGT})')
-
         # ---- Per-probe processing ----
         for prb in prb_list:
             session_id = f'{run_name}_imec{prb}'
@@ -873,40 +1021,55 @@ def main():
             print(f'Probe {prb}  ({session_id})')
             print(f'{"--"*30}')
 
-            run_str     = f'{run_name}_g{gate}'
-            data_dir    = os.path.join(catGT_dest, f'catgt_{run_str}', f'{run_str}_imec{prb}')
-            catgt_bin   = os.path.join(data_dir, f'{run_str}_tcat.imec{prb}.ap.bin')
-            ks4_out_dir = os.path.join(data_dir, f'imec{prb}_ks4')
+            run_str      = f'{run_name}_g{gate}'
+            raw_dir      = os.path.join(npx_directory, run_str, f'{run_str}_imec{prb}')
+            data_dir     = os.path.join(output_dest, f'preprocessed_{run_str}', f'{run_str}_imec{prb}')
+            bandpass_dir = os.path.join(data_dir, 'bandpass_only.ap')
+            ks4_out_dir  = os.path.join(data_dir, f'imec{prb}_ks4')
 
-            if not os.path.exists(catgt_bin):
-                print(f'ERROR: CatGT output not found: {catgt_bin}')
+            if not os.path.isdir(raw_dir):
+                print(f'ERROR: raw SpikeGLX data not found: {raw_dir}')
                 log_step(session_id, 'read_recording', 'error_no_bin')
                 continue
+            check_single_trigger_file(raw_dir)
+            os.makedirs(data_dir, exist_ok=True)
 
-            # ---- Step 2: Read CatGT output via SpikeInterface ----
-            print(f'\n[2] Reading CatGT output: {data_dir}')
-            recording_raw = si.read_spikeglx(
-                data_dir, stream_id=f'imec{prb}.ap', load_sync_channel=False
-            )
-            n_ch  = recording_raw.get_num_channels()
-            dur_s = recording_raw.get_num_frames() / recording_raw.get_sampling_frequency()
-            print(f'    {n_ch} channels, {dur_s:.1f} s @ {recording_raw.get_sampling_frequency():.0f} Hz')
+            # ---- Step [1] Preprocessing: bandpass + phase_shift, then destripe ----
+            if do_preprocess:
+                print(f'\n[1] Reading raw SpikeGLX data: {raw_dir}')
+                recording_raw = si.read_spikeglx(
+                    raw_dir, stream_id=f'imec{prb}.ap', load_sync_channel=False
+                )
+                n_ch  = recording_raw.get_num_channels()
+                dur_s = recording_raw.get_num_frames() / recording_raw.get_sampling_frequency()
+                print(f'    {n_ch} channels, {dur_s:.1f} s @ {recording_raw.get_sampling_frequency():.0f} Hz')
 
-            # ---- Step 3: SpikeInterface preprocessing (IBL destriping) ----
-            print('\n[3] SpikeInterface preprocessing')
+                print('    bandpass_filter + phase_shift...')
+                recording_bandpass = spre.phase_shift(
+                    spre.bandpass_filter(recording_raw, freq_min=300, freq_max=9000)
+                )
+                # Saved once: source recording for cross-session matching
+                # (lib/np2/matching/), which needs the spatial footprint that
+                # destriping below deliberately removes.
+                recording_bandpass = recording_bandpass.save(
+                    folder=bandpass_dir, overwrite=True
+                )
 
-            # Detect + interpolate bad channels and highpass_spatial_filter,
-            # all applied PER SHANK (channel group). Both detect_bad_channels
-            # (coherence+psd) and highpass_spatial_filter are spatial steps that
-            # SI/IBL require to be computed within a single shank. Shank count is
-            # read from the recording, so 1-/2-/4-shank NP2.0 all work.
-            # Destriping replaces CatGT -gbldmx (non-uniform stripe removal).
-            # Always redone even when resuming at 'postprocess': the destriped
-            # recording is intentionally never written to disk (it would
-            # duplicate the CatGT .ap.bin), and this step is fast (minutes)
-            # compared to Kilosort4, so recomputing it on resume is cheap.
-            recording_preproc, bad_ids = ibl_destripe_by_shank(recording_raw)
-            print(f'    Bad channels ({len(bad_ids)}): {list(bad_ids)}')
+                print('\n[2] SpikeInterface preprocessing (IBL destriping)')
+                # Per-shank: detect_bad_channels/highpass_spatial_filter must be
+                # computed within a single shank. Shank count read from the
+                # recording, so 1-/2-/4-shank NP2.0 all work.
+                recording_preproc, bad_ids = ibl_destripe_by_shank(recording_bandpass)
+                print(f'    Bad channels ({len(bad_ids)}): {list(bad_ids)}')
+            else:
+                print(f'\n[1-2] Loading existing bandpass_only recording: {bandpass_dir}')
+                if not os.path.isdir(bandpass_dir):
+                    print(f'ERROR: no existing bandpass_only recording found at {bandpass_dir}')
+                    log_step(session_id, 'preprocess', 'error_no_output')
+                    continue
+                recording_bandpass = si.load(bandpass_dir)
+                recording_preproc, bad_ids = ibl_destripe_by_shank(recording_bandpass)
+                print(f'    Bad channels ({len(bad_ids)}): {list(bad_ids)}')
 
             # ---- Step 4: Kilosort4 ----
             if do_kilosort4:
@@ -940,6 +1103,7 @@ def main():
 
             # Copy KS4 .npy output files to ks4_out_dir root (rc2_analysis reads from there)
             copy_ks4_outputs_to_parent(ks4_out_dir, recording_preproc)
+            plot_ks4_motion(ks4_out_dir, os.path.join(ks4_out_dir, 'ks4_motion.png'))
 
             # ---- Step 5: SortingAnalyzer ----
             print(f'\n[5] SortingAnalyzer')
@@ -1063,53 +1227,26 @@ def main():
             if labels is not None:
                 try:
                     print('    Saving summary figures...')
-                    # NOTE: sw.plot_unit_labels is literally an alias for
-                    # WaveformOverlayByLabelWidget (see spikeinterface's
-                    # widget_list.py: plot_unit_labels = WaveformOverlayByLabelWidget),
-                    # i.e. the exact same figure as waveform_classification.png
-                    # below -- not called separately here to avoid saving the
-                    # same plot twice under two names.
                     plot_bombcell_metric_histograms(
                         all_metrics_df, bombcell_thresholds,
                         os.path.join(bc_folder, 'metric_histograms.png'),
                     )
 
-                    # BombcellUpsetPlotWidget builds one figure per label in
-                    # unit_labels_to_plot, in that order, skipping any label
-                    # with 0 units -- so figures[] and this filtered name
-                    # list stay in lockstep, and each file gets an explicit,
-                    # unambiguous name instead of a positional index.
-                    present_labels = set(labels_df[label_col].unique())
-                    # non_soma_good and non_soma_mua can both be present at
-                    # once (split_non_somatic_good_mua=True), each getting
-                    # its own figure -- suffix their filenames so one never
-                    # overwrites the other, unlike noise/mua which are always
-                    # singular per run.
-                    upset_labels_to_names = [
-                        ('noise', 'noise_units_upset'),
-                        ('mua', 'mua_units_upset'),
-                        ('non_soma_good', 'non_somatic_units_upset_good'),
-                        ('non_soma_mua', 'non_somatic_units_upset_mua'),
-                        ('non_soma', 'non_somatic_units_upset'),
-                    ]
-                    labels_to_plot = [lbl for lbl, _ in upset_labels_to_names if lbl in present_labels]
-                    w = sw.plot_bombcell_labels_upset(
-                        analyzer, unit_labels=labels_df[label_col], thresholds=bombcell_thresholds,
-                        unit_labels_to_plot=labels_to_plot,
-                    )
-                    names_for_plotted = [
-                        name for lbl, name in upset_labels_to_names if lbl in labels_to_plot
-                    ]
-                    figs = w.figures if hasattr(w, 'figures') else [w.figure]
-                    for fig, out_name in zip(figs, names_for_plotted):
-                        # bbox_inches='tight' so the per-label suptitle
-                        # (e.g. 'noise (n=121)') is not cropped out of frame.
-                        fig.savefig(os.path.join(bc_folder, f'{out_name}.png'), bbox_inches='tight')
-                    plt.close('all')
+                    # noise_units_upset.png / mua_units_upset.png /
+                    # non_somatic_units_upset.png (skips any category with 0
+                    # failing units) -- see plot_bombcell_upset's docstring
+                    # for why this pipeline reimplements SpikeInterface's own
+                    # sw.plot_bombcell_labels_upset instead of calling it.
+                    plot_bombcell_upset(analyzer, labels_df[label_col], bombcell_thresholds, bc_folder)
 
-                    w = sw.WaveformOverlayByLabelWidget(analyzer, labels_df[label_col].to_numpy())
-                    w.figure.savefig(os.path.join(bc_folder, 'waveform_classification.png'))
-                    plt.close(w.figure)
+                    # See plot_bombcell_waveform_classification's docstring
+                    # for why this pipeline reimplements SpikeInterface's own
+                    # sw.plot_unit_labels / WaveformOverlayByLabelWidget
+                    # instead of calling it directly.
+                    plot_bombcell_waveform_classification(
+                        analyzer, labels_df[label_col], os.path.join(bc_folder, 'waveform_classification.png')
+                    )
+                    plt.close('all')
 
                     figures_ok = True
                 except Exception as e:
@@ -1157,28 +1294,6 @@ def main():
             print(f'  KS4 output  : {ks4_out_dir}')
             print(f'  Phy         : {phy_folder}')
             print(f'  CSV files   : {os.path.join(ks4_out_dir, "csv")}')
-
-        # ---- Step 9: TPrime (optional, runs once per run) ----
-        if runTPrime:
-            print('\n--- TPrime ---')
-            run_str = f'{run_name}_g{gate}'
-            ref_prb = prb_list[0]
-            ref_dir = os.path.join(catGT_dest, f'catgt_{run_str}', f'{run_str}_imec{ref_prb}')
-            out_dir = os.path.join(catGT_dest, f'catgt_{run_str}')
-
-            tprime_exe = os.path.join(tPrimePath, 'TPrime.exe')
-            cmd = (
-                f'"{tprime_exe}"'
-                f' -syncperiod={sync_period}'
-                f' -tostream="{ref_dir}",{toStream_sync_params}'
-                f' -dest="{out_dir}"'
-            )
-            if niStream_sync_params:
-                ni_dir = out_dir
-                cmd += f' -fromstream="{ni_dir}",{niStream_sync_params}'
-            print(cmd)
-            subprocess.check_call(cmd, shell=True)
-            log_step(run_name, 'TPrime', 'done')
 
     print(f'\nAll runs complete. Log: {logFullPath}')
 

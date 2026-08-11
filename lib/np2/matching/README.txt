@@ -1,15 +1,11 @@
-Cross-session unit tracking for Neuropixels 2.0 (4-shank) data
+Cross-session unit tracking for Neuropixels 2.0 data
 ================================================================
 
-Track the same units across recordings of one animal, using DeepUnitMatch
-(recommended) or classic UnitMatchPy (fallback).
+Track the same units across recordings of one animal, using UnitMatchPy's
+official SpikeInterface integration.
 
-Scripts in this directory:
-
-  extract_raw_waveforms.py   -- prep: write RawWaveforms/ for (Deep)UnitMatch
-  run_deep_unit_match.py     -- cross-session tracking with DeepUnitMatch (recommended)
-  run_unit_match.py          -- cross-session tracking with classic UnitMatchPy (fallback)
-  unitmatch_plots.py         -- plotting helpers for matching outputs
+  match_sessions.py   -- build UnitMatch inputs from each session's
+                          SortingAnalyzer, then run UnitMatchPy matching
 
 For environment setup and installation, see the main repo README:
   ../../../README.md
@@ -22,86 +18,77 @@ For the sorting stage that must run first, see:
  ENVIRONMENT -- matching-specific tools
 ======================================================================
 
-Runs in the same conda environment as sorting (`spikeinterface`, Python 3.10).
+Runs in the same conda environment as sorting (`spikeinterface`).
 
-  TOOL              USED FOR                         INSTALLED AS
-  ----------------- -------------------------------- ----------------------------
-  UnitMatchPy       cross-session matching + I/O      pip install UnitMatchPy
-                    (also pulls mtscomp, mat73)
-  DeepUnitMatch     deep-NN matching + trained model  git clone of UnitMatch repo
-                    (model is NP2.0 4-shank only)
-  PyTorch (CUDA)    GPU for DeepUnitMatch              pip install torch (CUDA build,
-                                                        same as used for KS4)
+  pip install -U UnitMatchPy
+  git clone https://github.com/EnnyvanBeest/UnitMatch    (e.g. into C:\Users\Lab\SWC\UnitMatch)
 
-Notes:
-  * UnitMatchPy + DeepUnitMatch are imported from the cloned UnitMatch repo (so we
-    get the DeepUnitMatch package + pretrained model), but `pip install UnitMatchPy`
-    is still the easy way to pull the runtime deps (mtscomp, mat73, scikit-learn...).
-  * extract_raw_waveforms.py reads from the CatGT bin (band-pass only) -- not the
-    destriped recording used for sorting -- so the cross-channel spatial footprint
-    that UnitMatch matches on is preserved. Called automatically by the matchers.
+The clone is only needed for its UnitMatchPy source (imported directly, not
+via the pip package, so a `git pull` there picks up upstream fixes without a
+reinstall). The default clone location is set in match_sessions.py as
+DEFAULT_UNITMATCH_REPO; override per run with --unitmatch-repo.
 
-INSTALL (once you already have the `spikeinterface` env from the sorting stage):
-   pip install UnitMatchPy            (matching + I/O; pulls mtscomp, mat73, ...)
-   pip install torch                  (only if not already installed for KS4)
-   git clone https://github.com/EnnyvanBeest/UnitMatch    (e.g. into C:\Users\Lab\SWC\UnitMatch)
+DeepUnitMatch (the neural-network matcher) is NOT used here: UnitMatchPy's
+official SpikeInterface integration (make_UnitMatch_folder_from_sorting_
+analyzers) only exists for classic UnitMatchPy, not for DeepUnitMatch, which
+still expects hand-built RawWaveforms/ files. Revisit if that changes upstream.
 
-   The clone provides the DeepUnitMatch package and the pretrained model
-   (UnitMatchPy/DeepUnitMatch/utils/model, trained for Npix 2.0 4-shank).
-   The default clone location is set in the scripts as DEFAULT_UNITMATCH_REPO;
-   override per run with --unitmatch-repo.
+Each session's SortingAnalyzer for matching is built on the bandpass_only
+recording (see ../sorting/README.txt) rather than the destriped one used for
+sorting: destriping deliberately removes the cross-channel spatial structure
+UnitMatch matches on. It is built sparse (radius_um=150), matching
+UnitMatchPy's own internal channel radius -- no accuracy gain from a denser
+footprint, only extra computation.
 
-   If you did NOT `pip install UnitMatchPy`, install its deps directly:
-     pip install mtscomp mat73 scikit-learn joblib h5py
-
-VERIFY (DeepUnitMatch; set the path to your clone):
-   python -c "import sys; sys.path.insert(0, r'C:\Users\Lab\SWC\UnitMatch\UnitMatchPy'); \
-              from DeepUnitMatch.testing import test; test.load_trained_model(device='cpu'); print('DeepUnitMatch OK')"
+"Good" units for matching are read from each session's selected_clusters.txt
+-- the pipeline's actual curation result (Bombcell + ClusterSelectionTable,
+plus any manual keep/discard edit in clusters_to_check.csv), not Bombcell's
+own default thresholds recomputed on the spot. See
+apply_selected_clusters_labels() in match_sessions.py.
 
 
 ======================================================================
  RUNNING
 ======================================================================
 
-Do this only after ALL recordings of one animal are sorted (see ../sorting).
-This step is OPTIONAL and INDEPENDENT -- it never runs during sorting.
+From MATLAB (recommended -- sorts any missing session automatically):
 
-You do NOT edit any paths. Point the script at ONE folder that contains all
-the recordings you want to match; it finds every imec*_ks4 session under it:
+    ctl = RC2Preprocess();
+    ctl.match_sessions({probe_id_1, probe_id_2, ...})   % chronological order, N >= 2
+
+See 'help RC2Preprocess.match_sessions'.
+
+Standalone (all sessions must already be sorted):
 
     conda activate spikeinterface
     cd C:\Users\Lab\SWC\rc2_analysis_si_ks4+bc_um\lib\np2\matching
-    python run_deep_unit_match.py  D:\path\to\recordings_root
+    python match_sessions.py <imec0_ks4_dir_1> <imec0_ks4_dir_2> [...]
 
 What happens:
-  1. discovers every sorted session (imec*_ks4) under the folder and PRINTS the
-     list in match order (sorted by path = chronological if folders are named by
-     date/sequence -- always check the printed list);
-  2. extracts each session's RawWaveforms/ from its CatGT bin + KS4 sorting
-     (automatic; skipped if already present);
-  3. runs DeepUnitMatch (model -> similarity -> drift-correct + Bayes -> matches);
-  4. saves results to <recordings_root>\unit_match_deep\.
+  1. checks every session has a completed sort (sorting_analyzer/,
+     cluster_groups.csv, selected_clusters.txt, bandpass_only.ap/);
+  2. builds a sparse SortingAnalyzer per session on its bandpass_only
+     recording, and a UnitMatch input folder from it
+     (make_UnitMatch_folder_from_sorting_analyzers);
+  3. overwrites each session's bombcell_labels.tsv so "good" means "in this
+     session's selected_clusters.txt", not Bombcell's own default thresholds;
+  4. runs UnitMatchPy (waveform properties -> metric scores -> Naive Bayes ->
+     matches -> unique IDs across sessions);
+  5. saves results.
 
 Options:
-    --save-dir DIR        output folder (default <recordings_root>\unit_match_deep)
-    --threshold 0.5       match-probability threshold
-    --dist-thresh 50      max drift-corrected centroid distance (um)
-    --include-mua         match mua units too (default: good units only)
-    --re-extract          force-rebuild RawWaveforms/
-    --unitmatch-repo DIR  clone of EnnyvanBeest/UnitMatch (default already set)
-
-Classic UnitMatchPy instead of the deep model (same interface):
-    python run_unit_match.py  D:\path\to\recordings_root
-
-Rebuild RawWaveforms only (rarely needed; the matchers do it automatically):
-    python extract_raw_waveforms.py  D:\path\to\recordings_root
+    --save-dir DIR         output folder (default <parent of session 1>\unit_match)
+    --threshold 0.75       match-probability threshold
+    --unitmatch-repo DIR   clone of EnnyvanBeest/UnitMatch (default already set)
 
 Outputs (in the save dir):
     MatchTable.csv          unit pairs with match probability
-    UniqueIDConversion.*    cluster IDs with cross-session unique IDs
-    MatchingOverview.png    similarity / probability / final-match matrices
+    MatchingOverview.png    total-score / probability / final-match matrices
+    ClusInfo.pickle, UMparam.pickle, MatchProb.npy, Matches.npy,
+    UM Scores.npz, WaveformInfo.npz   intermediate data
 
-Requirements recap: each session must already have KS4 output and Bombcell
-labels (cluster_group.tsv); RawWaveforms are generated for you. The trigger /
-sorting itself is NOT re-run -- matching uses the spike times and clusters
-from the sorting stage plus the CatGT voltage.
+More than 2 sessions: pass all of them in one call. UnitMatchPy's own
+assign_unique_id does the transitive closure across the whole group (so a
+10-day chronic experiment is one call with 10 session paths, not 9 pairwise
+runs) -- match order follows the order the paths are given in, so always
+list sessions chronologically.
