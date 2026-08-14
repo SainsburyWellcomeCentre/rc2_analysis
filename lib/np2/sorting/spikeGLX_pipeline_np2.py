@@ -3,8 +3,6 @@
 SpikeInterface-based electrophysiology pipeline for NP2 probes (SpikeGLX data).
 Tested with SpikeInterface 0.104.x.
 
-Replaces ecephys_spike_sorting modules with SpikeInterface.
-
 Preprocessing chain (no external tools -- SpikeInterface end to end):
   [a] bandpass_filter (300-9000 Hz) + phase_shift (ADC sample-delay correction;
       inter_sample_shift is read automatically from the .meta). Saved to disk
@@ -52,14 +50,6 @@ for multiple simultaneous probes / a separate NI-DAQ stream: re-extract SY
 edges with SpikeInterface (threshold + write rising-edge times to .txt) and
 feed them to TPrime.exe.
 
-metrics.csv / waveform_metrics.csv use SpikeInterface's own quality_metrics /
-template_metrics column names -- NOT renamed to match the old ecephys_spike_
-sorting/Kilosort2 pipeline's metrics.csv (e.g. old 'isi_viol' is SI's
-'isi_violations_ratio', old 'max_drift' is SI's 'drift_ptp'). See
-save_rc2_compatible_files() for why: several of those old-vs-new pairs are
-not the same calculation (e.g. silhouette_score used to be a full pairwise
-silhouette; SI's default 'silhouette' is the simplified/centroid-based one),
-so reusing the old name implied an equivalence that often doesn't hold.
 """
 
 import os
