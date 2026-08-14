@@ -259,10 +259,34 @@ fi
 
 log "Creating conda environment '${ENV_NAME}'"
 
-command -v conda >/dev/null 2>&1 || die "conda not found on PATH. Install Miniconda first: https://docs.conda.io/en/latest/miniconda.html"
+# Try PATH first; if not found, fall back to common install locations rather
+# than giving up -- a fresh Git Bash session often doesn't have conda's shell
+# hook loaded yet even when conda itself is installed and even after adding
+# `source .../conda.sh` to ~/.bashrc (that only affects new interactive
+# shells, not necessarily this script's invocation).
+CONDA_SH=""
+if command -v conda >/dev/null 2>&1; then
+    CONDA_SH="$(conda info --base)/etc/profile.d/conda.sh"
+else
+    for candidate in \
+        "${USERPROFILE:-$HOME}/miniconda3" \
+        "${USERPROFILE:-$HOME}/anaconda3" \
+        "/c/Users/${USER:-$USERNAME}/miniconda3" \
+        "/c/Users/${USER:-$USERNAME}/anaconda3" \
+        "/c/ProgramData/miniconda3" \
+        "/c/ProgramData/anaconda3"
+    do
+        if [[ -f "${candidate}/etc/profile.d/conda.sh" ]]; then
+            CONDA_SH="${candidate}/etc/profile.d/conda.sh"
+            break
+        fi
+    done
+fi
+
+[[ -n "${CONDA_SH}" && -f "${CONDA_SH}" ]] || die "conda not found on PATH or in common install locations. Install Miniconda first: https://docs.conda.io/en/latest/miniconda.html (or activate it manually, then rerun this script)"
 
 # shellcheck disable=SC1091
-source "$(conda info --base)/etc/profile.d/conda.sh"
+source "${CONDA_SH}"
 
 if conda env list | grep -qE "^${ENV_NAME}[[:space:]]"; then
     warn "conda env '${ENV_NAME}' already exists, reusing it"
@@ -411,6 +435,12 @@ else
     RUNNINGMOUSE_MAIN_SCRIPT_WIN='<not installed -- run without --skip-runningmouse, or set manually>'
 fi
 
+if [[ -n "${UNITMATCH_DIR}" ]]; then
+    UNITMATCH_DIR_WIN="$(to_win "${UNITMATCH_DIR}")"
+else
+    UNITMATCH_DIR_WIN='<not installed -- run without --skip-unitmatch, or set manually>'
+fi
+
 cat > "${PATH_CONFIG}" <<EOF
 function config = path_config()
 % PATH_CONFIG Configuration information on the system
@@ -449,6 +479,11 @@ config.si_np2_python_exe   = '${SI_PYTHON_EXE_WIN}';
 
 config.runningmouse_python_exe  = '${RUNNINGMOUSE_PYTHON_EXE_WIN}';
 config.runningmouse_main_script = '${RUNNINGMOUSE_MAIN_SCRIPT_WIN}';
+
+% Clone of github.com/EnnyvanBeest/UnitMatch, used by RC2Preprocess.match_sessions
+% (cross-session unit tracking). Passed explicitly to match_sessions.py so it
+% never falls back to that script's own hardcoded DEFAULT_UNITMATCH_REPO.
+config.unitmatch_repo_dir       = '${UNITMATCH_DIR_WIN}';
 
 % Motion Clouds root -- set manually if you use the motion-clouds protocol.
 config.motion_clouds_root       = '<set me if you use the motion-clouds protocol>';
