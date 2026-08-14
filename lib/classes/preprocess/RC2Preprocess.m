@@ -618,6 +618,10 @@ classdef RC2Preprocess < RC2Format
             if ~isempty(save_dir)
                 cmd = sprintf('%s --save-dir "%s"', cmd, save_dir);
             end
+            % always pass explicitly -- match_sessions.py's own default
+            % (DEFAULT_UNITMATCH_REPO) is hardcoded to one specific machine
+            % and would silently point at the wrong path on any other
+            cmd = sprintf('%s --unitmatch-repo "%s"', cmd, obj.file.path_config.unitmatch_repo_dir);
 
             fprintf('Running cross-session matching on %i sessions...\n', length(probe_ids));
             status = system(cmd);

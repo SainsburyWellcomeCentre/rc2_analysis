@@ -86,7 +86,24 @@ log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$1" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$1" >&2; exit 1; }
 
-# prompt "question" "default" -> echoes the answer (default if empty/non-interactive)
+# to_posix <path> -> converts a Windows-style path (C:\foo\bar or C:/foo/bar)
+# typed at a prompt into the POSIX form Git Bash needs (/c/foo/bar). A bare
+# backslash path left as-is gets silently mangled by bash (backslash is an
+# escape character), producing garbage nested folders like "C:foobar" --
+# normalise it instead of trusting the user typed /c/... correctly.
+to_posix() {
+    local p="$1"
+    if [[ "$p" =~ ^([A-Za-z]):[\\/](.*)$ ]]; then
+        local drive="${BASH_REMATCH[1],,}" rest="${BASH_REMATCH[2]}"
+        rest="${rest//\\//}"
+        echo "/${drive}/${rest}"
+    else
+        echo "$p"
+    fi
+}
+
+# prompt "question" "default" -> echoes the answer (default if empty/non-interactive),
+# normalising a Windows-style path if one was typed
 prompt() {
     local question="$1" default="$2" answer
     if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
@@ -94,7 +111,7 @@ prompt() {
         return
     fi
     read -r -p "${question} [${default}]: " answer >&2 || true
-    echo "${answer:-${default}}"
+    to_posix "${answer:-${default}}"
 }
 
 # ---------------------------------------------------------------------------
@@ -109,22 +126,28 @@ fi
 mkdir -p "${SWC_DIR}"
 SWC_DIR="$(cd "${SWC_DIR}" && pwd)"
 
-RAW_PROBE_DIR="$(prompt "Raw probe data directory" "${SWC_DIR}/data/raw_data/probe")"
-RAW_CAMERA_DIR="$(prompt "Raw camera data directory" "${SWC_DIR}/data/raw_data/cameras")"
-RAW_RC2_DIR="$(prompt "Raw RC2 NIDAQ data directory" "${SWC_DIR}/data/raw_data/rc2")"
+# Raw data (probe, camera, RC2, motion-clouds) is commonly on the lab's shared
+# Ceph storage (Z:\mvelez\...), but that's a per-machine network mapping, not
+# guaranteed to exist or be mounted the same way everywhere -- ask, with the
+# common lab default suggested, rather than hardcoding it.
+RAW_PROBE_DIR="$(prompt "Raw probe data directory" "Z:\\mvelez\\mateoData_probe")"
+RAW_CAMERA_DIR="$(prompt "Raw camera data directory" "Z:\\mvelez\\mateoData_cameras")"
+RAW_RC2_DIR="$(prompt "Raw RC2 NIDAQ data directory" "Z:\\mvelez\\mateoData_rc2")"
+MOTION_CLOUDS_ROOT="$(prompt "Motion Clouds root directory (only used if you run that protocol)" "Z:\\mvelez\\mateoData_mc")"
 PROCESSED_PROBE_DIR="$(prompt "Processed probe output directory (fast/SSD ideally)" "${SWC_DIR}/data/processed_data/probe")"
 PROCESSED_CAMERA_DIR="$(prompt "Processed camera output directory" "${SWC_DIR}/data/processed_data/cameras")"
 FORMATTED_DATA_DIR="$(prompt "Formatted data output directory" "${SWC_DIR}/data/processed_data/formatted_data")"
 FIGURE_DIR="$(prompt "Figures output directory" "${SWC_DIR}/data/figures")"
-EXPERIMENT_LIST_CSV="$(prompt "Path to experiment_list csv (created if missing)" "${SWC_DIR}/data/experiment_list.csv")"
+EXPERIMENT_LIST_CSV="$(prompt "Path to experiment_list csv (existing file if you have one, otherwise a new path to create)" "${SWC_DIR}/data/experiment_list.csv")"
 
-for d in "${RAW_PROBE_DIR}" "${RAW_CAMERA_DIR}" "${RAW_RC2_DIR}" \
-         "${PROCESSED_PROBE_DIR}" "${PROCESSED_CAMERA_DIR}" "${FORMATTED_DATA_DIR}" \
+for d in "${PROCESSED_PROBE_DIR}" "${PROCESSED_CAMERA_DIR}" "${FORMATTED_DATA_DIR}" \
          "${FIGURE_DIR}" "$(dirname "${EXPERIMENT_LIST_CSV}")"; do
     mkdir -p "${d}"
 done
 
-if [[ ! -f "${EXPERIMENT_LIST_CSV}" ]]; then
+if [[ -f "${EXPERIMENT_LIST_CSV}" ]]; then
+    warn "Using existing experiment_list csv at ${EXPERIMENT_LIST_CSV} -- left untouched."
+elif [[ ! -f "${EXPERIMENT_LIST_CSV}" ]]; then
     echo "animal_id,date,probe_id,session_id,protocol,experiment_group,np_probe_type,git_commit,discard" \
         > "${EXPERIMENT_LIST_CSV}"
     log "Created empty experiment_list csv with the correct header: ${EXPERIMENT_LIST_CSV}"
@@ -192,8 +215,10 @@ else
          2>/dev/null || true
     warn "required before the driver/toolkit is fully active. Pass --skip-cuda to do this by hand."
 
-    if command -v nvcc >/dev/null 2>&1 && nvcc --version 2>/dev/null | grep -q "${CUDA_INSTALLER_VERSION}"; then
-        warn "nvcc already reports CUDA ${CUDA_INSTALLER_VERSION}, skipping download/install"
+    if command -v nvcc >/dev/null 2>&1; then
+        EXISTING_CUDA="$(nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+')"
+        warn "CUDA Toolkit already installed (nvcc reports ${EXISTING_CUDA:-unknown}) -- skipping" \
+             "download/install. Pass --torch-cuda to match the PyTorch build to it if needed."
     else
         case "${CUDA_INSTALLER_VERSION}" in
             12.4) CUDA_URL="https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda_12.4.1_551.78_windows.exe" ;;
@@ -218,11 +243,13 @@ else
             if [[ -f "${CUDA_INSTALLER}" ]]; then
                 log "Running CUDA installer silently (-s) -- requires Administrator; this can take 10-20 min"
                 # -s = silent install of every component; NVIDIA installer must run elevated.
-                "${CUDA_INSTALLER}" -s \
-                    || warn "CUDA silent install failed or needs elevation -- rerun this script as" \
-                            "Administrator, or install manually (INSTALL.md Step 2)."
+                if "${CUDA_INSTALLER}" -s; then
+                    warn "CUDA Toolkit installed. A reboot is recommended before running the sorting pipeline."
+                else
+                    warn "CUDA silent install failed or needs elevation -- rerun this script as" \
+                         "Administrator (or --skip-cuda and install manually, see INSTALL.md Step 2)."
+                fi
                 rm -f "${CUDA_INSTALLER}"
-                warn "CUDA Toolkit installed. A reboot is recommended before running the sorting pipeline."
             fi
         fi
     fi
@@ -232,22 +259,25 @@ fi
 # MATLAB helper repositories (npy-matlab, spikes)
 # ---------------------------------------------------------------------------
 
-ORIG_PIPELINE_DIR="${SWC_DIR}/original_pipeline"
-mkdir -p "${ORIG_PIPELINE_DIR}"
+# All external repos the pipeline depends on (npy-matlab, spikes, runningmouse,
+# UnitMatch) live side by side here -- not part of rc2_analysis itself, but
+# required to run it.
+HELPERS_DIR="${SWC_DIR}/helpers"
+mkdir -p "${HELPERS_DIR}"
 
 if [[ "${SKIP_CLONE}" -eq 0 ]]; then
     log "Cloning MATLAB helper repositories"
 
-    if [[ -d "${ORIG_PIPELINE_DIR}/npy-matlab" ]]; then
+    if [[ -d "${HELPERS_DIR}/npy-matlab" ]]; then
         warn "npy-matlab already exists, skipping clone"
     else
-        git clone https://github.com/kwikteam/npy-matlab "${ORIG_PIPELINE_DIR}/npy-matlab"
+        git clone https://github.com/kwikteam/npy-matlab "${HELPERS_DIR}/npy-matlab"
     fi
 
-    if [[ -d "${ORIG_PIPELINE_DIR}/spikes" ]]; then
+    if [[ -d "${HELPERS_DIR}/spikes" ]]; then
         warn "spikes already exists, skipping clone"
     else
-        git clone https://github.com/cortex-lab/spikes "${ORIG_PIPELINE_DIR}/spikes"
+        git clone https://github.com/cortex-lab/spikes "${HELPERS_DIR}/spikes"
     fi
 else
     log "Skipping helper repo cloning (--skip-clone)"
@@ -332,7 +362,7 @@ SPIKEINTERFACE_PYTHON_EXE="$(conda run -n "${ENV_NAME}" python -c "import sys; p
 # repo having no pinned dependencies and pulling its own ffmpeg via `av`
 # ---------------------------------------------------------------------------
 
-RUNNINGMOUSE_ENV="original_pipeline"
+RUNNINGMOUSE_ENV="runningmouse"
 RUNNINGMOUSE_PYTHON_EXE=""
 RUNNINGMOUSE_MAIN_SCRIPT=""
 
@@ -353,7 +383,7 @@ else
     pip install numpy scipy pillow matplotlib av
     conda deactivate
 
-    RUNNINGMOUSE_DIR="${ORIG_PIPELINE_DIR}/runningmouse"
+    RUNNINGMOUSE_DIR="${HELPERS_DIR}/runningmouse"
     if [[ -d "${RUNNINGMOUSE_DIR}" ]]; then
         warn "runningmouse already exists at ${RUNNINGMOUSE_DIR}, skipping clone"
     else
@@ -385,7 +415,7 @@ else
     conda activate "${ENV_NAME}"
     pip install -U UnitMatchPy
 
-    UNITMATCH_DIR="${SWC_DIR}/UnitMatch"
+    UNITMATCH_DIR="${HELPERS_DIR}/UnitMatch"
     if [[ -d "${UNITMATCH_DIR}" ]]; then
         warn "UnitMatch already exists at ${UNITMATCH_DIR}, skipping clone"
     else
@@ -412,17 +442,19 @@ to_win() {
     fi
 }
 
-REPO_DIR_WIN="$(to_win "${REPO_DIR}")"
-EXPERIMENT_LIST_CSV_WIN="$(to_win "${EXPERIMENT_LIST_CSV}")"
-FORMATTED_DATA_DIR_WIN="$(to_win "${FORMATTED_DATA_DIR}")"
 RAW_PROBE_DIR_WIN="$(to_win "${RAW_PROBE_DIR}")"
 RAW_CAMERA_DIR_WIN="$(to_win "${RAW_CAMERA_DIR}")"
 RAW_RC2_DIR_WIN="$(to_win "${RAW_RC2_DIR}")"
+MOTION_CLOUDS_ROOT_WIN="$(to_win "${MOTION_CLOUDS_ROOT}")"
+
+REPO_DIR_WIN="$(to_win "${REPO_DIR}")"
+EXPERIMENT_LIST_CSV_WIN="$(to_win "${EXPERIMENT_LIST_CSV}")"
+FORMATTED_DATA_DIR_WIN="$(to_win "${FORMATTED_DATA_DIR}")"
 PROCESSED_PROBE_DIR_WIN="$(to_win "${PROCESSED_PROBE_DIR}")"
 PROCESSED_CAMERA_DIR_WIN="$(to_win "${PROCESSED_CAMERA_DIR}")"
 FIGURE_DIR_WIN="$(to_win "${FIGURE_DIR}")"
-NPY_MATLAB_DIR_WIN="$(to_win "${ORIG_PIPELINE_DIR}/npy-matlab")"
-SPIKES_DIR_WIN="$(to_win "${ORIG_PIPELINE_DIR}/spikes")"
+NPY_MATLAB_DIR_WIN="$(to_win "${HELPERS_DIR}/npy-matlab")"
+SPIKES_DIR_WIN="$(to_win "${HELPERS_DIR}/spikes")"
 SI_NP2_SCRIPTS_DIR_WIN="$(to_win "${REPO_DIR}/lib/np2/sorting")"
 SI_NP2_TEMPLATE_WIN="$(to_win "${REPO_DIR}/lib/np2/sorting/spikeGLX_pipeline_np2.py")"
 SI_PYTHON_EXE_WIN="$(to_win "${SPIKEINTERFACE_PYTHON_EXE}")"
@@ -485,8 +517,7 @@ config.runningmouse_main_script = '${RUNNINGMOUSE_MAIN_SCRIPT_WIN}';
 % never falls back to that script's own hardcoded DEFAULT_UNITMATCH_REPO.
 config.unitmatch_repo_dir       = '${UNITMATCH_DIR_WIN}';
 
-% Motion Clouds root -- set manually if you use the motion-clouds protocol.
-config.motion_clouds_root       = '<set me if you use the motion-clouds protocol>';
+config.motion_clouds_root       = '${MOTION_CLOUDS_ROOT_WIN}';
 EOF
 
 log "path_config.m written to ${PATH_CONFIG}"
@@ -500,7 +531,7 @@ cat <<EOF
 
 Automated:
   - CUDA Toolkit ${CUDA_INSTALLER_VERSION:-"(skipped)"}
-  - MATLAB helper repos cloned under: ${ORIG_PIPELINE_DIR}/
+  - MATLAB helper repos cloned under: ${HELPERS_DIR}/
   - conda env '${ENV_NAME}' with SpikeInterface, Kilosort 4, PyTorch (${TORCH_CUDA}), Phy, upsetplot
   - runningmouse: $([ -n "${RUNNINGMOUSE_PYTHON_EXE}" ] && echo "installed in env '${RUNNINGMOUSE_ENV}'" || echo "skipped")
   - UnitMatchPy / UnitMatch: $([ -n "${UNITMATCH_DIR}" ] && echo "installed, cloned to ${UNITMATCH_DIR}" || echo "skipped")
