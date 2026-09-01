@@ -20,10 +20,17 @@ Installation, configuration and usage are in the **[wiki](../../wiki)**.
 
 ## Citing
 
-If you use this pipeline, please cite the tools it relies on:
+If you use this pipeline, please cite:
+
+**Velez-Fort, Cossell, Porta, Clopath, Margrie (2025), *Motor and vestibular signals in the 
+visual cortex permit the separation of self versus externally generated visual motion*, Cell**
+
+Note that the published analyses were produced with an earlier version of this pipeline 
+(Kilosort 2 + `ecephys_spike_sorting`), preserved in the git history.
+
+Please also cite the tools it relies on:
 
 - **SpikeInterface** — Buccino et al. (2020), *eLife* 9:e61834.
-  SpikeInterface asks that you also cite the individual methods your pipeline runs — those below.
 - **Kilosort 4** — Pachitariu et al. (2024), *Nature Methods*
   ([github](https://github.com/MouseLand/Kilosort))
 - **Bombcell** — Fabre, van Beest, Peters, Carandini & Harris (2023), *Bombcell: automated curation
@@ -34,6 +41,4 @@ If you use this pipeline, please cite the tools it relies on:
   cross-session tracking
 - **Phy** ([github](https://github.com/cortex-lab/phy)) — if you used it for manual inspection
 
-For the science, cite **Velez-Fort, Cossell, Porta, Clopath, Margrie (202x), *Title*, Journal.**
-Note that the published analyses were produced with an earlier version of this pipeline
-(Kilosort 2 + `ecephys_spike_sorting`), preserved in the git history.
+
