@@ -288,6 +288,12 @@ classdef FormattedData < handle
             if strcmp(obj.probe_id, 'CAA-1112872_rec1_rec1b_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1121416_rec1_rec2')...
                     |  strcmp(obj.probe_id, 'CAA-1121763_rec1_rec2')
                 sessions = obj.sessions(1:2);
+            elseif strcmp(obj.probe_id, 'CAA-1124370_rec1_rec2_rec3') |  strcmp(obj.probe_id, 'CAA-1124371_rec1_rec2_rec3')...
+                    |  strcmp(obj.probe_id, 'CAA-1124718_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124720_rec1_rec2_rec3')
+                % Goggles probes: rec2 (sessions(2)) is the passive motion-clouds
+                % session (VT/V/T_Vstatic); rec1/rec3 are sparse-noise sessions
+                % that have no trial_group_labels. We are interested in rec2 only.
+                sessions = obj.sessions(2);
             elseif contains(obj.probe_id, 'rec1_rec2_rec3_rec4')
                 sessions = obj.sessions(1:4);
             else
@@ -1394,8 +1400,21 @@ classdef FormattedData < handle
         %   the form {TRIAL_GROUP_LABEL_1, TRIAL_GROUP_LABEL_2, ...}.
         %
         %   TUNING_INFO = create_tf_tuning_curves(TRIAL_TYPES, 'model_selection', true)
-        %   enables model selection among linear, Gaussian, asymmetric Gaussian, 
+        %   enables model selection among linear, Gaussian, asymmetric Gaussian,
         %   and sigmoid models. Default is false.
+        %
+        %   TUNING_INFO = create_tf_tuning_curves(TRIAL_TYPES, 'setup', SETUP)
+        %   selects the recording rig configuration. SETUP is 'screen'
+        %   (default, original screen experiments) or 'goggles' (VR goggles
+        %   rig). The setup determines the motion cloud sequence file, the TF
+        %   batch patterns, the batch gains, and the control stimuli to
+        %   exclude.
+        %
+        %   TUNING_INFO = create_tf_tuning_curves(TRIAL_TYPES, 'session_of_interest', SESSION)
+        %   restricts the analysis to trials from a single recording session
+        %   whose session_id contains SESSION (e.g. 'rec2'). Default is ''
+        %   (empty), which pools trials across all motion sessions (original
+        %   behavior).
         %
         %   This method pools data across all three TF batches, transforms
         %   velocity to temporal frequency using batch-specific gain factors,
@@ -1403,27 +1422,49 @@ classdef FormattedData < handle
         %
         %   Gain transformation: TF = velocity * gain, where:
         %     Batch 1: gain = 1/30 Hz/(cm/s)
-        %     Batch 2: gain = 2/30 Hz/(cm/s) 
+        %     Batch 2: gain = 2/30 Hz/(cm/s)
         %     Batch 3: gain = 4/30 Hz/(cm/s)
         %
         %   See also: TFTuningTable, RC2Analysis.create_tf_tuning_curves
         
             p = inputParser;
             addParameter(p, 'model_selection', false, @islogical);
+            addParameter(p, 'setup', 'screen', @(x) any(strcmpi(x, {'screen', 'goggles'})));
+            addParameter(p, 'session_of_interest', '', @(x) ischar(x) || isstring(x));
             parse(p, varargin{:});
-            
-            % Batch pattern definitions
-            batch1_patterns = {'sf00p003_Bsf0p002_VX1p002', 'sf00p006_Bsf0p002_VX0p501', 'sf00p012_Bsf0p002_VX0p250'};
-            batch2_patterns = {'sf00p003_Bsf0p002_VX2p003', 'sf00p006_Bsf0p002_VX1p002', 'sf00p012_Bsf0p002_VX0p501'};
-            batch3_patterns = {'sf00p003_Bsf0p002_VX4p006', 'sf00p006_Bsf0p002_VX2p003', 'sf00p012_Bsf0p002_VX1p002'};
-            
-            batch_gains_values = [1/30, 2/30, 4/30];
+
+            setup = lower(char(p.Results.setup));
+            session_of_interest = char(p.Results.session_of_interest);
+
+            % Per-setup configuration: motion cloud sequence file, TF batch
+            % patterns (matched as substrings against the cloud names),
+            % batch gains, and any control stimuli to exclude.
+            switch setup
+                case 'screen'
+                    mc_sequence_file = 'motion_cloud_sequence_250414.mat';
+                    batch1_patterns = {'sf00p003_Bsf0p002_VX1p002', 'sf00p006_Bsf0p002_VX0p501', 'sf00p012_Bsf0p002_VX0p250'};
+                    batch2_patterns = {'sf00p003_Bsf0p002_VX2p003', 'sf00p006_Bsf0p002_VX1p002', 'sf00p012_Bsf0p002_VX0p501'};
+                    batch3_patterns = {'sf00p003_Bsf0p002_VX4p006', 'sf00p006_Bsf0p002_VX2p003', 'sf00p012_Bsf0p002_VX1p002'};
+                    batch_gains_values = [1/30, 2/30, 4/30];
+                    exclude_patterns = {'theta0p000_Btheta3p142_sf00p006_Bsf0p004_VX0p000_BV2p000'};  % screen-only control stimulus
+                case 'goggles'
+                    mc_sequence_file = 'motion_clouds_goggles_sequence_260420.mat';
+                    batch1_patterns = {'sf00p008_Bsf0p005_VX0p382', 'sf00p016_Bsf0p005_VX0p191', 'sf00p032_Bsf0p005_VX0p095'};
+                    batch2_patterns = {'sf00p008_Bsf0p005_VX0p764', 'sf00p016_Bsf0p005_VX0p382', 'sf00p032_Bsf0p005_VX0p191'};
+                    batch3_patterns = {'sf00p008_Bsf0p005_VX1p528', 'sf00p016_Bsf0p005_VX0p764', 'sf00p032_Bsf0p005_VX0p382'};
+                    % Goggles sf*VX is within ~1.7% of screen (stimulus rounding); the
+                    % same 30 cm/s -> 1/2/4 Hz design anchor holds, so gains are unchanged.
+                    % Exact recalculated values would be [1/29.6, 2/29.6, 4/29.6] = [0.03384, 0.06768, 0.13536].
+                    batch_gains_values = [1/30, 2/30, 4/30];
+                    exclude_patterns = {};  % goggles has no screen-only control stimulus
+            end
+
             all_batch_patterns = {batch1_patterns, batch2_patterns, batch3_patterns};
-            
+
             % Load motion cloud sequence and cloud names
             mc_root = obj.ctl.path_config.motion_clouds_root;
-            
-            seq_path = fullfile(mc_root, 'motion_cloud_sequence_250414.mat');
+
+            seq_path = fullfile(mc_root, mc_sequence_file);
             P = load(seq_path);
             if isfield(P, 'presentation_sequence')
                 mc_sequence = P.presentation_sequence;
@@ -1460,34 +1501,55 @@ classdef FormattedData < handle
             tbl = cell(1, length(trial_types));
             
             for ii = 1 : length(trial_types)
-                
-                % Get all trials for this trial group
-                trials = obj.get_trials_with_trial_group_label(trial_types{ii});
-                
+
+                % Get trials for this trial group: from a single session if
+                % session_of_interest is set, otherwise pooled across all
+                % motion sessions (original behavior).
+                if isempty(session_of_interest)
+                    trials = obj.get_trials_with_trial_group_label(trial_types{ii});
+                else
+                    trials = {};
+                    for sess_idx = 1 : length(obj.sessions)
+                        sess = obj.sessions{sess_idx};
+                        if isempty(sess); continue; end
+                        if ~isempty(strfind(sess.session_id, session_of_interest)) %#ok<STREMP>
+                            try
+                                trials = sess.get_trials_with_trial_group_label(trial_types{ii});
+                            catch
+                                % Session does not support this trial group label
+                            end
+                            break;  % only consider the session of interest
+                        end
+                    end
+                end
+
                 % Build batch_gains map: trial_id -> gain factor
                 batch_gains = containers.Map('KeyType', 'double', 'ValueType', 'double');
-                
+
                 aligned_trials = {};
                 for jj = 1 : length(trials)
                     trial = trials{jj};
                     trial_id = trial.trial_id;
-                    
+
                     % Determine gain for this trial from its motion cloud name
                     if trial_id >= 1 && trial_id <= length(mc_sequence)
                         mc_id = mc_sequence(trial_id);
                         if mc_id >= 1 && mc_id <= length(cloud_names)
                             cname = cloud_names{mc_id};
-                            
-                            % Match against batch patterns
-                            for bi = 1:length(all_batch_patterns)
-                                if contains_any(cname, all_batch_patterns{bi})
-                                    batch_gains(trial_id) = batch_gains_values(bi);
-                                    break;
+
+                            % Skip control stimuli; otherwise assign a batch gain
+                            % (OR logic: cloud name matches any pattern in the batch)
+                            if ~contains_any(cname, exclude_patterns)
+                                for bi = 1:length(all_batch_patterns)
+                                    if contains_any(cname, all_batch_patterns{bi})
+                                        batch_gains(trial_id) = batch_gains_values(bi);
+                                        break;
+                                    end
                                 end
                             end
                         end
                     end
-                    
+
                     aligned_trials{jj} = trial.to_aligned; %#ok<AGROW>
                 end
                 
