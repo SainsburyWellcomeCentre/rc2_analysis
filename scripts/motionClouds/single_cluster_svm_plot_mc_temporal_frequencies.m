@@ -6,19 +6,19 @@ experiment_groups       = {'passive_same_luminance_mc'};
 trial_group_labels      = {'VT', 'V', 'T_Vstatic'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion_temporal_frequencies', 'single_cluster'};
+figure_dir              = {'motionClouds_mouseGoggles', 'passive_same_luminance_mc', 'stationary_vs_motion_temporal_frequencies', 'single_cluster'};
 
 % Parameters: Motion cloud trial filters
 % Each batch contains motion clouds that match ANY of the three patterns (OR logic)
 
 % Batch 1 patterns
-batch1_patterns = {'sf00p003_Bsf0p002_VX1p002', 'sf00p006_Bsf0p002_VX0p501', 'sf00p012_Bsf0p002_VX0p250'};
+batch1_patterns = {'sf00p008_Bsf0p005_VX0p382', 'sf00p016_Bsf0p005_VX0p191', 'sf00p032_Bsf0p005_VX0p095'};
 
 % Batch 2 patterns  
-batch2_patterns = {'sf00p003_Bsf0p002_VX2p003', 'sf00p006_Bsf0p002_VX1p002', 'sf00p012_Bsf0p002_VX0p501'};
+batch2_patterns = {'sf00p008_Bsf0p005_VX0p764', 'sf00p016_Bsf0p005_VX0p382', 'sf00p032_Bsf0p005_VX0p191'};
 
 % Batch 3 patterns
-batch3_patterns = {'sf00p003_Bsf0p002_VX4p006', 'sf00p006_Bsf0p002_VX2p003', 'sf00p012_Bsf0p002_VX1p002'};
+batch3_patterns = {'sf00p008_Bsf0p005_VX1p528', 'sf00p016_Bsf0p005_VX0p764', 'sf00p032_Bsf0p005_VX0p382'};
 
 % Portable substring matcher (older MATLAB lacks contains/startsWith)
 contains_any = @(str, subs) any(cellfun(@(s) ...
@@ -27,7 +27,7 @@ contains_any = @(str, subs) any(cellfun(@(s) ...
 % Load motion cloud sequence and folder names
 mc_sequence = [];
 cloud_names = {};
-proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_cloud_sequence_250414.mat');
+proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_clouds_goggles_sequence_260420.mat');
 if exist(proto_seq_path,'file')
     P = load(proto_seq_path);
     if isfield(P,'presentation_sequence')

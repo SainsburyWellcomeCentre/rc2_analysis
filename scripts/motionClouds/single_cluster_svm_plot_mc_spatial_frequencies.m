@@ -6,14 +6,14 @@ experiment_groups       = {'passive_same_luminance_mc'};
 trial_group_labels      = {'VT', 'V', 'T_Vstatic'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion_spatial_frequencies', 'single_cluster'};
+figure_dir              = {'motionClouds_mouseGoggles', 'passive_same_luminance_mc', 'stationary_vs_motion_spatial_frequencies', 'single_cluster'};
 
 % Parameters: Motion cloud trial filters
 
-name_prefix1 = 'sf00p003';
-name_prefix2 = 'sf00p006';
+name_prefix1 = 'sf00p008';
+name_prefix2 = 'sf00p016';
 exclude_substrings_prefix2 = {'VX0p000'}; % e.g. exclude zero-velocity variants
-name_prefix3 = 'sf00p012';
+name_prefix3 = 'sf00p032';
 
 % Portable substring matcher (older MATLAB lacks contains/startsWith)
 contains_any = @(str, subs) any(cellfun(@(s) ...
@@ -22,7 +22,7 @@ contains_any = @(str, subs) any(cellfun(@(s) ...
 % Load motion cloud sequence and folder names
 mc_sequence = [];
 cloud_names = {};
-proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_cloud_sequence_250414.mat');
+proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_clouds_goggles_sequence_260420.mat');
 if exist(proto_seq_path,'file')
     P = load(proto_seq_path);
     if isfield(P,'presentation_sequence')

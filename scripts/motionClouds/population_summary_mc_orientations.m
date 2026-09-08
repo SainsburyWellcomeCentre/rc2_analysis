@@ -2,14 +2,14 @@
 % Summarise population classification for orientations (V and VT)
 % Produces percentage bar plots and CSV summaries in the summary folder.
 
-input_csv = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds', ...
+input_csv = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds_mouseGoggles', ...
     'passive_same_luminance_mc','stationary_vs_motion_orientations','single_cluster', ...
     'motion_cloud_orientations_analysis_summary.csv');
 if ~exist(input_csv,'file')
     error('Input CSV not found: %s', input_csv);
 end
 
-out_dir = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds', ...
+out_dir = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds_mouseGoggles', ...
     'passive_same_luminance_mc','stationary_vs_motion_orientations','summary');
 if ~exist(out_dir,'dir')
     mkdir(out_dir);
