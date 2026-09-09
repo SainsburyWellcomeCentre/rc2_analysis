@@ -105,10 +105,17 @@ classdef RC2Session < handle
                           'probe_t', ...
                           'camera_t'};
             
-            % don't include camera data if something wrong with recording
-            if length(session.camera0) ~= length(session.camera_t)
-                idx = cellfun(@(x)(any(ismember({'camera0', 'camera1', 'camera_t'}, x))), chan_names);
-                chan_names(idx) = [];
+            % camera0/camera1 have one value per frame; camera_t one per
+            % strobe trigger. The writer can stop before the strobe line, so
+            % camera_t runs slightly longer. Frames are head-aligned, so
+            % truncate to the common length rather than dropping the channels.
+            if ~isempty(session.camera0)
+                n_cam = min([numel(session.camera0), ...
+                             numel(session.camera1), ...
+                             numel(session.camera_t)]);
+                session.camera0  = session.camera0(1:n_cam);
+                session.camera1  = session.camera1(1:n_cam);
+                session.camera_t = session.camera_t(1:n_cam);
             end
                       
             for chan_i = 1 : length(chan_names)
@@ -120,10 +127,13 @@ classdef RC2Session < handle
             if ~isempty(obj.camera0)
                 obj.camera0_ = obj.camera0;
                 obj.camera1_ = obj.camera1;
-                obj.pupil_diameter_ = obj.pupil_diameter;
                 obj.camera0 = obj.camera0_interp();
                 obj.camera1 = obj.camera1_interp();
-                obj.pupil_diameter = obj.pupil_diameter_interp();
+                % skip pupil until DLC inference has populated it
+                if numel(obj.pupil_diameter) == numel(obj.camera_t)
+                    obj.pupil_diameter_ = obj.pupil_diameter;
+                    obj.pupil_diameter = obj.pupil_diameter_interp();
+                end
             end
         end
         
