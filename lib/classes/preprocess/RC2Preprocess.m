@@ -2,7 +2,7 @@ classdef RC2Preprocess < RC2Format
 % RC2Preprocess Class for preprocessing raw data
 %
 %   Stage 1 can be run in two ways:
-%     1. preprocess_step_1(probe_id)            - run all 7 steps from the start (complete pipeline)
+%     1. preprocess_step_1(probe_id)            - run all 8 steps from the start (complete pipeline)
 %     2. run_from_step(probe_id, start_step)    - run from a chosen step onwards, see 'help RC2Preprocess.run_from_step'
 %
 %   To run only the sorting step, with finer control over where it resumes
@@ -24,6 +24,7 @@ classdef RC2Preprocess < RC2Format
 %       correct_trigger_file            - manually correct the trigger file if necessary
 %       create_driftmap                 - create and save a driftmap
 %       process_camera_data             - run processing of the camera data
+%       process_pupil_data              - compute pupil diameter and position from the DLC tracking
 %       hf_power                        - create HighFrequencyPowerProfile object
 %       save_hf_power                   - save an analyzed HighFrequencyPowerProfile object
 %       create_mock_track               - create a 'track.csv' with a similar format to the real eventual track file
@@ -65,6 +66,7 @@ classdef RC2Preprocess < RC2Format
         %       - create a .mat with the trigger channel
         %       - create a driftmap
         %       - process the motion energy from the camera data
+        %       - compute pupil diameter and position from the DLC tracking
         %
         %   To start from a step other than the first one, use
         %   run_from_step.
@@ -80,7 +82,7 @@ classdef RC2Preprocess < RC2Format
         %   run_from_step(PROBE_ID, START_STEP) runs stage 1 for probe
         %   recording PROBE_ID from the step named START_STEP to the end of
         %   the pipeline (never stops early -- later steps depend on earlier
-        %   ones). START_STEP is one of the 7 steps below, or one of the
+        %   ones). START_STEP is one of the 8 steps below, or one of the
         %   sorting sub-steps ('preprocess', 'kilosort4', 'postprocess',
         %   'bombcell' -- see run_sorting_from_step), in which case si_sorting
         %   resumes from there and the pipeline still continues through every
@@ -92,6 +94,7 @@ classdef RC2Preprocess < RC2Format
         %       'create_trigger_file'
         %       'create_driftmap'
         %       'process_camera_data'
+        %       'process_pupil_data'
         %
         %   run_from_step(..., NAME, VALUE, ...) forwards an optional
         %   'start_step' control (see run_sorting_from_step) to the sorting
@@ -103,7 +106,8 @@ classdef RC2Preprocess < RC2Format
                      'create_check_clusters_csv', ...
                      'create_trigger_file', ...
                      'create_driftmap', ...
-                     'process_camera_data'};
+                     'process_camera_data', ...
+                     'process_pupil_data'};
 
             % the sorting sub-steps; a sub-step name may be given directly
             % as START_STEP (see above).
@@ -345,6 +349,24 @@ classdef RC2Preprocess < RC2Format
             for ii = 1 : length(session_ids)
                 ch = CameraProcessingHelper(obj, session_ids{ii});
                 ch.run_from_raw();
+            end
+        end
+        
+        
+        
+        function process_pupil_data(obj, probe_id)
+        %%process_pupil_data Compute pupil diameter and position from the DLC tracking
+        %
+        %   process_pupil_data(PROBE_ID) computes and saves the pupil
+        %   diameter and x-y position from the DeepLabCut tracking of the
+        %   camera0 eye video, for each session of the probe recording
+        %   PROBE_ID. Sessions without a DLC .csv are skipped with a
+        %   message. See PupilProcessingHelper.
+        
+            session_ids = obj.get_session_ids_list(probe_id);
+            for ii = 1 : length(session_ids)
+                ph = PupilProcessingHelper(obj, session_ids{ii});
+                ph.run_from_dlc();
             end
         end
         

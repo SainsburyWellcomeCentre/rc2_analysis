@@ -10,6 +10,7 @@ classdef Loader < handle
 %    camera_csv                  - load .csv containing camera motion energy for a session
 %    camera0_dlc_pupil           - load a .csv containing tracking data of the pupil
 %    pupil_diameter              - load a .csv containing pupil diameter
+%    pupil_position              - load a .csv containing pupil x-y position
 %    camera0_saccades            - load a .csv containing frame numbers of saccade onsets
 %    formatted_data              - load .mat containing formatted data for a probe recording
 %    load_from_formatted_data    - load a specific variable(s) from the formatted data .mat file
@@ -156,21 +157,52 @@ classdef Loader < handle
         %   Outputs:
         %     DIAMETER - MATLAB vector with the pupil diameter
         %
-        %   If a .csv file can't be found for SESSION_ID, DLC_TABLE is
-        %   empty. 
-        
-            [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
+        %   If a .csv file can't be found for SESSION_ID, DIAMETER is
+        %   empty and a message is printed.
+
+            [fname, exist] = obj.file_manager.pupil_diameter_fast(session_id);
             if ~exist
                 [fname, exist] = obj.file_manager.pupil_diameter_slow(session_id);
             end
-            
+
             if ~exist
+                fprintf('[pupil] %s: no pupil_diameter.csv found, pupil_diameter left empty\n', session_id);
                 diameter = [];
                 return
             end
-            
+
             dlc_table = obj.readtable(fname);
-            diameter = dlc_table.Var1;
+            diameter = dlc_table{:, 1};
+        end
+
+
+        function position = pupil_position(obj, session_id)
+        %%pupil_position Load a .csv containing computed x-y position of the
+        %%pupil for a session
+        %
+        %   POSITION = pupil_position(SESSION_ID)
+        %   loads the .csv containing computed x-y position of the pupil from DeepLabCut
+        %   measurements for a session with ID, SESSION_ID.
+        %
+        %   Outputs:
+        %     POSITION - N x 2 matrix with the [x, y] pupil position (pixels) for N camera frames
+        %
+        %   If a .csv file can't be found for SESSION_ID, POSITION is
+        %   empty and a message is printed.
+
+            [fname, exist] = obj.file_manager.pupil_position_fast(session_id);
+            if ~exist
+                [fname, exist] = obj.file_manager.pupil_position_slow(session_id);
+            end
+
+            if ~exist
+                fprintf('[pupil] %s: no pupil_position.csv found, pupil_position left empty\n', session_id);
+                position = [];
+                return
+            end
+
+            tbl = obj.readtable(fname);
+            position = tbl{:, 1:2};
         end
         
         

@@ -17,7 +17,10 @@ classdef FileManager < handle
 %       camera_csv_fast         - path to the .csv file for motion energy (using fast drive)
 %       camera_csv_slow         - path to the .csv file for motion energy (using slow drive)
 %       camera0_dlc_pupil_fast  - path to the .csv file containing tracking data of the pupil (using fast drive)
-%       pupil_diameter_slow     - path to the .csv file containing pre-computed pupul diameter (using slow drive)
+%       pupil_diameter_fast     - path to the .csv file containing pre-computed pupil diameter (using fast drive)
+%       pupil_diameter_slow     - path to the .csv file containing pre-computed pupil diameter (using slow drive)
+%       pupil_position_fast     - path to the .csv file containing pre-computed pupil x-y position (using fast drive)
+%       pupil_position_slow     - path to the .csv file containing pre-computed pupil x-y position (using slow drive)
 %       camera0_dlc_pupil_slow  - path to the .csv file containing tracking data of the pupil (using slow drive)
 %       camera0_saccades_fast   - path to the .csv file containing frame numbers of saccade onsets (using fast drive)
 %       camera0_saccades_slow   - path to the .csv file containing frame numbers of saccade onsets (using slow drive)
@@ -250,19 +253,70 @@ classdef FileManager < handle
         end
         
         
+        function [fname, exists] = pupil_diameter_fast(obj, session_id)
+        %%pupil_diameter_fast Path to the .csv file containing pre-computed
+        %%diameter of the pupil (using fast drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_diameter_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_diameter.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'pupil_diameter.csv');
+            exists = isfile(fname);
+        end
+
+
         function [fname, exists] = pupil_diameter_slow(obj, session_id)
         %%pupil_diameter_slow Path to the .csv file containing pre-computed
-        %%diameter of the pupil (using slow drive) 
+        %%diameter of the pupil (using slow drive)
         %
         %   [FILENAME, EXISTS] = pupil_diameter_slow(SESSION_ID)
         %   for session with session ID string, SESSION_ID, returns
-        %   FILENAME, the full path of the form: 
-        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_diameter.csv
-        
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\pupil_diameter.csv
+
         %   EXISTS is true if the file exists and false otherwise.
-        
+
             dname = obj.camera_csv_dir_slow(session_id);
             fname = fullfile(dname, 'pupil_diameter.csv');
+            exists = isfile(fname);
+        end
+
+
+        function [fname, exists] = pupil_position_fast(obj, session_id)
+        %%pupil_position_fast Path to the .csv file containing pre-computed
+        %%x-y position of the pupil (using fast drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_position_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_position.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'pupil_position.csv');
+            exists = isfile(fname);
+        end
+
+
+        function [fname, exists] = pupil_position_slow(obj, session_id)
+        %%pupil_position_slow Path to the .csv file containing pre-computed
+        %%x-y position of the pupil (using slow drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_position_slow(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\pupil_position.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_slow(session_id);
+            fname = fullfile(dname, 'pupil_position.csv');
             exists = isfile(fname);
         end
         

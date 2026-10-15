@@ -419,6 +419,7 @@ classdef RC2Format < RC2Analysis
             end
             
             session.pupil_diameter = obj.load.pupil_diameter(session_id);
+            session.pupil_position = obj.load.pupil_position(session_id);
             
             session.trials = obj.format_trials(session);
             session.n_trials = length(session.trials);
@@ -567,7 +568,9 @@ classdef RC2Format < RC2Analysis
                              'probe_t', [], ...
                              'camera_t', [], ...
                              'camera0', [], ...
-                             'camera1', []);
+                             'camera1', [], ...
+                             'pupil_diameter', [], ...
+                             'pupil_position', []);
             
             % unpack the channels
             for ii = 1 : length(chan_names)

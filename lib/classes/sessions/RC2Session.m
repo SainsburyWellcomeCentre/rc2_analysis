@@ -23,15 +23,21 @@ classdef RC2Session < handle
 %       teensy_gain         - teensy_gain channel
 %       camera0             - motion energy for camera0
 %       camera1             - motion energy for camera1
+%       pupil_diameter      - pupil diameter (pixels) from the eye camera
+%       pupil_position      - pupil x-y position (pixels, N x 2) from the eye camera
 %
 %       rc2_t               - timebase of the trial in the NIDAQ session recording (0s on first sample point, 1/fs on second etc.)
 %       probe_t             - timebase of the trial synced to the probe recording
 %       camera_t            - timebase of the camera frames synced to the probe recording
+%       eyecam_t            - timebase of the eye camera frames (eyecam_0 pulses) synced to the probe recording
 %
 %   RC2Session Methods:
 %       camera0_interp         - interpolate the motion energy data on camera0 so it has the same timebase as the other channel.
 %       camera1_interp         - interpolate the motion energy data on camera1 so it has the same timebase as the other channel.
 %       pupil_diameter_interp  - interpolate the pupil diameter data so it has the same timebase as the other channel.
+%       pupil_position_interp  - interpolate the pupil x-y position data so it has the same timebase as the other channel.
+%       eyecam_t_from_pulses   - timebase of the eye camera frames from the eyecam_0 pulses
+%       align_to_eyecam        - match eye camera frames to the eyecam_0 pulses
 %
 %   See also: RVTSession
 
@@ -58,6 +64,7 @@ classdef RC2Session < handle
         camera0
         camera1
         pupil_diameter
+        pupil_position
         
         rc2_t
         probe_t
@@ -68,7 +75,14 @@ classdef RC2Session < handle
         camera0_
         camera1_
         camera_t
+        eyecam_t
         pupil_diameter_
+        pupil_position_
+    end
+    
+    properties (Constant = true, Hidden = true)
+        
+        eyecam_threshold = 1.5  % volts, eyecam_0 pulses are ~0-3.3V
     end
     
     
@@ -101,6 +115,7 @@ classdef RC2Session < handle
                           'camera0', ...
                           'camera1', ...
                           'pupil_diameter', ...
+                          'pupil_position', ...
                           'rc2_t', ...
                           'probe_t', ...
                           'camera_t'};
@@ -120,10 +135,76 @@ classdef RC2Session < handle
             if ~isempty(obj.camera0)
                 obj.camera0_ = obj.camera0;
                 obj.camera1_ = obj.camera1;
-                obj.pupil_diameter_ = obj.pupil_diameter;
                 obj.camera0 = obj.camera0_interp();
                 obj.camera1 = obj.camera1_interp();
-                obj.pupil_diameter = obj.pupil_diameter_interp();
+            end
+
+            % the pupil data come from the eye camera, a separate system
+            % from camera0/camera1, which emits one pulse per frame on the
+            % eyecam_0 channel
+            obj.eyecam_t = obj.eyecam_t_from_pulses(session);
+            obj.pupil_diameter_ = obj.align_to_eyecam(obj.pupil_diameter, 'pupil_diameter');
+            obj.pupil_position_ = obj.align_to_eyecam(obj.pupil_position, 'pupil_position');
+            obj.pupil_diameter = obj.pupil_diameter_interp();
+            obj.pupil_position = obj.pupil_position_interp();
+        end
+
+
+
+        function val = eyecam_t_from_pulses(obj, session)
+        %%eyecam_t_from_pulses Timebase of the eye camera frames
+        %
+        %   EYECAM_T = eyecam_t_from_pulses(SESSION)
+        %   returns the time, synced to the probe recording, of each rising
+        %   edge on the eyecam_0 channel of the session structure SESSION.
+        %   Each edge marks one eye camera frame. Empty if there is no
+        %   eyecam_0 channel.
+
+            val = [];
+            if ~isfield(session, 'eyecam_0') || isempty(session.eyecam_0) || isempty(obj.probe_t)
+                return
+            end
+
+            rising_idx = find(diff(session.eyecam_0 > obj.eyecam_threshold) == 1) + 1;
+            val = obj.probe_t(rising_idx);
+            val = val(:);
+        end
+
+
+
+        function val = align_to_eyecam(obj, val, name)
+        %%align_to_eyecam Match eye camera frames to the eyecam_0 pulses
+        %
+        %   ALIGNED = align_to_eyecam(VAL, NAME)
+        %   takes VAL, an N x M matrix with one row per eye camera frame,
+        %   and returns the first rows matching the number of pulses in
+        %   `eyecam_t`. The eye camera keeps recording for a few frames
+        %   after the NIDAQ stops, so extra frames are at the end and are
+        %   dropped. If there are fewer frames than pulses, or no pulses,
+        %   the frames cannot be matched and ALIGNED is empty. NAME is used
+        %   in the printed messages.
+
+            if isempty(val)
+                return
+            end
+
+            n_frames = size(val, 1);
+            n_pulses = length(obj.eyecam_t);
+
+            if n_pulses == 0
+                fprintf('[pupil] %s: no eyecam_0 pulses, %s left empty\n', obj.session_id, name);
+                val = [];
+            elseif n_frames < n_pulses
+                warning('RC2Session:align_to_eyecam:tooFewFrames', ...
+                    '%s: %s has %i frames but there are %i eyecam_0 pulses, cannot align, left empty', ...
+                    obj.session_id, name, n_frames, n_pulses);
+                val = [];
+            else
+                if n_frames > n_pulses
+                    fprintf('[pupil] %s: %s has %i frames, %i eyecam_0 pulses, dropping last %i frames\n', ...
+                        obj.session_id, name, n_frames, n_pulses, n_frames - n_pulses);
+                end
+                val = val(1:n_pulses, :);
             end
         end
         
@@ -166,13 +247,30 @@ classdef RC2Session < handle
         %%timebase as the other channel.
         %
         %   DIAMETER = pupil_diameter_interp()
-        %   increases the resolution of the pre-computed pupuil diameter trace 
+        %   increases the resolution of the pre-computed pupil diameter trace 
         %   so it has the same resolution as the other NIDAQ
         %   traces.
         
             val = [];
-            if ~isempty(obj.pupil_diameter)
-                val = interp1(obj.camera_t, obj.pupil_diameter, obj.probe_t);
+            if ~isempty(obj.pupil_diameter_)
+                val = interp1(obj.eyecam_t, obj.pupil_diameter_, obj.probe_t);
+            end
+        end
+
+
+
+        function val = pupil_position_interp(obj)
+        %%pupil_position_interp Interpolate the pupil x-y position data so it has the same
+        %%timebase as the other channel.
+        %
+        %   POSITION = pupil_position_interp()
+        %   increases the resolution of the pre-computed pupil x-y position
+        %   (N x 2) so it has the same resolution as the other NIDAQ
+        %   traces.
+
+            val = [];
+            if ~isempty(obj.pupil_position_)
+                val = interp1(obj.eyecam_t, obj.pupil_position_, obj.probe_t(:));
             end
         end
     end
