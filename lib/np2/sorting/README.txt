@@ -5,6 +5,10 @@ Per recording: SpikeInterface end to end (bandpass+phase_shift, destriping,
 Kilosort 4, Bombcell) -- no external tools.
 
   spikeGLX_pipeline_np2.py   -- sort one recording
+  sigui_curate.py            -- open a sorted recording in SpikeInterface-GUI to
+                                merge / split / remove units (manual curation)
+  apply_curation.py          -- apply that curation to the recording's outputs
+                                (analyzer, Bombcell, .csv and .npy files)
 
 This pipeline does NOT use the old ecephys_spike_sorting / Kilosort2 fork,
 nor any external SpikeGLX post-processing tool (see "WHAT CHANGED" below for why).
@@ -37,8 +41,12 @@ Run this once per recording. Two equivalent ways:
     #   npx_directory, run_specs, output_dest
     python spikeGLX_pipeline_np2.py
 
-  Inspect a result in Phy (optional):
-    phy template-gui <...>/imec0_ks4/phy/params.py
+  Manual curation (optional) -- see the main README, "3. Check the clusters":
+    python sigui_curate.py "<...>/imec0_ks4"     # curate, "Save in analyzer"
+    python apply_curation.py "<...>/imec0_ks4"   # apply (~3 h)
+    then in MATLAB: ctl.create_check_clusters_csv(probe_id)
+  Do not re-run the sorting on a curated recording: it overwrites the curated
+  .npy files.
 
 
 ======================================================================
@@ -55,7 +63,8 @@ output_dest/preprocessed_{run}_g{gate}/{run}_g{gate}_imec{prb}/
     cluster_groups.csv       <- Bombcell labels (cluster_id, group)
     cluster_group.tsv        <- Bombcell labels in Phy/UnitMatch format
     sorting_analyzer/        <- SI SortingAnalyzer (reloadable)
-    phy/                     <- Phy visualization files
+    phy/                     <- Phy visualization files (not updated by
+                                 apply_curation.py; to be dropped)
     bombcell/                <- Bombcell unit_labels.csv
     ks4_motion.png           <- Kilosort4's own drift-correction estimate
                                  (see "KILOSORT4 DRIFT CORRECTION" below)

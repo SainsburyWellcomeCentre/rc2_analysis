@@ -291,9 +291,16 @@ classdef FormattedData < handle
             elseif contains(obj.probe_id, 'rec1_rec2_rec3_rec4')
                 sessions = obj.sessions(1:4);
             elseif strcmp(obj.probe_id, 'CAA-1124370_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124371_rec1_rec2_rec3')...
-                    | strcmp(obj.probe_id, 'CAA-1124372_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124718_rec1_rec2_rec3')
+                    | strcmp(obj.probe_id, 'CAA-1124718_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124720_rec1_rec2_rec3')...
+                    | strcmp(obj.probe_id, 'CAA-1125167_rec1_rec2_rec3')
                 % rec1 and rec3 are sparse_noise (no trials), rec2 is the
                 % passive_protocol_motion_clouds (goggles) session with the motion trials
+                sessions = obj.sessions(2);
+            elseif strcmp(obj.probe_id, 'CAA-1125165_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1125166_rec1_rec2_rec3') ...
+                | strcmp(obj.probe_id, 'CAA-1125168_rec1_rec2_rec3')
+
+                % rec1 and rec3 have no trials, rec2 is the four_way_protocol
+                % (motion clouds) session with the motion trials
                 sessions = obj.sessions(2);
             else
                 sessions = obj.sessions(1);

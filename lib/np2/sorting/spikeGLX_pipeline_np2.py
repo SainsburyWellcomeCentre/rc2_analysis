@@ -98,10 +98,18 @@ start_step = 'preprocess'
 # see the main README, "Adjusting Bombcell thresholds" -- or a different
 # machine's tool paths).
 
-# ---- Kilosort 4 settings (all 3 are the documented KS4 defaults) ----
+# ---- Kilosort 4 settings ----
+# nblocks/Th_universal/Th_learned are the documented KS4 defaults.
 ks_nblocks = 5        # non-rigid drift correction blocks; KS4 docs recommend 5 for long probes
 ks_Th_universal = 9   # spike detection threshold, universal (not-yet-learned) templates
 ks_Th_learned = 8     # spike detection threshold, templates learned from this recording
+
+# The 3 below are NOT necessarily the KS4 defaults.
+# Set them back to 0.25 / 20 / 25000 to restore the KS4 defaults.
+ks_ccg_threshold = 0.25          # final-merge CCG test; lower = fewer merges (e.g. 0.10)
+ks_cluster_downsampling = 5      # every Nth spike is a clustering landmark; lower = finer clustering (e.g. 5)
+ks_max_cluster_subset = None     # landmark cap per clustering center; None = no cap (needed for
+                                 # cluster_downsampling to take effect on long recordings) (e.g. None)
 
 # ---- Bombcell thresholds (curation used in Step [6]) ----
 # These start from Bombcell's own defaults (spikeinterface.curation.
@@ -1028,7 +1036,7 @@ def main():
             if do_preprocess:
                 print(f'\n[1] Reading raw SpikeGLX data: {raw_dir}')
                 recording_raw = si.read_spikeglx(
-                    raw_dir, stream_id=f'imec{prb}.ap', load_sync_channel=False
+                    raw_dir, stream_id=f'imec{prb}.ap'
                 )
                 n_ch  = recording_raw.get_num_channels()
                 dur_s = recording_raw.get_num_frames() / recording_raw.get_sampling_frequency()
@@ -1073,6 +1081,9 @@ def main():
                     nblocks=ks_nblocks,
                     Th_universal=ks_Th_universal,
                     Th_learned=ks_Th_learned,
+                    ccg_threshold=ks_ccg_threshold,
+                    cluster_downsampling=ks_cluster_downsampling,
+                    max_cluster_subset=ks_max_cluster_subset,
                     remove_existing_folder=True,
                 )
                 elapsed_ks = (datetime.now() - t0).total_seconds()
@@ -1120,6 +1131,13 @@ def main():
                 analyzer.compute('spike_locations')   # required for the 'drift' quality metric
                 analyzer.compute('noise_levels')      # required for the 'snr' quality metric
                 analyzer.compute('template_similarity')
+
+                # correlograms/isi_histograms are not used by the metrics or Bombcell --
+                # they feed the correlogram and ISI views of SpikeInterface-GUI, used for
+                # manual curation (sigui_curate.py). SpikeInterface defaults (50 ms window, 1 ms bins).
+                print('    correlograms + isi_histograms (for SpikeInterface-GUI)...')
+                analyzer.compute('correlograms')
+                analyzer.compute('isi_histograms')
 
                 print('    template_metrics (shape + velocity + spread)...')
                 analyzer.compute('template_metrics', include_multi_channel_metrics=True)
@@ -1253,6 +1271,10 @@ def main():
             log_step(session_id, 'bombcell', bc_status, elapsed=f'{elapsed_bc:.0f}')
 
             # ---- Step 7: Phy export ----
+            # NOTE: manual curation is moving to SpikeInterface-GUI (sigui_curate.py +
+            # apply_curation.py), which works on sorting_analyzer/ directly. This Phy
+            # export is kept for now and will be dropped once SpikeInterface-GUI is
+            # confirmed as our curation tool. rc2_analysis (MATLAB) reads nothing from phy/.
             print('\n[7] Phy export')
             t0 = datetime.now()
             phy_folder = os.path.join(ks4_out_dir, 'phy')

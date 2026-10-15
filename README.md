@@ -8,7 +8,7 @@ rollercoaster (RC2) setup on **Neuropixels 2.0 (4-shank)** probes recorded with 
 | AP band-pass + phase shift, destriping, orchestration, waveforms, quality metrics, Phy export | [SpikeInterface](https://github.com/SpikeInterface/spikeinterface) |
 | Spike sorting | [Kilosort 4](https://github.com/MouseLand/Kilosort) |
 | Automated curation (good / mua / noise / non-soma labels) | [Bombcell](https://github.com/Julie-Fabre/bombcell) *(via SpikeInterface's `bombcell_label_units`)* |
-| Manual cluster inspection (optional) | [Phy](https://github.com/cortex-lab/phy) |
+| Manual curation: merge / split / remove units (optional) | [SpikeInterface-GUI](https://github.com/SpikeInterface/spikeinterface-gui) |
 | Cross-session unit tracking (optional) | [UnitMatch](https://github.com/EnnyvanBeest/UnitMatch) *(via SpikeInterface's `SortingAnalyzer` integration)* |
 
 All spike sorting happens in **Python** — MATLAB drives the pipeline and does the downstream
@@ -39,6 +39,6 @@ Please also cite the tools it relies on:
 - **UnitMatch** — van Beest, Bimbard et al. (2024), *Nature Methods*
   ([10.1038/s41592-024-02440-1](https://www.nature.com/articles/s41592-024-02440-1)) — if you use
   cross-session tracking
-- **Phy** ([github](https://github.com/cortex-lab/phy)) — if you used it for manual inspection
+- **SpikeInterface-GUI** ([github](https://github.com/SpikeInterface/spikeinterface-gui)) — if you used it for manual curation
 
 

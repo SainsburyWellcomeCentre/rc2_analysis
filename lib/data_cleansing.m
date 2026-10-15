@@ -168,13 +168,37 @@ end
 % Include information for passive protocol sequence of motion clouds
 if strcmp(sessions(2).session_id, 'CAA-1124370_rec2_001') || ...
         strcmp(sessions(2).session_id, 'CAA-1124371_rec2_001') || ...
-        strcmp(sessions(2).session_id, 'CAA-1124718_rec2_001')
+        strcmp(sessions(2).session_id, 'CAA-1124720_rec2_001') || ...
+        strcmp(sessions(2).session_id, 'CAA-1124718_rec2_001') || ...
+        strcmp(sessions(2).session_id, 'CAA-1125167_rec2_001')
 
     fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds_goggles.mat';
     passive_protocol_sequence_motion_clouds_goggles = load(fname);
     
     for ii = 1 : sessions(2).n_trials   
          sessions(2).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds_goggles.trial_order(ii);
+    end
+end
+
+% Include information for four-way protocol sequence of motion clouds
+% (rec2 is the four_way session; rec1 and rec3 have no trials).
+% trial_order is a 4x12 matrix: linear (column-major) indexing gives the
+% trial order, checked against the rec2 .cfg trial types of both mice.
+% protocol_id: 1 locovest, 2 loco, 3 vest_replay_locovest,
+% 4 vest_replay_loco, 5 replay_only_locovest, 6 replay_only_loco
+% (same numbering as FourWayProtocolSession trial_group_ids).
+if length(sessions) >= 2 && ...
+        (strcmp(sessions(2).session_id, 'CAA-1125165_rec2_001') || ...
+         strcmp(sessions(2).session_id, 'CAA-1125166_rec2_001') || ...
+         strcmp(sessions(2).session_id, 'CAA-1125168_rec2_001'))
+
+    fname = fullfile(config.raw_rc2_dir, 'four_way_sequence_motion_clouds.mat');
+    four_way_sequence_motion_clouds = load(fname);
+
+    assert(sessions(2).n_trials == numel(four_way_sequence_motion_clouds.trial_order));
+
+    for ii = 1 : sessions(2).n_trials
+         sessions(2).trials(ii).config.trial_sequence = four_way_sequence_motion_clouds.trial_order(ii);
     end
 end
 
