@@ -202,6 +202,21 @@ if length(sessions) >= 2 && ...
     end
 end
 
+% CAA-1125166: the exposure time of the body cameras (camera0/camera1) was
+% left too long, so they only captured one frame for every 5 camera
+% triggers (~12 Hz instead of 60 Hz). Frames are on triggers 1, 6, 11, ...:
+% checked against treadmill speed in rec2 (camera1 motion energy vs speed
+% peaks at a constant 0-1 frame lag across the whole session, no drift).
+if any(strcmp(sessions(1).session_id, {'CAA-1125166_rec1_001', 'CAA-1125166_rec2_001', 'CAA-1125166_rec3_001'}))
+
+    for ii = 1 : length(sessions)
+        sessions(ii).camera_t = sessions(ii).camera_t(1 : 5 : end);
+        assert(length(sessions(ii).camera_t) == length(sessions(ii).camera0), ...
+            '%s: %i camera frames but %i camera_t after taking every 5th trigger', ...
+            sessions(ii).session_id, length(sessions(ii).camera0), length(sessions(ii).camera_t));
+    end
+end
+
 
 
 
