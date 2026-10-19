@@ -202,18 +202,38 @@ if length(sessions) >= 2 && ...
     end
 end
 
-% CAA-1125166: the exposure time of the body cameras (camera0/camera1) was
-% left too long, so they only captured one frame for every 5 camera
-% triggers (~12 Hz instead of 60 Hz). Frames are on triggers 1, 6, 11, ...:
-% checked against treadmill speed in rec2 (camera1 motion energy vs speed
-% peaks at a constant 0-1 frame lag across the whole session, no drift).
-if any(strcmp(sessions(1).session_id, {'CAA-1125166_rec1_001', 'CAA-1125166_rec2_001', 'CAA-1125166_rec3_001'}))
+% Body cameras (camera0/camera1) recorded below the 59.88 Hz trigger rate
+% because the exposure time was too long, so they only captured one frame
+% every N camera triggers. Frames are on triggers 1, 1+N, 1+2N, ... (in
+% every session the number of frames is ceil(triggers / N), for both
+% cameras), so keep every Nth trigger time as camera_t.
+%   N = 2 (29.94 Hz): CAA-1124370, CAA-1124371
+%   N = 5 (11.98 Hz): CAA-1125166, CAA-1125167
+% For CAA-1125166 this was checked against treadmill speed in rec2 (camera1
+% motion energy vs speed peaks at a constant 0-1 frame lag across the whole
+% session, no drift); the other animals ran too little to check this way.
+camera_trigger_step = {'CAA-1124370', 2; ...
+                       'CAA-1124371', 2; ...
+                       'CAA-1125166', 5; ...
+                       'CAA-1125167', 5};
+
+for animal_i = 1 : size(camera_trigger_step, 1)
+
+    if ~startsWith(sessions(1).session_id, [camera_trigger_step{animal_i, 1}, '_'])
+        continue
+    end
+
+    step = camera_trigger_step{animal_i, 2};
 
     for ii = 1 : length(sessions)
-        sessions(ii).camera_t = sessions(ii).camera_t(1 : 5 : end);
-        assert(length(sessions(ii).camera_t) == length(sessions(ii).camera0), ...
-            '%s: %i camera frames but %i camera_t after taking every 5th trigger', ...
-            sessions(ii).session_id, length(sessions(ii).camera0), length(sessions(ii).camera_t));
+        sessions(ii).camera_t = sessions(ii).camera_t(1 : step : end);
+
+        % only check if the motion energy was loaded (camera .csv exists)
+        if ~isempty(sessions(ii).camera0)
+            assert(length(sessions(ii).camera_t) == length(sessions(ii).camera0), ...
+                '%s: %i camera frames but %i camera_t after taking every %ith trigger', ...
+                sessions(ii).session_id, length(sessions(ii).camera0), length(sessions(ii).camera_t), step);
+        end
     end
 end
 
