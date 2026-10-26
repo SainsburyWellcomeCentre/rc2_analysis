@@ -787,7 +787,12 @@ classdef FormattedData < handle
             x_fr = x_fr(1:n_trials);
             y_fr = y_fr(1:n_trials);
             
-            assert(all(abs(y_trial_id(1:n_trials) - x_trial_id(1:n_trials)) < length(obj.sessions{1}.trial_group_ids)));
+            % paired trials should come from the same batch, i.e. their trial IDs
+            % differ by less than the number of trial groups. Take the number of
+            % trial groups from the motion session, as sessions{1} may not have
+            % trials (e.g. sparse noise in rec1)
+            sessions = obj.motion_sessions();
+            assert(all(abs(y_trial_id(1:n_trials) - x_trial_id(1:n_trials)) < length(sessions{1}.trial_group_ids)));
             
             idx = isnan(x_fr) | isnan(y_fr);
             
