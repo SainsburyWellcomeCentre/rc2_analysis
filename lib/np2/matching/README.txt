@@ -77,9 +77,12 @@ What happens:
   5. saves results.
 
 Options:
-    --save-dir DIR         output folder (default <parent of session 1>\unit_match)
+    --save-dir DIR         output folder (default: unit_match\ two levels above
+                           session 1's imec0_ks4, i.e. preprocessed_<probe_id>_g0\unit_match)
     --threshold 0.75       match-probability threshold
-    --unitmatch-repo DIR   clone of EnnyvanBeest/UnitMatch (default already set)
+    --unitmatch-repo DIR   clone of EnnyvanBeest/UnitMatch (default: the hard-coded
+                           DEFAULT_UNITMATCH_REPO, one machine's path; pass it unless
+                           your clone is there. browse_matches.py takes the same flag)
 
 Outputs (in the save dir):
     MatchTable.csv          unit pairs with match probability
