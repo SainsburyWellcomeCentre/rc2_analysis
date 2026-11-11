@@ -6,7 +6,7 @@ experiment_groups       = {'passive_same_luminance_mc'};
 trial_group_labels      = {'VT', 'V', 'T_Vstatic'};
 save_figs               = true;
 overwrite               = true;
-figure_dir              = {'motionClouds', 'passive_same_luminance_mc', 'stationary_vs_motion_orientations', 'single_cluster'};
+figure_dir              = {'motionClouds_mouseGoggles', 'passive_same_luminance_mc', 'stationary_vs_motion_orientations', 'single_cluster'};
 
 
 % Parameters: Motion cloud trial filters
@@ -24,7 +24,7 @@ contains_any = @(str, subs) any(cellfun(@(s) ...
 % Load motion cloud sequence and folder names
 mc_sequence = [];
 cloud_names = {};
-proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_cloud_sequence_250414.mat');
+proto_seq_path = fullfile('D:\mvelez\mateoData_mc', 'motion_clouds_goggles_sequence_260420.mat');
 if exist(proto_seq_path,'file')
     P = load(proto_seq_path);
     if isfield(P,'presentation_sequence')

@@ -8,7 +8,7 @@
 %
 % Saves PDFs and CSV summaries to the same figures folder as the input CSV.
 
-input_csv = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds','passive_same_luminance_mc','stationary_vs_motion_temporal_frequencies','single_cluster','motion_cloud_temporal_frequencies_analysis_summary.csv');
+input_csv = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds_mouseGoggles','passive_same_luminance_mc','stationary_vs_motion_temporal_frequencies','single_cluster','motion_cloud_temporal_frequencies_analysis_summary.csv');
 if ~exist(input_csv,'file')
     error('Input CSV not found: %s', input_csv);
 end
@@ -73,7 +73,7 @@ end
 % small helper: rotate order so that preferred index ends up at position 2
 rotate_to_pos2 = @(arr,k) circshift(arr, 2-k);
 
-out_dir = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds','passive_same_luminance_mc','stationary_vs_motion_temporal_frequencies','population');
+out_dir = fullfile('C:','Users','lee','Documents','mvelez','figures','motionClouds_mouseGoggles','passive_same_luminance_mc','stationary_vs_motion_temporal_frequencies','population');
 if ~exist(out_dir,'dir')
     mkdir(out_dir);
 end

@@ -172,7 +172,7 @@ if strcmp(sessions(2).session_id, 'CAA-1124370_rec2_001') || ...
         strcmp(sessions(2).session_id, 'CAA-1124718_rec2_001') || ...
         strcmp(sessions(2).session_id, 'CAA-1125167_rec2_001')
 
-    fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds_goggles.mat';
+    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds_goggles.mat');
     passive_protocol_sequence_motion_clouds_goggles = load(fname);
     
     for ii = 1 : sessions(2).n_trials   
