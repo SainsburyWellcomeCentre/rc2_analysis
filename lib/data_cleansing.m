@@ -10,6 +10,7 @@ function sessions = data_cleansing(sessions)
 %
 %   See also: RC2Format.format
 
+config = path_config(); 
 if strcmp(sessions(1).session_id, 'CA_176_1_rec1_001')
     % insert log names to make consistent with later data
     basename = 'C:\Users\Mateo\Desktop\mateoData\CA_176_1\CA_176_1\CA_176_1_rec1_001_single_trial';
@@ -126,7 +127,8 @@ if (strcmp(sessions(1).session_id, 'CAA-1121416_rec1_001') && strcmp(sessions(2)
    strcmp(sessions(1).session_id, 'CAA-1121765_rec1_001') || ...
    strcmp(sessions(1).session_id, 'CAA-1121766_rec1_001') 
         
-    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+   % fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+   fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence.mat');
     passive_protocol_sequence = load(fname);
     
     for ii = 1 : sessions(1).n_trials   
@@ -154,10 +156,11 @@ if strcmp(sessions(1).session_id, 'CAA-1123243_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123466_rec1_001') || ...
         strcmp(sessions(1).session_id, 'CAA-1123467_rec1_001')
         
-    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
+    %fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds.mat';
+    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds.mat');
     passive_protocol_sequence_motion_clouds = load(fname);
     
-    for ii = 1 : sessions(1).n_trials   
+    for ii = 1 : sessions(1).n_trials
          sessions(1).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds.trial_order(ii);
     end
 end
@@ -165,14 +168,72 @@ end
 % Include information for passive protocol sequence of motion clouds
 if strcmp(sessions(2).session_id, 'CAA-1124370_rec2_001') || ...
         strcmp(sessions(2).session_id, 'CAA-1124371_rec2_001') || ...
+        strcmp(sessions(2).session_id, 'CAA-1124720_rec2_001') || ...
         strcmp(sessions(2).session_id, 'CAA-1124718_rec2_001') || ...
-        strcmp(sessions(2).session_id, 'CAA-1124720_rec2_001')
-        
-    fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence_motion_clouds_goggles.mat';
+        strcmp(sessions(2).session_id, 'CAA-1125167_rec2_001')
+
+    fname = fullfile(config.raw_rc2_dir, 'passive_protocol_sequence_motion_clouds_goggles.mat');
     passive_protocol_sequence_motion_clouds_goggles = load(fname);
     
     for ii = 1 : sessions(2).n_trials   
          sessions(2).trials(ii).config.trial_sequence = passive_protocol_sequence_motion_clouds_goggles.trial_order(ii);
+    end
+end
+
+% Include information for four-way protocol sequence of motion clouds
+% (rec2 is the four_way session; rec1 and rec3 have no trials).
+% trial_order is a 4x12 matrix: linear (column-major) indexing gives the
+% trial order, checked against the rec2 .cfg trial types of both mice.
+% protocol_id: 1 locovest, 2 loco, 3 vest_replay_locovest,
+% 4 vest_replay_loco, 5 replay_only_locovest, 6 replay_only_loco
+% (same numbering as FourWayProtocolSession trial_group_ids).
+if length(sessions) >= 2 && ...
+        (strcmp(sessions(2).session_id, 'CAA-1125165_rec2_001') || ...
+         strcmp(sessions(2).session_id, 'CAA-1125166_rec2_001') || ...
+         strcmp(sessions(2).session_id, 'CAA-1125168_rec2_001'))
+
+    fname = fullfile(config.raw_rc2_dir, 'four_way_sequence_motion_clouds.mat');
+    four_way_sequence_motion_clouds = load(fname);
+
+    assert(sessions(2).n_trials == numel(four_way_sequence_motion_clouds.trial_order));
+
+    for ii = 1 : sessions(2).n_trials
+         sessions(2).trials(ii).config.trial_sequence = four_way_sequence_motion_clouds.trial_order(ii);
+    end
+end
+
+% Body cameras (camera0/camera1) recorded below the 59.88 Hz trigger rate
+% because the exposure time was too long, so they only captured one frame
+% every N camera triggers. Frames are on triggers 1, 1+N, 1+2N, ... (in
+% every session the number of frames is ceil(triggers / N), for both
+% cameras), so keep every Nth trigger time as camera_t.
+%   N = 2 (29.94 Hz): CAA-1124370, CAA-1124371
+%   N = 5 (11.98 Hz): CAA-1125166, CAA-1125167
+% For CAA-1125166 this was checked against treadmill speed in rec2 (camera1
+% motion energy vs speed peaks at a constant 0-1 frame lag across the whole
+% session, no drift); the other animals ran too little to check this way.
+camera_trigger_step = {'CAA-1124370', 2; ...
+                       'CAA-1124371', 2; ...
+                       'CAA-1125166', 5; ...
+                       'CAA-1125167', 5};
+
+for animal_i = 1 : size(camera_trigger_step, 1)
+
+    if ~startsWith(sessions(1).session_id, [camera_trigger_step{animal_i, 1}, '_'])
+        continue
+    end
+
+    step = camera_trigger_step{animal_i, 2};
+
+    for ii = 1 : length(sessions)
+        sessions(ii).camera_t = sessions(ii).camera_t(1 : step : end);
+
+        % only check if the motion energy was loaded (camera .csv exists)
+        if ~isempty(sessions(ii).camera0)
+            assert(length(sessions(ii).camera_t) == length(sessions(ii).camera0), ...
+                '%s: %i camera frames but %i camera_t after taking every %ith trigger', ...
+                sessions(ii).session_id, length(sessions(ii).camera0), length(sessions(ii).camera_t), step);
+        end
     end
 end
 

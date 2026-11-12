@@ -28,6 +28,8 @@ classdef Trial < handle
 %       probe_t             - timebase of the trial synced to the probe recording
 %       camera_t            - timebase of the camera frames synced to the probe recording
 %       camera_idx          - index of the session camera frames appearing in this trial
+%       eyecam_t            - timebase of the eye camera frames synced to the probe recording
+%       eyecam_idx          - index of the session eye camera frames appearing in this trial
 %       treadmill_speed     - speed of the treadmill
 %       treadmill_acceleration - acceleration of the treadmill
 %       stage_speed         - speed of the stage
@@ -52,6 +54,7 @@ classdef Trial < handle
 %       camera0             - motion energy for camera0
 %       camera1             - motion energy for camera1
 %       pupil_diameter      - pupil diameter
+%       pupil_position      - pupil x-y position (N x 2)
 %
 %   Trial Methods:
 %       find_original_trial - for replay trials, finds the original trial in the set of all trials
@@ -139,6 +142,7 @@ classdef Trial < handle
         camera0
         camera1
         pupil_diameter
+        pupil_position
     end
     
     properties (Dependent = true, Hidden = true)
@@ -146,8 +150,11 @@ classdef Trial < handle
         camera0_
         camera1_
         pupil_diameter_
+        pupil_position_
         camera_t
         camera_idx
+        eyecam_t
+        eyecam_idx
     end
     
     
@@ -239,6 +246,22 @@ classdef Trial < handle
         
         
         
+        function val = get.eyecam_idx(obj)
+        %%index of eye camera frames in the session associated with this trial
+            start_t = obj.session.probe_t(obj.start_idx);
+            end_t = obj.session.probe_t(obj.end_idx);
+            val = obj.session.eyecam_t >= start_t & obj.session.eyecam_t <= end_t;
+        end
+        
+        
+        
+        function val = get.eyecam_t(obj)
+        %%timebase of the eye camera frames in this trial synced to the probe recording
+            val = obj.session.eyecam_t(obj.eyecam_idx);
+        end
+        
+        
+        
         function val = get.solenoid(obj)
         %%solenoid channel during this trial    
             val = obj.session.solenoid(obj.start_idx:obj.end_idx);
@@ -278,10 +301,19 @@ classdef Trial < handle
 
 
         function val = get.pupil_diameter_(obj)
-        %%pupil diameter, camera timebase
+        %%pupil diameter, eye camera timebase
             val = [];
             if ~isempty(obj.session.pupil_diameter_)
-                val = obj.session.pupil_diameter_;
+                val = obj.session.pupil_diameter_(obj.eyecam_idx);
+            end
+        end
+        
+        
+        function val = get.pupil_position_(obj)
+        %%pupil x-y position, eye camera timebase
+            val = [];
+            if ~isempty(obj.session.pupil_position_)
+                val = obj.session.pupil_position_(obj.eyecam_idx, :);
             end
         end
         
@@ -309,6 +341,15 @@ classdef Trial < handle
             val = [];
             if ~isempty(obj.session.pupil_diameter)
                 val = obj.session.pupil_diameter(obj.start_idx:obj.end_idx);
+            end
+        end
+        
+        
+        function val = get.pupil_position(obj)
+        %%pupil x-y position, interpolated to session
+            val = [];
+            if ~isempty(obj.session.pupil_position)
+                val = obj.session.pupil_position(obj.start_idx:obj.end_idx, :);
             end
         end
         

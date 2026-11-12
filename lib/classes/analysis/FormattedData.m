@@ -296,6 +296,18 @@ classdef FormattedData < handle
                 sessions = obj.sessions(2);
             elseif contains(obj.probe_id, 'rec1_rec2_rec3_rec4')
                 sessions = obj.sessions(1:4);
+            elseif strcmp(obj.probe_id, 'CAA-1124370_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124371_rec1_rec2_rec3')...
+                    | strcmp(obj.probe_id, 'CAA-1124718_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1124720_rec1_rec2_rec3')...
+                    | strcmp(obj.probe_id, 'CAA-1125167_rec1_rec2_rec3')
+                % rec1 and rec3 are sparse_noise (no trials), rec2 is the
+                % passive_protocol_motion_clouds (goggles) session with the motion trials
+                sessions = obj.sessions(2);
+            elseif strcmp(obj.probe_id, 'CAA-1125165_rec1_rec2_rec3') | strcmp(obj.probe_id, 'CAA-1125166_rec1_rec2_rec3') ...
+                | strcmp(obj.probe_id, 'CAA-1125168_rec1_rec2_rec3')
+
+                % rec1 and rec3 have no trials, rec2 is the four_way_protocol
+                % (motion clouds) session with the motion trials
+                sessions = obj.sessions(2);
             else
                 sessions = obj.sessions(1);
             end
@@ -515,6 +527,8 @@ classdef FormattedData < handle
                 visp_clusters = selected_clusters;
             end
             
+
+
             % further restrict based on spiking class
             if ismember(spiking_class, {'wide', 'narrow'})
                 idx = strcmp({visp_clusters(:).spiking_class}, spiking_class);
@@ -779,7 +793,12 @@ classdef FormattedData < handle
             x_fr = x_fr(1:n_trials);
             y_fr = y_fr(1:n_trials);
             
-            assert(all(abs(y_trial_id(1:n_trials) - x_trial_id(1:n_trials)) < length(obj.sessions{1}.trial_group_ids)));
+            % paired trials should come from the same batch, i.e. their trial IDs
+            % differ by less than the number of trial groups. Take the number of
+            % trial groups from the motion session, as sessions{1} may not have
+            % trials (e.g. sparse noise in rec1)
+            sessions = obj.motion_sessions();
+            assert(all(abs(y_trial_id(1:n_trials) - x_trial_id(1:n_trials)) < length(sessions{1}.trial_group_ids)));
             
             idx = isnan(x_fr) | isnan(y_fr);
             

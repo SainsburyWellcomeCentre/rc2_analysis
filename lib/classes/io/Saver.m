@@ -16,8 +16,8 @@ classdef Saver < handle
 %    hf_power_figure            - save the HF power figure to .pdf
 %    track_offset               - save the offset between ephys and anatomy L5 for a shank to .txt
 %    hf_power_parameters        - save the HF power parameters to .mat
-%    clusters_janelia_csv       - save the clusters which pass quality metric criteria to .csv
-%    mua_clusters_janelia_csv   - save the clusters which pass quality metric criteria for MUA to .csv
+%    clusters_to_check_csv       - save the clusters which pass quality metric criteria to .csv
+%    mua_clusters_to_check_csv   - save the clusters which pass quality metric criteria for MUA to .csv
 %    selected_clusters_txt      - save the manually selected clusters to a .txt
 %    selected_mua_clusters_txt  - save the manually selected MUA clusters to a .txt
 %    trigger_mat                - save the sync trigger channel to a separate .mat
@@ -192,26 +192,26 @@ classdef Saver < handle
         
         
         
-        function clusters_janelia_csv(obj, probe_id, tbl)
-        %%clusters_janelia_csv Save the clusters which pass quality metric criteria to .csv
+        function clusters_to_check_csv(obj, probe_id, tbl)
+        %%clusters_to_check_csv Save the clusters which pass quality metric criteria to .csv
         %
-        %  clusters_janelia_csv(PROBE_ID, TABLE) save the data in TABLE for probe
+        %  clusters_to_check_csv(PROBE_ID, TABLE) save the data in TABLE for probe
         %  recording with ID, PROBE_ID.
         
-            fname = obj.file_manager.clusters_janelia_csv(probe_id);
+            fname = obj.file_manager.clusters_to_check_csv(probe_id);
             obj.writetable(fname, tbl);
         end
         
         
         
-        function mua_clusters_janelia_csv(obj, probe_id, tbl)
-        %%mua_clusters_janelia_csv Save the clusters which pass quality
+        function mua_clusters_to_check_csv(obj, probe_id, tbl)
+        %%mua_clusters_to_check_csv Save the clusters which pass quality
         %%metric criteria for MUA to .csv
         %
-        %  mua_clusters_janelia_csv(PROBE_ID, TABLE) save the data in TABLE
+        %  mua_clusters_to_check_csv(PROBE_ID, TABLE) save the data in TABLE
         %  for probe recording with ID, PROBE_ID.
         
-            fname = obj.file_manager.mua_clusters_janelia_csv(probe_id);
+            fname = obj.file_manager.mua_clusters_to_check_csv(probe_id);
             obj.writetable(fname, tbl);
         end
         
@@ -306,13 +306,36 @@ classdef Saver < handle
         function create_tracks_dir(obj, probe_id)
         %%create_tracks_dir Create a 'tracks' directory in the Kilosort directory
         %
-        %  create_tracks_dir(PROBE_ID) 
-        
+        %  create_tracks_dir(PROBE_ID)
+
             [dname, exists] = obj.file_manager.tracks_dir(probe_id);
-            
+
             if exists; return; end
             [parent_dir, sub_dir] = fileparts(dname);
             mkdir(parent_dir, sub_dir);
+        end
+
+
+
+        function create_csvs_dirs(obj)
+        %%create_csvs_dirs Create the 'csvs' directory and its 4 subdirectories
+        %%in formatted_data_dir, if they don't already exist
+        %
+        %  create_csvs_dirs() creates <formatted_data_dir>\csvs\ with
+        %  subdirectories trial_matched_offsets, stationary_vs_motion_fr,
+        %  tuning_curves and tuning_curves_acceleration -- the destinations
+        %  written to by offsets_table, svm_table, tuning_curves and
+        %  tuning_curves_acceleration respectively.
+
+            csvs_dir = fullfile(obj.file_manager.path_config.formatted_data_dir, 'csvs');
+            sub_dirs = {'trial_matched_offsets', 'stationary_vs_motion_fr', ...
+                        'tuning_curves', 'tuning_curves_acceleration'};
+            for ii = 1 : length(sub_dirs)
+                dname = fullfile(csvs_dir, sub_dirs{ii});
+                if ~isfolder(dname)
+                    mkdir(dname)
+                end
+            end
         end
         
         
@@ -323,10 +346,16 @@ classdef Saver < handle
         %  driftmap(PROBE_ID, FIGURE_HANDLE) save the driftmap figure
         %  referenced by FIGURE_HANDLE for probe recording PROBE_ID.
         
-            figure(h_fig);  % make current figure
+            % note: do not call figure(h_fig) here -- that would force the
+            % (deliberately off-screen) driftmap figure visible; exportgraphics
+            % takes the handle explicitly and does not need a current figure
             fname = obj.file_manager.driftmap(probe_id);
-            if obj.check_save(fname) 
-                print(fname, '-bestfit', '-dpdf');
+            if obj.check_save(fname)
+                % The driftmap is a dense scatter of every spike, so a
+                % vector PDF export ('-dpdf') overruns the painters
+                % renderer and fails with "Export failed". Rasterise the
+                % content into the PDF instead.
+                exportgraphics(h_fig, fname, 'ContentType', 'image', 'Resolution', 300);
             end
         end
         
@@ -336,11 +365,15 @@ classdef Saver < handle
         %%writetable General function for saving table to .csv
         %
         %  writetable(FILENAME, TABLE) save MATLAB table in TABLE to
-        %  FILENAME.
-        
+        %  FILENAME. Creates the parent directory first if it doesn't
+        %  already exist.
+
             if obj.check_save(fname)
-                writetable(tbl, fname);
                 [pathname, filename] = fileparts(fname);
+                if ~isfolder(pathname)
+                    mkdir(pathname)
+                end
+                writetable(tbl, fname);
                 cfg_fname = fullfile(pathname, [filename, '.cfg']);
                 obj.git.save(cfg_fname);
             end

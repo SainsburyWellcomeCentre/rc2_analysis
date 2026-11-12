@@ -24,7 +24,7 @@ ctl                         = RC2Analysis();
 probe_ids                   = ctl.get_probe_ids(experiment_groups);
 
 % load sequence of stimuli
-fname = 'Y:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
+fname = 'Z:\mvelez\mateoData_rc2\passive_protocol_sequence.mat';
 passive_protocol_sequence = load(fname);
 
 % initialize variables

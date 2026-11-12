@@ -17,7 +17,10 @@ classdef FileManager < handle
 %       camera_csv_fast         - path to the .csv file for motion energy (using fast drive)
 %       camera_csv_slow         - path to the .csv file for motion energy (using slow drive)
 %       camera0_dlc_pupil_fast  - path to the .csv file containing tracking data of the pupil (using fast drive)
-%       pupil_diameter_slow     - path to the .csv file containing pre-computed pupul diameter (using slow drive)
+%       pupil_diameter_fast     - path to the .csv file containing pre-computed pupil diameter (using fast drive)
+%       pupil_diameter_slow     - path to the .csv file containing pre-computed pupil diameter (using slow drive)
+%       pupil_position_fast     - path to the .csv file containing pre-computed pupil x-y position (using fast drive)
+%       pupil_position_slow     - path to the .csv file containing pre-computed pupil x-y position (using slow drive)
 %       camera0_dlc_pupil_slow  - path to the .csv file containing tracking data of the pupil (using slow drive)
 %       camera0_saccades_fast   - path to the .csv file containing frame numbers of saccade onsets (using fast drive)
 %       camera0_saccades_slow   - path to the .csv file containing frame numbers of saccade onsets (using slow drive)
@@ -44,7 +47,7 @@ classdef FileManager < handle
 %       processed_output_dir_slow   - 'output' directory in processed data (slow drive)
 %       json_dir_fast               - 'json_files' directory in processed data (fast drive)
 %       json_dir_slow               - 'json_files' directory in processed data (slow drive)
-%       imec0_ks2                   - 'imec_ks2' directory with KS2 output (active search on fast then slow drive)
+%       imec0_ks4                   - 'imec0_ks4' directory with Kilosort4 output (active search on fast then slow drive)
 %       trigger_mat                 - path to the 'trigger.mat' file
 %       original_trigger_mat        - path to the 'original_trigger.mat' file
 %       trigger_points_removed      - path to the 'trigger_points_removed.mat' file
@@ -57,23 +60,22 @@ classdef FileManager < handle
 %       hf_power_parameters         - path to the 'hf_power_<shank_id>.mat' files
 %       track_csv                   - path to the anatomy 'track_<shank_id>.csv' files
 %       track_offset                - path to the 'offset_<shank_id>.txt' files
-%       ks2_npy                     - path to one of several .npy files output by kilosort
+%       ks4_npy                     - path to one of several .npy files output by kilosort
 %       cluster_groups              - path to the 'cluster_groups.csv' file
-%       ks2_label                   - path to the 'cluster_KSLabel.tsv' file
+%       ks4_label                   - path to the 'cluster_KSLabel.tsv' file
 %       params                      - path to the 'params.py' file
-%       imec0_ks2_csv_dir           - path to the directory containing .csv files moved after KS2 processing
+%       imec0_ks4_csv_dir           - path to the 'csv' directory with the metric .csv files from the SpikeInterface/KS4 pipeline
 %       metrics_csv                 - path to the 'metrics.csv' file
 %       waveform_metrics_csv        - path to the 'waveform_metrics.csv' file
-%       waveform_metrics_fixed_csv  - path to the 'waveform_metrics_fix.csv' file
-%       clusters_janelia_csv        - path to the 'clusters_janelia.csv' file
-%       mua_clusters_janelia_csv    - path to the 'mua_clusters_janelia.csv' file
-%       clusters_janelia_xlsx       - path to the 'clusters_janelia.xlsx' file
-%       mua_clusters_janelia_xlsx   - path to the 'mua_clusters_janelia.xlsx' file
+%       clusters_to_check_csv        - path to the 'clusters_to_check.csv' file
+%       mua_clusters_to_check_csv    - path to the 'mua_clusters_to_check.csv' file
+%       clusters_to_check_xlsx       - path to the 'clusters_to_check.xlsx' file
+%       mua_clusters_to_check_xlsx   - path to the 'mua_clusters_to_check.xlsx' file
 %       hf_power_figure             - path to the 'hf_power_<shank_id>.pdf' file
 %       tracks_dir                  - path to the directory containing the track/HF power files
 %       driftmap                    - path to the 'driftmap.pdf' file
 %       probe_id_from_animal_id     - return probe recording ID from an animal ID
-%       generate_imec0_ks2          - shared function, creates path to 'imec0_ks2' directory
+%       generate_imec0_ks4          - shared function, creates path to 'imec0_ks4' directory
 %       generate_glx_bin_dir_processed - shared function, creates path to directory containing raw probe files
 %       animal_id_from_probe_id     - get animal ID from probe ID
 %       animal_id_from_session_id   - get animal ID from session ID ()
@@ -251,19 +253,70 @@ classdef FileManager < handle
         end
         
         
+        function [fname, exists] = pupil_diameter_fast(obj, session_id)
+        %%pupil_diameter_fast Path to the .csv file containing pre-computed
+        %%diameter of the pupil (using fast drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_diameter_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_diameter.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'pupil_diameter.csv');
+            exists = isfile(fname);
+        end
+
+
         function [fname, exists] = pupil_diameter_slow(obj, session_id)
         %%pupil_diameter_slow Path to the .csv file containing pre-computed
-        %%diameter of the pupil (using slow drive) 
+        %%diameter of the pupil (using slow drive)
         %
         %   [FILENAME, EXISTS] = pupil_diameter_slow(SESSION_ID)
         %   for session with session ID string, SESSION_ID, returns
-        %   FILENAME, the full path of the form: 
-        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_diameter.csv
-        
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\pupil_diameter.csv
+
         %   EXISTS is true if the file exists and false otherwise.
-        
+
             dname = obj.camera_csv_dir_slow(session_id);
             fname = fullfile(dname, 'pupil_diameter.csv');
+            exists = isfile(fname);
+        end
+
+
+        function [fname, exists] = pupil_position_fast(obj, session_id)
+        %%pupil_position_fast Path to the .csv file containing pre-computed
+        %%x-y position of the pupil (using fast drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_position_fast(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_fast_dir\<SESSION_ID>\pupil_position.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_fast(session_id);
+            fname = fullfile(dname, 'pupil_position.csv');
+            exists = isfile(fname);
+        end
+
+
+        function [fname, exists] = pupil_position_slow(obj, session_id)
+        %%pupil_position_slow Path to the .csv file containing pre-computed
+        %%x-y position of the pupil (using slow drive)
+        %
+        %   [FILENAME, EXISTS] = pupil_position_slow(SESSION_ID)
+        %   for session with session ID string, SESSION_ID, returns
+        %   FILENAME, the full path of the form:
+        %       path_config.processed_camera_slow_dir\<SESSION_ID>\pupil_position.csv
+
+        %   EXISTS is true if the file exists and false otherwise.
+
+            dname = obj.camera_csv_dir_slow(session_id);
+            fname = fullfile(dname, 'pupil_position.csv');
             exists = isfile(fname);
         end
         
@@ -737,24 +790,24 @@ classdef FileManager < handle
         
         
         
-        function [dname, exists] = imec0_ks2(obj, probe_id)
-        %%imec0_ks2 'imec_ks2' directory with KS2 output (active search on fast then slow drive)
+        function [dname, exists] = imec0_ks4(obj, probe_id)
+        %%imec0_ks4 'imec0_ks4' directory with Kilosort4 output (active search on fast then slow drive)
         %
-        %   [DIRECTORY_NAME, EXISTS] = imec0_ks2(PROBE_ID)
+        %   [DIRECTORY_NAME, EXISTS] = imec0_ks4(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the directory exists and false otherwise.
         
             % first try fast dir
             top_dir = obj.path_config.processed_probe_fast_dir;
-            dname = obj.generate_imec0_ks2(top_dir, probe_id);
+            dname = obj.generate_imec0_ks4(top_dir, probe_id);
             exists = isfolder(dname);
             
             if exists; return; end
             
             % then try slow dir
             top_dir = obj.path_config.processed_probe_slow_dir;
-            dname = obj.generate_imec0_ks2(top_dir, probe_id);
+            dname = obj.generate_imec0_ks4(top_dir, probe_id);
             exists = isfolder(dname);
         end
         
@@ -768,7 +821,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'trigger.mat');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'trigger.mat');
             exists = isfile(fname);
         end
         
@@ -782,7 +835,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'trigger_ori.mat');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'trigger_ori.mat');
             exists = isfile(fname);
         end
         
@@ -796,7 +849,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'trigger_points_removed.mat');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'trigger_points_removed.mat');
             exists = isfile(fname);
         end
         
@@ -810,7 +863,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            dname = obj.imec0_ks2(probe_id);
+            dname = obj.imec0_ks4(probe_id);
             fname = fullfile(dname, 'selected_clusters.txt');
             exists = isfile(fname);
         end
@@ -826,7 +879,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            dname = obj.imec0_ks2(probe_id);
+            dname = obj.imec0_ks4(probe_id);
             fname = fullfile(dname, 'selected_mua_clusters.txt');
             exists = isfile(fname);
         end
@@ -913,7 +966,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'tracks', sprintf('hf_power_%i.mat', shank_id));
+            fname = fullfile(obj.imec0_ks4(probe_id), 'tracks', sprintf('hf_power_%i.mat', shank_id));
             exists = isfile(fname);
         end
         
@@ -927,7 +980,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'tracks', sprintf('track_%i.csv', shank_id));
+            fname = fullfile(obj.imec0_ks4(probe_id), 'tracks', sprintf('track_%i.csv', shank_id));
             exists = isfile(fname);
         end
            
@@ -941,21 +994,21 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'tracks', sprintf('offset_%i.txt', shank_id));
+            fname = fullfile(obj.imec0_ks4(probe_id), 'tracks', sprintf('offset_%i.txt', shank_id));
             exists = isfile(fname);
         end
         
         
         
-        function [fname, exists] = ks2_npy(obj, probe_id, var)
-        %%ks2_npy Path to one of several .npy files output by kilosort
+        function [fname, exists] = ks4_npy(obj, probe_id, var)
+        %%ks4_npy Path to one of several .npy files output by kilosort
         %
-        %   [FILENAME, EXISTS] = ks2_npy(PROBE_ID, STR)
+        %   [FILENAME, EXISTS] = ks4_npy(PROBE_ID, STR)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), sprintf('%s.npy', var));
+            fname = fullfile(obj.imec0_ks4(probe_id), sprintf('%s.npy', var));
             exists = isfile(fname);
         end
         
@@ -969,21 +1022,21 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'cluster_groups.csv');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'cluster_groups.csv');
             exists = isfile(fname);
         end
         
         
         
-        function [fname, exists] = ks2_label(obj, probe_id)
-        %%ks2_label Path to the 'cluster_KSLabel.tsv' file
+        function [fname, exists] = ks4_label(obj, probe_id)
+        %%ks4_label Path to the 'cluster_KSLabel.tsv' file
         %
-        %   [FILENAME, EXISTS] = ks2_label(PROBE_ID)
+        %   [FILENAME, EXISTS] = ks4_label(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'cluster_KSLabel.tsv');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'cluster_KSLabel.tsv');
             exists = isfile(fname);
         end
         
@@ -997,21 +1050,21 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
          
-            fname = fullfile(obj.imec0_ks2(probe_id), 'params.py');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'params.py');
             exists = isfile(fname);
         end
         
         
         
-        function [dname, exists] = imec0_ks2_csv_dir(obj, probe_id)
-        %%imec0_ks2_csv_dir Path to the directory containing .csv files moved after KS2 processing
+        function [dname, exists] = imec0_ks4_csv_dir(obj, probe_id)
+        %%imec0_ks4_csv_dir Path to the 'csv' directory with the metric .csv files from the SpikeInterface/KS4 pipeline
         %
-        %   [DIRECTORY_NAME, EXISTS] = imec0_ks2_csv_dir(PROBE_ID)
+        %   [DIRECTORY_NAME, EXISTS] = imec0_ks4_csv_dir(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the directory exists and false otherwise.
         
-            dname = fullfile(obj.imec0_ks2(probe_id), 'csv');
+            dname = fullfile(obj.imec0_ks4(probe_id), 'csv');
             exists = isfolder(dname);
         end
         
@@ -1025,7 +1078,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'metrics.csv');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'metrics.csv');
             exists = isfile(fname);
         end
         
@@ -1039,89 +1092,64 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'waveform_metrics.csv');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'waveform_metrics.csv');
             exists = isfile(fname);
         end
         
         
         
-        function [fname, exists] = waveform_metrics_fixed_csv(obj, probe_id)
-        %%waveform_metrics_fixed_csv Path to the 'waveform_metrics_fix.csv' file
+        function [fname, exists] = clusters_to_check_csv(obj, probe_id)
+        %%clusters_to_check_csv Path to the 'clusters_to_check.csv' file
         %
-        %   [FILENAME, EXISTS] = waveform_metrics_fixed_csv(PROBE_ID)
+        %   [FILENAME, EXISTS] = clusters_to_check_csv(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'waveform_metrics_fix.csv');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'clusters_to_check.csv');
             exists = isfile(fname);
-            
-            % if it doesn't exist attempt to find a later version
-            if ~exists
-                contents = dir(obj.imec0_ks2_csv_dir(probe_id));
-                I = regexp({contents(:).name}, 'waveform_metrics_fix');
-                idx = find(cellfun(@(x)(~isempty(x)), I));
-                if ~isempty(idx)
-                    fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), contents(idx(1)).name);
-                    exists = isfile(fname);
-                end
-            end
         end
         
         
         
-        function [fname, exists] = clusters_janelia_csv(obj, probe_id)
-        %%clusters_janelia_csv Path to the 'clusters_janelia.csv' file
+        function [fname, exists] = mua_clusters_to_check_csv(obj, probe_id)
+        %%mua_clusters_to_check_csv Path to the 'mua_clusters_to_check.csv' file
         %
-        %   [FILENAME, EXISTS] = clusters_janelia_csv(PROBE_ID)
+        %   [FILENAME, EXISTS] = mua_clusters_to_check_csv(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'clusters_janelia.csv');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'mua_clusters_to_check.csv');
             exists = isfile(fname);
         end
         
         
         
-        function [fname, exists] = mua_clusters_janelia_csv(obj, probe_id)
-        %%mua_clusters_janelia_csv Path to the 'mua_clusters_janelia.csv' file
+        function [fname, exists] = clusters_to_check_xlsx(obj, probe_id)
+        %%clusters_to_check_xlsx Path to the 'clusters_to_check.xlsx' file
         %
-        %   [FILENAME, EXISTS] = mua_clusters_janelia_csv(PROBE_ID)
+        %   [FILENAME, EXISTS] = clusters_to_check_xlsx(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'mua_clusters_janelia.csv');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'clusters_to_check.xlsx');
             exists = isfile(fname);
         end
         
         
         
-        function [fname, exists] = clusters_janelia_xlsx(obj, probe_id)
-        %%clusters_janelia_xlsx Path to the 'clusters_janelia.xlsx' file
-        %
-        %   [FILENAME, EXISTS] = clusters_janelia_xlsx(PROBE_ID)
-        %   for probe recording with ID string, PROBE_ID
-        %
-        %   EXISTS is true if the file exists and false otherwise.
-        
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'clusters_janelia.xlsx');
-            exists = isfile(fname);
-        end
-        
-        
-        
-        function [fname, exists] = mua_clusters_janelia_xlsx(obj, probe_id)
-        %%mua_clusters_janelia_xlsx Path to the 'mua_clusters_janelia.xlsx'
+        function [fname, exists] = mua_clusters_to_check_xlsx(obj, probe_id)
+        %%mua_clusters_to_check_xlsx Path to the 'mua_clusters_to_check.xlsx'
         %%file 
         %
-        %   [FILENAME, EXISTS] = mua_clusters_janelia_xlsx(PROBE_ID)
+        %   [FILENAME, EXISTS] = mua_clusters_to_check_xlsx(PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2_csv_dir(probe_id), 'mua_clusters_janelia.xlsx');
+            fname = fullfile(obj.imec0_ks4_csv_dir(probe_id), 'mua_clusters_to_check.xlsx');
             exists = isfile(fname);
         end
         
@@ -1135,7 +1163,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'tracks', sprintf('hf_power_%i.pdf', shank_id));
+            fname = fullfile(obj.imec0_ks4(probe_id), 'tracks', sprintf('hf_power_%i.pdf', shank_id));
             exists = isfile(fname);
         end
         
@@ -1149,7 +1177,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the directory exists and false otherwise.
         
-            dname = fullfile(obj.imec0_ks2(probe_id), 'tracks');
+            dname = fullfile(obj.imec0_ks4(probe_id), 'tracks');
             exists = isfolder(dname);
         end
         
@@ -1163,7 +1191,7 @@ classdef FileManager < handle
         %
         %   EXISTS is true if the file exists and false otherwise.
         
-            fname = fullfile(obj.imec0_ks2(probe_id), 'driftmap.pdf');
+            fname = fullfile(obj.imec0_ks4(probe_id), 'driftmap.pdf');
             exists = isfile(fname);
         end
         
@@ -1190,10 +1218,10 @@ classdef FileManager < handle
         
         
         
-        function dname = generate_imec0_ks2(obj, top_dir, probe_id)
-        %%generate_imec0_ks2 Sshared function, creates path to 'imec0_ks2' directory
+        function dname = generate_imec0_ks4(obj, top_dir, probe_id)
+        %%generate_imec0_ks4 Sshared function, creates path to 'imec0_ks4' directory
         %
-        %   [DIRECTORY_NAME, EXISTS] = generate_imec0_ks2(TOP_DIRECTORY, PROBE_ID)
+        %   [DIRECTORY_NAME, EXISTS] = generate_imec0_ks4(TOP_DIRECTORY, PROBE_ID)
         %   for probe recording with ID string, PROBE_ID
         %
         %   EXISTS is true if the directory exists and false otherwise.
@@ -1201,9 +1229,11 @@ classdef FileManager < handle
             animal_id = obj.animal_id_from_probe_id(probe_id);
             
             level_1 = fullfile(top_dir, animal_id, 'output');
-            level_2 = fullfile(level_1, sprintf('catgt_%s_g0', probe_id));
+            level_2 = fullfile(level_1, sprintf('preprocessed_%s_g0', probe_id));
             level_3 = fullfile(level_2, sprintf('%s_g0_imec0', probe_id));
-            dname = fullfile(level_3, 'imec0_ks2');
+            % The SpikeInterface + Kilosort4 pipeline writes its phy output to
+            % the 'imec0_ks4' directory (see spikeGLX_pipeline_np2.py).
+            dname = fullfile(level_3, 'imec0_ks4');
         end
         
         

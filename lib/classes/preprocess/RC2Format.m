@@ -66,7 +66,7 @@ classdef RC2Format < RC2Analysis
         %   PROBE_ID. Including:
         %       - anatomy   using the probe track .csv and offsets computed
         %                   from the high-frequency power
-        %       - clusters  using the output from Kilosort2
+        %       - clusters  using the output from Kilosort4 (via SpikeInterface)
         %       - sessions  using the RC2 .bin files
         %       - syncronization  using the trigger on the probe
         %       - selected_clusters  using the manually selected clusters
@@ -74,9 +74,11 @@ classdef RC2Format < RC2Analysis
         %
         %   Formatted data is saved to a single .mat file of form:
         %       <path_config.formatted_data_dir>\<probe_id>.mat
-        
+
+            obj.save.create_csvs_dirs();
+
             formatted_data.probe_id                             = probe_id;
-            
+
             shank_ids                                           = obj.get_shank_ids(probe_id);
             
             for ii = 1 : length(shank_ids)
@@ -172,8 +174,13 @@ classdef RC2Format < RC2Analysis
             % read probe file
             probe_track         = obj.load_track(probe_id, shank_id);
             track_offset        = obj.load.track_offset(probe_id, shank_id);
-            
-            if ~isempty(track_offset)
+
+            % NOTE: probe_track.offset = track_offset on an empty
+            % probe_track ([], when track_<shank_id>.csv doesn't exist yet
+            % -- e.g. hf_power run before histology) silently auto-vivifies
+            % a plain struct in MATLAB instead of erroring, which breaks
+            % every ProbeTrack method call downstream (format_clusters).
+            if ~isempty(track_offset) && ~isempty(probe_track)
                 probe_track.offset = track_offset;
             end
         end
@@ -183,25 +190,25 @@ classdef RC2Format < RC2Analysis
         function clusters = format_clusters(obj, probe_id)
         %%format_clusters Format the `clusters` structure
         %
-        %   CLUSTERS = format_clusters(PROBE_ID) takes the files in the output of 
-        %   kilosort2/ecephys_spike_sorting or related fork, and produces a sequence 
+        %   CLUSTERS = format_clusters(PROBE_ID) takes the files in the output of
+        %   the SpikeInterface + Kilosort4 pipeline, and produces a sequence
         %   of "cluster" objects with all the associated information.
         %   PROBE_ID is the ID of a probe recording. Outputs CLUSTERS, a structure 
         %   array of clusters with several properties
             
             % read the kilosort data
             params            = obj.load.params(probe_id);
-            spike_clusters    = obj.load.ks2_npy(probe_id, 'spike_clusters');
-            spike_templates   = obj.load.ks2_npy(probe_id, 'spike_templates');
-            spike_times       = obj.load.ks2_npy(probe_id, 'spike_times');
-            amplitudes        = obj.load.ks2_npy(probe_id, 'amplitudes');
-            templates         = obj.load.ks2_npy(probe_id, 'templates');
-            chan_map          = obj.load.ks2_npy(probe_id, 'channel_map');
-            chan_pos          = obj.load.ks2_npy(probe_id, 'channel_positions');
+            spike_clusters    = obj.load.ks4_npy(probe_id, 'spike_clusters');
+            spike_templates   = obj.load.ks4_npy(probe_id, 'spike_templates');
+            spike_times       = obj.load.ks4_npy(probe_id, 'spike_times');
+            amplitudes        = obj.load.ks4_npy(probe_id, 'amplitudes');
+            templates         = obj.load.ks4_npy(probe_id, 'templates');
+            chan_map          = obj.load.ks4_npy(probe_id, 'channel_map');
+            chan_pos          = obj.load.ks4_npy(probe_id, 'channel_positions');
             qm_table          = obj.load.metrics_csv(probe_id);
-            waveform_fixed_table = obj.load.waveform_metrics_fixed_csv(probe_id);
+            waveform_table    = obj.load.waveform_metrics_csv(probe_id);
             cluster_groups    = obj.load.cluster_groups(probe_id);
-            ks_label          = obj.load.ks2_label(probe_id);
+            ks_label          = obj.load.ks4_label(probe_id);
             
             spikeglx_meta       = obj.load.spikeglx_ap_metadata(probe_id);
             
@@ -213,10 +220,17 @@ classdef RC2Format < RC2Analysis
             end
             
             
-            % which quality metrics to unpack
-            qm = {'firing_rate', 'presence_ratio', 'isi_viol', 'amplitude_cutoff', ...
+            % which quality metrics to unpack -- SpikeInterface's own
+            % quality_metrics column names (see save_rc2_compatible_files in
+            % spikeGLX_pipeline_np2.py for why these are no longer renamed
+            % to the old ecephys_spike_sorting/Kilosort2 names, e.g.
+            % isi_viol/max_drift/silhouette_score)
+            qm = {'num_spikes', 'firing_rate', 'presence_ratio', 'snr', ...
+                'isi_violations_ratio', 'isi_violations_count', ...
+                'rp_contamination', 'rp_violations', 'amplitude_cutoff', ...
+                'amplitude_median', 'drift_ptp', 'drift_std', 'drift_mad', ...
                 'isolation_distance', 'l_ratio', 'd_prime', 'nn_hit_rate', ...
-                'nn_miss_rate', 'silhouette_score', 'max_drift', 'cumulative_drift'};
+                'nn_miss_rate', 'silhouette'};
             
             % all clusters with spikes
             cluster_ids = sort(unique(spike_clusters));
@@ -265,14 +279,14 @@ classdef RC2Format < RC2Analysis
                 
                 % find position in the probe track file
                 if ~isempty(probe_track{shank_idx})
-                    
-                    [clusters(i).region_id, ...
+                     [clusters(i).region_id, ...
                      clusters(i).region_str, ...
                      clusters(i).depth] = ...
-                        probe_track{shank_idx}.get_region_of_point_from_tip_adjusted(clusters(i).distance_from_probe_tip);
+                         probe_track{shank_idx}.get_region_of_point_from_tip_adjusted(clusters(i).distance_from_probe_tip);
+
                 else
                     clusters(i).region_id   = nan;
-                    clusters(i).region_str  = "";
+                    clusters(i).region_str  = "unknownLocation";
                     clusters(i).depth       = nan;
                 end
                 
@@ -285,7 +299,7 @@ classdef RC2Format < RC2Analysis
                     clusters(i).class = '';
                 end
                 
-                % KS2 metrics
+                % Kilosort label (from cluster_KSLabel.tsv)
                 if ~isempty(ks_label)
                     % use the original template as this is NOT changed after phy
                     %   takes the original cluster with most spikes contributing merged
@@ -293,9 +307,9 @@ classdef RC2Format < RC2Analysis
                     %   if split, the original cluster will be the same label for all new
                     %   clusters.
                     ks_label_idx = ks_label.cluster_id == ori_cluster_id;
-                    clusters(i).ks2_class = ks_label.KSLabel{ks_label_idx};
+                    clusters(i).ks4_class = ks_label.KSLabel{ks_label_idx};
                 else
-                    clusters(i).ks2_class = nan;
+                    clusters(i).ks4_class = nan;
                 end
                 
                 % if quality metrics were read successfully
@@ -315,28 +329,35 @@ classdef RC2Format < RC2Analysis
                 clusters(i).amplitude_ratio = median_amp/min_amp;
             end
             
-            waveform_metrics = {'peak_channel', 'snr', 'duration', 'halfwidth', 'PT_ratio', ...
-                'repolarization_slope', 'recovery_slope', 'amplitude', 'spread', ...
-                'velocity_above', 'velocity_below'};
+            % SpikeInterface's own template_metrics column names, plus
+            % peak_channel/amplitude (derived from the mean templates, not
+            % part of that extension -- see save_rc2_compatible_files)
+            waveform_metrics = {'peak_channel', 'amplitude', ...
+                'peak_to_trough_duration', 'trough_half_width', 'peak_half_width', ...
+                'repolarization_slope', 'recovery_slope', ...
+                'num_positive_peaks', 'num_negative_peaks', ...
+                'main_to_next_extremum_duration', 'peak_before_to_trough_ratio', ...
+                'peak_after_to_trough_ratio', 'peak_before_to_peak_after_ratio', ...
+                'main_peak_to_trough_ratio', 'trough_width', 'peak_before_width', ...
+                'peak_after_width', 'waveform_baseline_flatness', ...
+                'velocity_above', 'velocity_below', 'exp_decay', 'spread'};
             
-            % if the waveform fixed table doesn't exist
-            if isempty(waveform_fixed_table)
+            % if the waveform table doesn't exist
+            if isempty(waveform_table)
                 % create empty entries for each of the waveform properties
                 for ii = 1 : length(clusters)
                     for jj = 1 : length(waveform_metrics)
                         clusters(ii).(waveform_metrics{jj}) = [];
                     end
-                    clusters(ii).waveform_fixed = false;
                 end
             else
                 % otherwise fill in the waveform information for each
                 % cluster
                 for ii = 1 : length(clusters)
-                    tbl_idx = waveform_fixed_table.cluster_id == clusters(ii).id;
+                    tbl_idx = waveform_table.cluster_id == clusters(ii).id;
                     for jj = 1 : length(waveform_metrics)
-                        clusters(ii).(waveform_metrics{jj}) = waveform_fixed_table.(waveform_metrics{jj})(tbl_idx);
+                        clusters(ii).(waveform_metrics{jj}) = waveform_table.(waveform_metrics{jj})(tbl_idx);
                     end
-                    clusters(ii).waveform_fixed = true;
                 end
             end
         end
@@ -398,6 +419,7 @@ classdef RC2Format < RC2Analysis
             end
             
             session.pupil_diameter = obj.load.pupil_diameter(session_id);
+            session.pupil_position = obj.load.pupil_position(session_id);
             
             session.trials = obj.format_trials(session);
             session.n_trials = length(session.trials);
@@ -546,7 +568,9 @@ classdef RC2Format < RC2Analysis
                              'probe_t', [], ...
                              'camera_t', [], ...
                              'camera0', [], ...
-                             'camera1', []);
+                             'camera1', [], ...
+                             'pupil_diameter', [], ...
+                             'pupil_position', []);
             
             % unpack the channels
             for ii = 1 : length(chan_names)
@@ -574,7 +598,7 @@ classdef RC2Format < RC2Analysis
             % assert(session.solenoid(1) > 2.5, 'Solenoid does not start high');
             
             % get the sample points of solenoid up and down
-            solenoid_down = find(diff(session.solenoid > 2.5) == -1) + 1;
+             solenoid_down = find(diff(session.solenoid > 2.5) == -1) + 1;
             
             % TODO: should be solved at acquisition
             if ~isfield(session.config, 'prot')

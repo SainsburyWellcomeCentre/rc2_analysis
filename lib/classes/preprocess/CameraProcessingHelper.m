@@ -91,8 +91,15 @@ classdef CameraProcessingHelper < handle
         function run_runningmouse(obj)
         %%run_runningmouse Runs the `runningmouse` pipeline for processing of videos
         %
-        %   run_runningmouse() runs the running mouse 
-        
+        %   run_runningmouse() runs the running mouse
+
+            % the script imports the `tools` package at the top of the
+            % runningmouse repository (two levels up from main.py), so put
+            % it on the python path of the launched processes
+            runningmouse_dir = fileparts(fileparts(obj.ctl.file.path_config.runningmouse_main_script));
+            old_pythonpath = getenv('PYTHONPATH');
+            setenv('PYTHONPATH', runningmouse_dir);
+
             for ii = 1 : length(obj.camera_ids)
                 camera_fname = fullfile(obj.local_dir, sprintf('%s.avi', obj.camera_ids{ii}));
                 
@@ -109,6 +116,8 @@ classdef CameraProcessingHelper < handle
                 end
                 system(cmd);
             end
+
+            setenv('PYTHONPATH', old_pythonpath);
         end
         
         
@@ -119,12 +128,19 @@ classdef CameraProcessingHelper < handle
             for ii = 1 : length(obj.camera_ids)
                 
                 camera_fname = fullfile(obj.local_dir, sprintf('%s.avi', obj.camera_ids{ii}));
-                
-                cmd = sprintf('start /wait cmd /c ffmpeg -i %s %s', camera_fname, strrep(camera_fname, '.avi', '.mp4'));
+                mp4_fname = strrep(camera_fname, '.avi', '.mp4');
+
+                cmd = sprintf('start /wait cmd /c ffmpeg -i %s %s', camera_fname, mp4_fname);
                 system(cmd);
-                
-                % remove the large .avi
-                delete(camera_fname);
+
+                % only remove the large .avi if the .mp4 was created
+                mp4_info = dir(mp4_fname);
+                if ~isempty(mp4_info) && mp4_info.bytes > 0
+                    delete(camera_fname);
+                else
+                    warning('CameraProcessingHelper:transform_avi:noMp4', ...
+                        '%s was not created, keeping %s', mp4_fname, camera_fname);
+                end
             end
         end
         

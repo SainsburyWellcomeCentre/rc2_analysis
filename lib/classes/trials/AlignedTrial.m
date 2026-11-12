@@ -33,6 +33,7 @@ classdef AlignedTrial < handle
 %       camera1                 - return the motion energy for camera1 channel for the aligned trial
 %       camera0                 - return the motion energy for camera0 channel for the aligned trial
 %       pupil_diameter          - return the pupil diameter for the aligned trial
+%       pupil_position          - return the pupil x-y position for the aligned trial
 %       solenoid                - return the solenoid channel for the aligned trial
 %       analysis_window         - return the analysis window for the aligned trial
 %       treadmill_motion_mask   - return the motion mask of the treadmill for the aligned trial
@@ -436,6 +437,26 @@ classdef AlignedTrial < handle
             if ~isempty(obj.trial.pupil_diameter)
                 val = obj.trial.pupil_diameter(obj.offset + (1:obj.n_points));
                 if ~isempty(idx), val = val(idx); end
+            else
+                val = [];
+            end
+        end
+        
+        
+        function val = pupil_position(obj, idx)
+        %%pupil_position Return the pupil x-y position for the aligned trial
+        %
+        %   POSITION = pupil_position(INDEX)
+        %   returns an `n_points` x 2 matrix of [x, y] pupil position.
+        %   If INDEX is supplied it should be a boolean vector of length
+        %   `n_points` indicating which part of the trace to return. If not
+        %   supplied or empty, the entire trace is returned.
+        
+            VariableDefault('idx', []);
+            
+            if ~isempty(obj.trial.pupil_position)
+                val = obj.trial.pupil_position(obj.offset + (1:obj.n_points), :);
+                if ~isempty(idx), val = val(idx, :); end
             else
                 val = [];
             end
